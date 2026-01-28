@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dqlite-wire"
+version = "0.1.0"
+description = "Pure Python wire protocol implementation for dqlite"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [{ name = "Antoine Leclair", email = "antoineleclair@gmail.com" }]
+keywords = ["dqlite", "sqlite", "distributed", "database", "wire-protocol"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/letsdiscodev/python-dqlite-wire"
+Repository = "https://github.com/letsdiscodev/python-dqlite-wire"
+Issues = "https://github.com/letsdiscodev/python-dqlite-wire/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=4.0", "mypy>=1.0", "ruff>=0.4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dqlitewire"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dqlitewire"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true

@@ -1,0 +1,242 @@
+"""Tests for response message encoding/decoding."""
+
+from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
+from dqlitewire.messages.base import Header
+from dqlitewire.messages.responses import (
+    DbResponse,
+    DescriptionResponse,
+    EmptyResponse,
+    FailureResponse,
+    FilesResponse,
+    LeaderResponse,
+    MetadataResponse,
+    NodeInfo,
+    ResultResponse,
+    RowsResponse,
+    ServersResponse,
+    StmtResponse,
+    WelcomeResponse,
+)
+
+
+class TestFailureResponse:
+    def test_encode(self) -> None:
+        msg = FailureResponse(code=1, message="error")
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.msg_type == ResponseType.FAILURE
+
+    def test_roundtrip(self) -> None:
+        msg = FailureResponse(code=42, message="Something went wrong")
+        encoded = msg.encode()
+        decoded = FailureResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.code == 42
+        assert decoded.message == "Something went wrong"
+
+    def test_empty_message(self) -> None:
+        msg = FailureResponse(code=0, message="")
+        encoded = msg.encode()
+        decoded = FailureResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.code == 0
+        assert decoded.message == ""
+
+
+class TestLeaderResponse:
+    def test_roundtrip(self) -> None:
+        msg = LeaderResponse(node_id=1, address="192.168.1.1:9001")
+        encoded = msg.encode()
+        decoded = LeaderResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.node_id == 1
+        assert decoded.address == "192.168.1.1:9001"
+
+    def test_empty_address(self) -> None:
+        msg = LeaderResponse(node_id=0, address="")
+        encoded = msg.encode()
+        decoded = LeaderResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.node_id == 0
+        assert decoded.address == ""
+
+
+class TestWelcomeResponse:
+    def test_roundtrip(self) -> None:
+        msg = WelcomeResponse(heartbeat_timeout=15000)
+        encoded = msg.encode()
+        decoded = WelcomeResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.heartbeat_timeout == 15000
+
+
+class TestDbResponse:
+    def test_roundtrip(self) -> None:
+        msg = DbResponse(db_id=1)
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.msg_type == ResponseType.DB
+        decoded = DbResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+
+
+class TestStmtResponse:
+    def test_roundtrip(self) -> None:
+        msg = StmtResponse(db_id=1, stmt_id=5, num_params=3, offset=0, tail="")
+        encoded = msg.encode()
+        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 5
+        assert decoded.num_params == 3
+        assert decoded.offset == 0
+        assert decoded.tail == ""
+
+    def test_with_tail(self) -> None:
+        msg = StmtResponse(db_id=1, stmt_id=2, num_params=0, offset=20, tail="; SELECT 2")
+        encoded = msg.encode()
+        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.tail == "; SELECT 2"
+        assert decoded.offset == 20
+
+
+class TestResultResponse:
+    def test_roundtrip(self) -> None:
+        msg = ResultResponse(last_insert_id=42, rows_affected=5)
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.msg_type == ResponseType.RESULT
+        decoded = ResultResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.last_insert_id == 42
+        assert decoded.rows_affected == 5
+
+    def test_zero_values(self) -> None:
+        msg = ResultResponse(last_insert_id=0, rows_affected=0)
+        encoded = msg.encode()
+        decoded = ResultResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.last_insert_id == 0
+        assert decoded.rows_affected == 0
+
+
+class TestRowsResponse:
+    def test_empty_result(self) -> None:
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[],
+            has_more=False,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.column_names == ["id", "name"]
+        assert decoded.rows == []
+        assert decoded.has_more is False
+
+    def test_single_row(self) -> None:
+        msg = RowsResponse(
+            column_names=["id"],
+            column_types=[ValueType.INTEGER],
+            rows=[[42]],
+            has_more=False,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.column_names == ["id"]
+        assert len(decoded.rows) == 1
+        assert decoded.rows[0][0] == 42
+
+    def test_multiple_rows(self) -> None:
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[[1, "Alice"], [2, "Bob"], [3, "Charlie"]],
+            has_more=False,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert len(decoded.rows) == 3
+        assert decoded.rows[0] == [1, "Alice"]
+        assert decoded.rows[1] == [2, "Bob"]
+        assert decoded.rows[2] == [3, "Charlie"]
+
+    def test_has_more(self) -> None:
+        msg = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.has_more is True
+
+
+class TestEmptyResponse:
+    def test_encode(self) -> None:
+        msg = EmptyResponse()
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.msg_type == ResponseType.EMPTY
+        assert header.size_words == 0
+
+    def test_roundtrip(self) -> None:
+        msg = EmptyResponse()
+        encoded = msg.encode()
+        decoded = EmptyResponse.decode_body(encoded[HEADER_SIZE:])
+        assert isinstance(decoded, EmptyResponse)
+
+
+class TestFilesResponse:
+    def test_empty(self) -> None:
+        msg = FilesResponse(files={})
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files == {}
+
+    def test_roundtrip(self) -> None:
+        msg = FilesResponse(files={"db.sqlite": b"database content", "wal": b"wal data"})
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files["db.sqlite"] == b"database content"
+        assert decoded.files["wal"] == b"wal data"
+
+
+class TestServersResponse:
+    def test_empty(self) -> None:
+        msg = ServersResponse(nodes=[])
+        encoded = msg.encode()
+        decoded = ServersResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.nodes == []
+
+    def test_roundtrip(self) -> None:
+        nodes = [
+            NodeInfo(node_id=1, address="node1:9001", role=1),
+            NodeInfo(node_id=2, address="node2:9002", role=2),
+            NodeInfo(node_id=3, address="node3:9003", role=2),
+        ]
+        msg = ServersResponse(nodes=nodes)
+        encoded = msg.encode()
+        decoded = ServersResponse.decode_body(encoded[HEADER_SIZE:])
+        assert len(decoded.nodes) == 3
+        assert decoded.nodes[0].node_id == 1
+        assert decoded.nodes[0].address == "node1:9001"
+        assert decoded.nodes[1].role == 2
+
+
+class TestMetadataResponse:
+    def test_roundtrip(self) -> None:
+        msg = MetadataResponse(failure_domain=1, weight=50)
+        encoded = msg.encode()
+        decoded = MetadataResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.failure_domain == 1
+        assert decoded.weight == 50
+
+
+class TestDescriptionResponse:
+    def test_roundtrip_aligned(self) -> None:
+        # Use data that's already 8-byte aligned to avoid padding issues
+        msg = DescriptionResponse(data=b"12345678")
+        encoded = msg.encode()
+        decoded = DescriptionResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.data == b"12345678"
+
+    def test_encode(self) -> None:
+        # Non-aligned data gets padded in wire format
+        msg = DescriptionResponse(data=b"test")
+        encoded = msg.encode()
+        # Body is padded to 8 bytes
+        assert len(encoded) == HEADER_SIZE + 8
