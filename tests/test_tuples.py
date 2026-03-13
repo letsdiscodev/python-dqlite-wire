@@ -14,9 +14,9 @@ from dqlitewire.tuples import (
 
 class TestParamsTuple:
     def test_encode_empty(self) -> None:
+        """Empty params should encode to nothing, matching Go behavior."""
         encoded = encode_params_tuple([])
-        # Empty params: count=0 + 7 bytes padding
-        assert encoded == b"\x00" * 8
+        assert encoded == b""
 
     def test_encode_single_integer(self) -> None:
         encoded = encode_params_tuple([42])
@@ -37,11 +37,10 @@ class TestParamsTuple:
         assert encoded[0] == 5  # count
 
     def test_decode_empty(self) -> None:
-        # Empty params with proper header
-        data = b"\x00" * 8
-        values, consumed = decode_params_tuple(data)
+        """Empty params data should decode to empty list."""
+        values, consumed = decode_params_tuple(b"")
         assert values == []
-        assert consumed == 8
+        assert consumed == 0
 
     def test_roundtrip_integers(self) -> None:
         params = [1, 2, 3, 100, -50]

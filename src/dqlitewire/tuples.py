@@ -35,8 +35,8 @@ def encode_params_tuple(params: Sequence[Any]) -> bytes:
     - Values encoded according to their types
     """
     if not params:
-        # Even with no params, we send count=0 padded to word boundary
-        return b"\x00" * 8
+        # Go writes nothing for empty params
+        return b""
 
     # First, encode all values and collect types
     types: list[int] = []
@@ -67,6 +67,10 @@ def decode_params_tuple(data: bytes, count: int | None = None) -> tuple[list[Any
     If count is None, reads the count from the first byte of data.
     Returns (values, bytes_consumed).
     """
+    # Go writes nothing for empty params
+    if len(data) == 0:
+        return [], 0
+
     if len(data) < 8:
         if count == 0:
             return [], 0
@@ -77,8 +81,7 @@ def decode_params_tuple(data: bytes, count: int | None = None) -> tuple[list[Any
         count = data[0]
 
     if count == 0:
-        # Empty params still have 8-byte header (count + padding)
-        return [], 8
+        return [], 0
 
     # Header: count byte + type codes, padded to word boundary
     header_len = 1 + count  # count byte + type codes

@@ -118,8 +118,8 @@ class TestExecRequest:
     def test_body_structure(self) -> None:
         msg = ExecRequest(db_id=1, stmt_id=2, params=[])
         body = msg.encode_body()
-        # db_id (4) + stmt_id (4) + empty params header (8) = 16 bytes
-        assert len(body) == 16
+        # db_id (4) + stmt_id (4) + no params = 8 bytes (Go writes nothing for empty params)
+        assert len(body) == 8
 
     def test_roundtrip_with_params(self) -> None:
         """Parameters must survive encode/decode round-trip."""
