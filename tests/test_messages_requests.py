@@ -282,6 +282,11 @@ class TestClusterRequest:
         decoded = ClusterRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.format == 1
 
+    def test_default_format_is_v1(self) -> None:
+        """Go client defaults to DQLITE_REQUEST_CLUSTER_FORMAT_V1 (1)."""
+        msg = ClusterRequest()
+        assert msg.format == 1
+
 
 class TestTransferRequest:
     def test_roundtrip(self) -> None:

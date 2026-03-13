@@ -420,7 +420,7 @@ class ClusterRequest(Message):
 
     MSG_TYPE: ClassVar[int] = RequestType.CLUSTER
 
-    format: int = 0
+    format: int = 1
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)
