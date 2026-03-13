@@ -285,15 +285,21 @@ class FilesResponse(Message):
     files: dict[str, bytes] = field(default_factory=dict)
 
     def encode_body(self) -> bytes:
+        from dqlitewire.types import pad_to_word
+
         result = encode_uint64(len(self.files))
         for name, content in self.files.items():
             result += encode_text(name)
             result += encode_uint64(len(content))
             result += content
+            padding = pad_to_word(len(content))
+            result += b"\x00" * padding
         return result
 
     @classmethod
     def decode_body(cls, data: bytes) -> "FilesResponse":
+        from dqlitewire.types import pad_to_word
+
         files: dict[str, bytes] = {}
         offset = 0
         count = decode_uint64(data[offset:])
@@ -304,7 +310,7 @@ class FilesResponse(Message):
             size = decode_uint64(data[offset:])
             offset += 8
             content = data[offset : offset + size]
-            offset += size
+            offset += size + pad_to_word(size)
             files[name] = content
         return cls(files)
 

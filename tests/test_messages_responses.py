@@ -274,6 +274,41 @@ class TestFilesResponse:
         decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.files["main.db"] == b"\x00\x01\x02\x03"
 
+    def test_roundtrip_non_aligned_content(self) -> None:
+        """File content not aligned to 8 bytes must still roundtrip correctly.
+
+        The Go implementation uses blob-style encoding with padding to word
+        boundary after raw content bytes. This test verifies that non-aligned
+        content sizes work correctly with multiple files.
+        """
+        msg = FilesResponse(
+            files={
+                "file1.db": b"\x01\x02\x03",  # 3 bytes, needs 5 padding
+                "file2.db": b"\x04\x05\x06\x07\x08\x09\x0a",  # 7 bytes, needs 1 padding
+            }
+        )
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files["file1.db"] == b"\x01\x02\x03"
+        assert decoded.files["file2.db"] == b"\x04\x05\x06\x07\x08\x09\x0a"
+
+    def test_content_padded_to_word_boundary(self) -> None:
+        """Each file's content must be padded so subsequent fields stay aligned."""
+        from dqlitewire.types import decode_text, decode_uint64
+
+        msg = FilesResponse(files={"a": b"\x01\x02\x03"})
+        body = msg.encode_body()
+        offset = 8  # skip count
+        _name, consumed = decode_text(body[offset:])
+        offset += consumed
+        size = decode_uint64(body[offset:])
+        offset += 8
+        assert size == 3
+        # Content (3 bytes) + padding should advance to next word boundary
+        content_with_padding = offset + size + (8 - size % 8) % 8
+        # Total body should account for padding
+        assert len(body) >= content_with_padding
+
 
 class TestServersResponse:
     def test_empty(self) -> None:
