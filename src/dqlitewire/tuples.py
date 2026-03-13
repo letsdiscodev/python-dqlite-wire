@@ -9,13 +9,9 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
-from dqlitewire.constants import ValueType
+from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
 from dqlitewire.exceptions import DecodeError
-from dqlitewire.types import decode_value, encode_value, pad_to_word
-
-# Marker bytes detected per-byte in row headers (matching Go implementation)
-ROW_DONE_BYTE = 0xFF
-ROW_PART_BYTE = 0xEE
+from dqlitewire.types import decode_uint64, decode_value, encode_value, pad_to_word
 
 
 class RowMarker(Enum):
@@ -154,11 +150,12 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
     # Check for markers first — markers are always exactly one 8-byte word,
     # regardless of column count. Must check before header size validation
     # because for large column counts the header would be >8 bytes.
+    # Compare the full uint64, matching the Go reference (peekUint64).
     if len(data) >= 8:
-        first_byte = data[0]
-        if first_byte == ROW_DONE_BYTE:
+        marker = decode_uint64(data)
+        if marker == ROW_DONE_MARKER:
             return RowMarker.DONE, 8
-        if first_byte == ROW_PART_BYTE:
+        if marker == ROW_PART_MARKER:
             return RowMarker.PART, 8
 
     # Calculate bytes needed: 2 types per byte, rounded up

@@ -191,12 +191,8 @@ class RowsResponse(Message):
         return [encode_value(v)[1] for v in row]
 
     def encode_body(self) -> bytes:
-        from dqlitewire.tuples import (
-            ROW_DONE_BYTE,
-            ROW_PART_BYTE,
-            encode_row_header,
-            encode_row_values,
-        )
+        from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER
+        from dqlitewire.tuples import encode_row_header, encode_row_values
 
         result = encode_uint64(len(self.column_names))
 
@@ -210,9 +206,9 @@ class RowsResponse(Message):
             result += encode_row_header(types)
             result += encode_row_values(row, types)
 
-        # End marker: fill a word with marker bytes (matching Go)
-        marker_byte = ROW_PART_BYTE if self.has_more else ROW_DONE_BYTE
-        result += bytes([marker_byte]) * 8
+        # End marker: full uint64 marker word (matching Go)
+        marker = ROW_PART_MARKER if self.has_more else ROW_DONE_MARKER
+        result += encode_uint64(marker)
 
         return result
 
