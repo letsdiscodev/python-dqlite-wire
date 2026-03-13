@@ -132,6 +132,25 @@ class TestExecRequest:
         assert decoded.params[1] == "hello"
         assert abs(decoded.params[2] - 3.14) < 0.0001
 
+    def test_schema_version_1_in_header(self) -> None:
+        """Go client always sends Exec with schema=1 in the header."""
+        msg = ExecRequest(db_id=1, stmt_id=2, params=[42])
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.schema == 1
+
+    def test_params_use_v1_uint32_count(self) -> None:
+        """Parameters must use V1 format (uint32 count) per Go reference."""
+        import struct
+
+        msg = ExecRequest(db_id=1, stmt_id=2, params=[42])
+        body = msg.encode_body()
+        # After db_id (4) + stmt_id (4) = 8, params start
+        params_data = body[8:]
+        # V1: first 4 bytes are uint32 count
+        count = struct.unpack("<I", params_data[:4])[0]
+        assert count == 1
+
 
 class TestQueryRequest:
     def test_encode_no_params(self) -> None:

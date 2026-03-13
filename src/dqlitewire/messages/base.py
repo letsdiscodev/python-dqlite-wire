@@ -52,6 +52,7 @@ class Message(ABC):
     """Base class for all protocol messages."""
 
     MSG_TYPE: ClassVar[int]
+    SCHEMA: ClassVar[int] = 0
 
     @abstractmethod
     def encode_body(self) -> bytes:
@@ -65,7 +66,7 @@ class Message(ABC):
         if len(body) % WORD_SIZE != 0:
             body += b"\x00" * (WORD_SIZE - (len(body) % WORD_SIZE))
         size_words = len(body) // WORD_SIZE
-        header = Header(size_words, self.MSG_TYPE)
+        header = Header(size_words, self.MSG_TYPE, schema=self.SCHEMA)
         return header.encode() + body
 
     @classmethod
