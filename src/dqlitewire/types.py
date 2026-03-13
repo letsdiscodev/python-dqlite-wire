@@ -151,7 +151,9 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
         else:
             raise EncodeError(f"Cannot infer type for value: {type(value)}")
 
-    if value_type in (ValueType.INTEGER, ValueType.UNIXTIME, ValueType.BOOLEAN):
+    if value_type == ValueType.BOOLEAN:
+        return encode_uint64(1 if value else 0), value_type
+    elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
         if isinstance(value, bool):
             value = 1 if value else 0
         return encode_int64(value), value_type
@@ -172,11 +174,10 @@ def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
 
     Returns (value, bytes_consumed).
     """
-    if value_type in (ValueType.INTEGER, ValueType.UNIXTIME, ValueType.BOOLEAN):
-        value = decode_int64(data)
-        if value_type == ValueType.BOOLEAN:
-            value = bool(value)
-        return value, 8
+    if value_type == ValueType.BOOLEAN:
+        return bool(decode_uint64(data)), 8
+    elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
+        return decode_int64(data), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
