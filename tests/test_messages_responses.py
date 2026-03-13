@@ -171,7 +171,13 @@ class TestEmptyResponse:
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.msg_type == ResponseType.EMPTY
-        assert header.size_words == 0
+        assert header.size_words == 1  # Reserved uint64 per Go spec
+
+    def test_body_has_reserved_field(self) -> None:
+        """EmptyResponse body must contain a reserved uint64 per Go spec."""
+        msg = EmptyResponse()
+        body = msg.encode_body()
+        assert len(body) == 8
 
     def test_roundtrip(self) -> None:
         msg = EmptyResponse()

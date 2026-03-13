@@ -240,13 +240,13 @@ class RowsResponse(Message):
 class EmptyResponse(Message):
     """Empty response (for exec with no result).
 
-    Body: empty
+    Body: uint64 (reserved, unused)
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.EMPTY
 
     def encode_body(self) -> bytes:
-        return b""
+        return encode_uint64(0)
 
     @classmethod
     def decode_body(cls, data: bytes) -> "EmptyResponse":
