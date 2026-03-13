@@ -164,6 +164,31 @@ class TestRowsResponse:
         decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.has_more is True
 
+    def test_heterogeneous_types_roundtrip(self) -> None:
+        """Rows with different types per column must encode/decode correctly.
+
+        SQLite allows different storage types for the same column across rows
+        (type affinity). Each row has its own type header in the wire format.
+        """
+        msg = RowsResponse(
+            column_names=["x"],
+            row_types=[
+                [ValueType.INTEGER],
+                [ValueType.TEXT],
+                [ValueType.NULL],
+            ],
+            rows=[[42], ["hello"], [None]],
+            has_more=False,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.rows[0] == [42]
+        assert decoded.rows[1] == ["hello"]
+        assert decoded.rows[2] == [None]
+        assert decoded.row_types[0] == [ValueType.INTEGER]
+        assert decoded.row_types[1] == [ValueType.TEXT]
+        assert decoded.row_types[2] == [ValueType.NULL]
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:

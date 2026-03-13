@@ -166,8 +166,20 @@ class RowsResponse(Message):
 
     column_names: list[str] = field(default_factory=list)
     column_types: list[ValueType] = field(default_factory=list)
+    row_types: list[list[ValueType]] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
     has_more: bool = False
+
+    def _get_row_types(self, row_idx: int, row: list[Any]) -> list[ValueType]:
+        """Get types for a row: from row_types, column_types, or inferred."""
+        if self.row_types and row_idx < len(self.row_types):
+            return self.row_types[row_idx]
+        if self.column_types:
+            return self.column_types
+        # Infer from values
+        from dqlitewire.types import encode_value
+
+        return [encode_value(v)[1] for v in row]
 
     def encode_body(self) -> bytes:
         from dqlitewire.tuples import (
@@ -183,10 +195,11 @@ class RowsResponse(Message):
         for name in self.column_names:
             result += encode_text(name)
 
-        # Rows
-        for row in self.rows:
-            result += encode_row_header(self.column_types)
-            result += encode_row_values(row, self.column_types)
+        # Rows - each row gets its own type header
+        for i, row in enumerate(self.rows):
+            types = self._get_row_types(i, row)
+            result += encode_row_header(types)
+            result += encode_row_values(row, types)
 
         # End marker: fill a word with marker bytes (matching Go)
         marker_byte = ROW_PART_BYTE if self.has_more else ROW_DONE_BYTE
@@ -209,9 +222,9 @@ class RowsResponse(Message):
             column_names.append(name)
             offset += consumed
 
-        # Rows - marker detection happens inside decode_row_header (matching Go)
+        # Rows - each row has its own type header
         rows: list[list[Any]] = []
-        column_types: list[ValueType] = []
+        all_row_types: list[list[ValueType]] = []
 
         while offset < len(data):
             # Read row header; markers are detected byte-by-byte inside
@@ -219,21 +232,20 @@ class RowsResponse(Message):
             offset += consumed
 
             if result is RowMarker.DONE:
-                return cls(column_names, column_types, rows, has_more=False)
+                return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
             if result is RowMarker.PART:
-                return cls(column_names, column_types, rows, has_more=True)
+                return cls(column_names, row_types=all_row_types, rows=rows, has_more=True)
 
             types = result
-            if not column_types:
-                column_types = types
             assert isinstance(types, list)
+            all_row_types.append(types)
 
             # Read row values
             values, consumed = decode_row_values(data[offset:], types)
             rows.append(values)
             offset += consumed
 
-        return cls(column_names, column_types, rows, has_more=False)
+        return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
 
 
 @dataclass
