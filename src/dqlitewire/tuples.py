@@ -144,12 +144,22 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
     """Decode row column type header.
 
     Format: 4-bit type codes packed two per byte, padded to word boundary.
-    Detects row markers (0xFF=done, 0xEE=part) byte-by-byte during parsing,
-    matching the Go reference implementation.
+    Detects row markers (0xFF=done, 0xEE=part) by checking the first byte
+    before validating header size, matching the Go reference implementation.
     Returns (types_or_marker, bytes_consumed).
     """
     if column_count == 0:
         return [], 0
+
+    # Check for markers first — markers are always exactly one 8-byte word,
+    # regardless of column count. Must check before header size validation
+    # because for large column counts the header would be >8 bytes.
+    if len(data) >= 8:
+        first_byte = data[0]
+        if first_byte == ROW_DONE_BYTE:
+            return RowMarker.DONE, 8
+        if first_byte == ROW_PART_BYTE:
+            return RowMarker.PART, 8
 
     # Calculate bytes needed: 2 types per byte, rounded up
     bytes_for_types = (column_count + 1) // 2
@@ -162,13 +172,7 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
     for i in range(column_count):
         byte_idx = i // 2
         if i % 2 == 0:
-            # Check for marker bytes at the start of each slot (matching Go)
-            slot = data[byte_idx]
-            if slot == ROW_DONE_BYTE:
-                return RowMarker.DONE, header_size
-            if slot == ROW_PART_BYTE:
-                return RowMarker.PART, header_size
-            types.append(ValueType(slot & 0x0F))
+            types.append(ValueType(data[byte_idx] & 0x0F))
         else:
             types.append(ValueType((data[byte_idx] >> 4) & 0x0F))
 

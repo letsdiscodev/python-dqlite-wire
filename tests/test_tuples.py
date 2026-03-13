@@ -149,6 +149,29 @@ class TestRowHeader:
         result = decode_row_header(data, 4)
         assert result == (RowMarker.DONE, 8)
 
+    def test_decode_done_marker_17_columns(self) -> None:
+        """Marker must be detected even when header_size would exceed 8 bytes.
+
+        With 17 columns, the type header needs 9 bytes (padded to 16), but
+        the marker is always exactly 8 bytes. Marker detection must happen
+        before the header size validation.
+        """
+        data = b"\xff" * 8
+        result = decode_row_header(data, 17)
+        assert result == (RowMarker.DONE, 8)
+
+    def test_decode_part_marker_20_columns(self) -> None:
+        """PART marker must also work with large column counts."""
+        data = b"\xee" * 8
+        result = decode_row_header(data, 20)
+        assert result == (RowMarker.PART, 8)
+
+    def test_decode_done_marker_33_columns(self) -> None:
+        """Marker must work even with very large column counts (header_size=24)."""
+        data = b"\xff" * 8
+        result = decode_row_header(data, 33)
+        assert result == (RowMarker.DONE, 8)
+
 
 class TestRowValues:
     def test_encode_single_integer(self) -> None:
