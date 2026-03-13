@@ -76,21 +76,22 @@ class TestDbResponse:
 
 class TestStmtResponse:
     def test_roundtrip(self) -> None:
-        msg = StmtResponse(db_id=1, stmt_id=5, num_params=3, offset=0, tail="")
+        msg = StmtResponse(db_id=1, stmt_id=5, num_params=3)
         encoded = msg.encode()
         decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 1
         assert decoded.stmt_id == 5
         assert decoded.num_params == 3
-        assert decoded.offset == 0
-        assert decoded.tail == ""
 
-    def test_with_tail(self) -> None:
-        msg = StmtResponse(db_id=1, stmt_id=2, num_params=0, offset=20, tail="; SELECT 2")
+    def test_body_size(self) -> None:
+        """StmtResponse body should be exactly 16 bytes per Go reference.
+
+        Format: uint32 db_id + uint32 stmt_id + uint64 num_params = 16 bytes.
+        """
+        msg = StmtResponse(db_id=1, stmt_id=2, num_params=3)
         encoded = msg.encode()
-        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.tail == "; SELECT 2"
-        assert decoded.offset == 20
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.body_size == 16
 
 
 class TestResultResponse:
