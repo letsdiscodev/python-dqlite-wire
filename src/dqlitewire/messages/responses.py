@@ -3,9 +3,9 @@
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ResponseType, ValueType
+from dqlitewire.constants import ResponseType, ValueType
 from dqlitewire.messages.base import Message
-from dqlitewire.tuples import decode_row_header, decode_row_values
+from dqlitewire.tuples import RowMarker, decode_row_header, decode_row_values
 from dqlitewire.types import (
     decode_text,
     decode_uint64,
@@ -170,7 +170,12 @@ class RowsResponse(Message):
     has_more: bool = False
 
     def encode_body(self) -> bytes:
-        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.tuples import (
+            ROW_DONE_BYTE,
+            ROW_PART_BYTE,
+            encode_row_header,
+            encode_row_values,
+        )
 
         result = encode_uint64(len(self.column_names))
 
@@ -183,11 +188,9 @@ class RowsResponse(Message):
             result += encode_row_header(self.column_types)
             result += encode_row_values(row, self.column_types)
 
-        # End marker
-        if self.has_more:
-            result += encode_uint64(ROW_PART_MARKER)
-        else:
-            result += encode_uint64(ROW_DONE_MARKER)
+        # End marker: fill a word with marker bytes (matching Go)
+        marker_byte = ROW_PART_BYTE if self.has_more else ROW_DONE_BYTE
+        result += bytes([marker_byte]) * 8
 
         return result
 
@@ -206,24 +209,24 @@ class RowsResponse(Message):
             column_names.append(name)
             offset += consumed
 
-        # Rows
+        # Rows - marker detection happens inside decode_row_header (matching Go)
         rows: list[list[Any]] = []
         column_types: list[ValueType] = []
 
         while offset < len(data):
-            # Check for end marker
-            if len(data) - offset >= 8:
-                marker = decode_uint64(data[offset:])
-                if marker == ROW_DONE_MARKER:
-                    return cls(column_names, column_types, rows, has_more=False)
-                elif marker == ROW_PART_MARKER:
-                    return cls(column_names, column_types, rows, has_more=True)
+            # Read row header; markers are detected byte-by-byte inside
+            result, consumed = decode_row_header(data[offset:], column_count)
+            offset += consumed
 
-            # Read row header (column types)
-            types, consumed = decode_row_header(data[offset:], column_count)
+            if result is RowMarker.DONE:
+                return cls(column_names, column_types, rows, has_more=False)
+            if result is RowMarker.PART:
+                return cls(column_names, column_types, rows, has_more=True)
+
+            types = result
             if not column_types:
                 column_types = types
-            offset += consumed
+            assert isinstance(types, list)
 
             # Read row values
             values, consumed = decode_row_values(data[offset:], types)

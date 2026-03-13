@@ -2,6 +2,7 @@
 
 from dqlitewire.constants import ValueType
 from dqlitewire.tuples import (
+    RowMarker,
     decode_params_tuple,
     decode_row_header,
     decode_row_values,
@@ -110,6 +111,24 @@ class TestRowHeader:
         encoded = encode_row_header(types)
         decoded, _ = decode_row_header(encoded, len(types))
         assert decoded == types
+
+    def test_decode_done_marker(self) -> None:
+        """decode_row_header should detect 0xFF marker byte (done) like Go does."""
+        data = b"\xff" * 8
+        result = decode_row_header(data, 1)
+        assert result == (RowMarker.DONE, 8)
+
+    def test_decode_part_marker(self) -> None:
+        """decode_row_header should detect 0xEE marker byte (more rows) like Go does."""
+        data = b"\xee" * 8
+        result = decode_row_header(data, 1)
+        assert result == (RowMarker.PART, 8)
+
+    def test_decode_done_marker_multi_column(self) -> None:
+        """Marker detection should work regardless of column count."""
+        data = b"\xff" * 8
+        result = decode_row_header(data, 4)
+        assert result == (RowMarker.DONE, 8)
 
 
 class TestRowValues:

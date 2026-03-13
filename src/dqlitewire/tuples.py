@@ -6,11 +6,23 @@ Row tuples and parameter tuples have different formats:
 """
 
 from collections.abc import Sequence
+from enum import Enum
 from typing import Any
 
 from dqlitewire.constants import ValueType
 from dqlitewire.exceptions import DecodeError
 from dqlitewire.types import decode_value, encode_value, pad_to_word
+
+# Marker bytes detected per-byte in row headers (matching Go implementation)
+ROW_DONE_BYTE = 0xFF
+ROW_PART_BYTE = 0xEE
+
+
+class RowMarker(Enum):
+    """Row marker detected during header parsing."""
+
+    DONE = "done"
+    PART = "part"
 
 
 def encode_params_tuple(params: Sequence[Any]) -> bytes:
@@ -112,11 +124,13 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
     return bytes(header)
 
 
-def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType], int]:
+def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] | RowMarker, int]:
     """Decode row column type header.
 
     Format: 4-bit type codes packed two per byte, padded to word boundary.
-    Returns (types, bytes_consumed).
+    Detects row markers (0xFF=done, 0xEE=part) byte-by-byte during parsing,
+    matching the Go reference implementation.
+    Returns (types_or_marker, bytes_consumed).
     """
     if column_count == 0:
         return [], 0
@@ -131,9 +145,16 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType], 
     types: list[ValueType] = []
     for i in range(column_count):
         byte_idx = i // 2
-        # Lower nibble for even indices, upper nibble for odd
-        type_code = data[byte_idx] & 0x0F if i % 2 == 0 else (data[byte_idx] >> 4) & 0x0F
-        types.append(ValueType(type_code))
+        if i % 2 == 0:
+            # Check for marker bytes at the start of each slot (matching Go)
+            slot = data[byte_idx]
+            if slot == ROW_DONE_BYTE:
+                return RowMarker.DONE, header_size
+            if slot == ROW_PART_BYTE:
+                return RowMarker.PART, header_size
+            types.append(ValueType(slot & 0x0F))
+        else:
+            types.append(ValueType((data[byte_idx] >> 4) & 0x0F))
 
     return types, header_size
 
