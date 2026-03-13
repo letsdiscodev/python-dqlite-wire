@@ -187,12 +187,49 @@ class TestFilesResponse:
         decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.files == {}
 
+    def test_empty_wire_format(self) -> None:
+        """Empty files should encode as just uint64 count=0."""
+        msg = FilesResponse(files={})
+        body = msg.encode_body()
+        # Should be exactly 8 bytes: uint64 count = 0
+        assert len(body) == 8
+        assert body == b"\x00" * 8
+
+    def test_wire_format_starts_with_count(self) -> None:
+        """Body must start with uint64 file count per Go wire protocol."""
+        from dqlitewire.types import decode_uint64
+
+        msg = FilesResponse(files={"test.db": b"data"})
+        body = msg.encode_body()
+        count = decode_uint64(body[:8])
+        assert count == 1
+
+    def test_wire_format_has_size_field(self) -> None:
+        """Each file entry has text name, uint64 size, then raw content bytes."""
+        from dqlitewire.types import decode_text, decode_uint64
+
+        content = b"abcdefgh"
+        msg = FilesResponse(files={"test.db": content})
+        body = msg.encode_body()
+        offset = 8  # skip count
+        _name, consumed = decode_text(body[offset:])
+        offset += consumed
+        # Next should be uint64 size of content
+        size = decode_uint64(body[offset:])
+        assert size == len(content)
+
     def test_roundtrip(self) -> None:
         msg = FilesResponse(files={"db.sqlite": b"database content", "wal": b"wal data"})
         encoded = msg.encode()
         decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.files["db.sqlite"] == b"database content"
         assert decoded.files["wal"] == b"wal data"
+
+    def test_roundtrip_single_file(self) -> None:
+        msg = FilesResponse(files={"main.db": b"\x00\x01\x02\x03"})
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files["main.db"] == b"\x00\x01\x02\x03"
 
 
 class TestServersResponse:

@@ -254,7 +254,7 @@ class EmptyResponse(Message):
 class FilesResponse(Message):
     """Database dump files response.
 
-    Body: text[] filenames, blob[] contents
+    Body: uint64 count, then repeated (text filename, uint64 size, raw bytes content)
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.FILES
@@ -262,25 +262,26 @@ class FilesResponse(Message):
     files: dict[str, bytes] = field(default_factory=dict)
 
     def encode_body(self) -> bytes:
-        from dqlitewire.types import encode_blob
-
-        result = b""
+        result = encode_uint64(len(self.files))
         for name, content in self.files.items():
             result += encode_text(name)
-            result += encode_blob(content)
+            result += encode_uint64(len(content))
+            result += content
         return result
 
     @classmethod
     def decode_body(cls, data: bytes) -> "FilesResponse":
-        from dqlitewire.types import decode_blob
-
         files: dict[str, bytes] = {}
         offset = 0
-        while offset < len(data):
+        count = decode_uint64(data[offset:])
+        offset += 8
+        for _ in range(count):
             name, consumed = decode_text(data[offset:])
             offset += consumed
-            content, consumed = decode_blob(data[offset:])
-            offset += consumed
+            size = decode_uint64(data[offset:])
+            offset += 8
+            content = data[offset : offset + size]
+            offset += size
             files[name] = content
         return cls(files)
 
