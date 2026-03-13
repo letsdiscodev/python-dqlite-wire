@@ -57,6 +57,26 @@ class TestParamsTuple:
         assert abs(decoded[2] - 3.14) < 0.0001
         assert decoded[3] is None
 
+    def test_encode_v1_schema(self) -> None:
+        """V1 encoding uses uint32 count instead of uint8."""
+        params = [1, 2, 3]
+        encoded = encode_params_tuple(params, schema=1)
+        # V1 header: count(4) + 3 types + padding(1) = 8, 3 values = 24, total = 32
+        assert len(encoded) == 32
+        # uint32 count in first 4 bytes (little-endian)
+        import struct
+
+        count = struct.unpack("<I", encoded[:4])[0]
+        assert count == 3
+
+    def test_roundtrip_v1(self) -> None:
+        """V1 params should roundtrip correctly."""
+        params = [42, "hello"]
+        encoded = encode_params_tuple(params, schema=1)
+        decoded, _ = decode_params_tuple(encoded, schema=1)
+        assert decoded[0] == 42
+        assert decoded[1] == "hello"
+
 
 class TestRowHeader:
     def test_encode_empty(self) -> None:

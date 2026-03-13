@@ -25,14 +25,11 @@ class RowMarker(Enum):
     PART = "part"
 
 
-def encode_params_tuple(params: Sequence[Any]) -> bytes:
+def encode_params_tuple(params: Sequence[Any], schema: int = 0) -> bytes:
     """Encode parameters as a params tuple.
 
-    Format per wire protocol spec:
-    - 1 byte: count of parameters
-    - N bytes: type codes (one byte per parameter)
-    - Zero padding to word boundary (including count byte)
-    - Values encoded according to their types
+    Schema 0 (V0): uint8 count + type codes + padding + values (max 255 params)
+    Schema 1 (V1): uint32 count + type codes + padding + values (max ~4B params)
     """
     if not params:
         # Go writes nothing for empty params
@@ -47,9 +44,16 @@ def encode_params_tuple(params: Sequence[Any]) -> bytes:
         types.append(value_type)
         values.append(encoded)
 
-    # Build header: count byte + type codes
+    # Build header: count field + type codes
     header = bytearray()
-    header.append(len(params))  # count byte
+    if schema == 1:
+        # V1: uint32 count
+        import struct
+
+        header.extend(struct.pack("<I", len(params)))
+    else:
+        # V0: uint8 count
+        header.append(len(params))
     for t in types:
         header.append(t)
 
@@ -61,10 +65,13 @@ def encode_params_tuple(params: Sequence[Any]) -> bytes:
     return bytes(header) + b"".join(values)
 
 
-def decode_params_tuple(data: bytes, count: int | None = None) -> tuple[list[Any], int]:
+def decode_params_tuple(
+    data: bytes, count: int | None = None, schema: int = 0
+) -> tuple[list[Any], int]:
     """Decode a params tuple.
 
-    If count is None, reads the count from the first byte of data.
+    Schema 0 (V0): uint8 count, schema 1 (V1): uint32 count.
+    If count is None, reads the count from data.
     Returns (values, bytes_consumed).
     """
     # Go writes nothing for empty params
@@ -76,15 +83,21 @@ def decode_params_tuple(data: bytes, count: int | None = None) -> tuple[list[Any
             return [], 0
         raise DecodeError(f"Not enough data for params tuple header: got {len(data)}")
 
-    # Read count from first byte if not provided
+    # Read count from data if not provided
     if count is None:
-        count = data[0]
+        if schema == 1:
+            import struct
+
+            count = struct.unpack("<I", data[:4])[0]
+        else:
+            count = data[0]
 
     if count == 0:
         return [], 0
 
-    # Header: count byte + type codes, padded to word boundary
-    header_len = 1 + count  # count byte + type codes
+    # Header: count field + type codes, padded to word boundary
+    count_size = 4 if schema == 1 else 1
+    header_len = count_size + count
     padded_header_len = header_len + pad_to_word(header_len)
 
     if len(data) < padded_header_len:
@@ -92,8 +105,8 @@ def decode_params_tuple(data: bytes, count: int | None = None) -> tuple[list[Any
             f"Not enough data for param types: need {padded_header_len}, got {len(data)}"
         )
 
-    # Read type codes (skip count byte at index 0)
-    types = [ValueType(data[1 + i]) for i in range(count)]
+    # Read type codes (skip count field)
+    types = [ValueType(data[count_size + i]) for i in range(count)]
     offset = padded_header_len
 
     # Read values
