@@ -120,6 +120,17 @@ class TestExecRequest:
         # db_id (4) + stmt_id (4) + empty params header (8) = 16 bytes
         assert len(body) == 16
 
+    def test_roundtrip_with_params(self) -> None:
+        """Parameters must survive encode/decode round-trip."""
+        msg = ExecRequest(db_id=1, stmt_id=2, params=[42, "hello", 3.14])
+        encoded = msg.encode()
+        decoded = ExecRequest.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 2
+        assert decoded.params[0] == 42
+        assert decoded.params[1] == "hello"
+        assert abs(decoded.params[2] - 3.14) < 0.0001
+
 
 class TestQueryRequest:
     def test_encode_no_params(self) -> None:
@@ -127,6 +138,16 @@ class TestQueryRequest:
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.msg_type == RequestType.QUERY
+
+    def test_roundtrip_with_params(self) -> None:
+        """Parameters must survive encode/decode round-trip."""
+        msg = QueryRequest(db_id=1, stmt_id=2, params=[100, "world"])
+        encoded = msg.encode()
+        decoded = QueryRequest.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 2
+        assert decoded.params[0] == 100
+        assert decoded.params[1] == "world"
 
 
 class TestFinalizeRequest:
@@ -146,6 +167,15 @@ class TestExecSqlRequest:
         assert decoded.db_id == 1
         assert decoded.sql == "CREATE TABLE test (id INTEGER)"
 
+    def test_roundtrip_with_params(self) -> None:
+        """Parameters must survive encode/decode round-trip."""
+        msg = ExecSqlRequest(db_id=1, sql="INSERT INTO t VALUES(?)", params=[42])
+        encoded = msg.encode()
+        decoded = ExecSqlRequest.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+        assert decoded.sql == "INSERT INTO t VALUES(?)"
+        assert decoded.params[0] == 42
+
 
 class TestQuerySqlRequest:
     def test_roundtrip(self) -> None:
@@ -154,6 +184,15 @@ class TestQuerySqlRequest:
         decoded = QuerySqlRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 1
         assert decoded.sql == "SELECT 1"
+
+    def test_roundtrip_with_params(self) -> None:
+        """Parameters must survive encode/decode round-trip."""
+        msg = QuerySqlRequest(db_id=1, sql="SELECT * FROM t WHERE id=?", params=[99])
+        encoded = msg.encode()
+        decoded = QuerySqlRequest.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+        assert decoded.sql == "SELECT * FROM t WHERE id=?"
+        assert decoded.params[0] == 99
 
 
 class TestInterruptRequest:
