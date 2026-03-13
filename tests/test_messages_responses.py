@@ -189,6 +189,18 @@ class TestRowsResponse:
         assert decoded.row_types[1] == [ValueType.TEXT]
         assert decoded.row_types[2] == [ValueType.NULL]
 
+    def test_zero_columns_malformed_no_infinite_loop(self) -> None:
+        """Zero-column result with non-marker data must not loop forever."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        # column_count=0, followed by non-marker bytes
+        data = encode_uint64(0) + b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        with pytest.raises(DecodeError):
+            RowsResponse.decode_body(data)
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:

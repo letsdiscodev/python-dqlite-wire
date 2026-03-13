@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from dqlitewire.constants import ResponseType, ValueType
+from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import RowMarker, decode_row_header, decode_row_values
 from dqlitewire.types import (
@@ -227,6 +228,8 @@ class RowsResponse(Message):
         all_row_types: list[list[ValueType]] = []
 
         while offset < len(data):
+            prev_offset = offset
+
             # Read row header; markers are detected byte-by-byte inside
             result, consumed = decode_row_header(data[offset:], column_count)
             offset += consumed
@@ -244,6 +247,11 @@ class RowsResponse(Message):
             values, consumed = decode_row_values(data[offset:], types)
             rows.append(values)
             offset += consumed
+
+            if offset == prev_offset:
+                raise DecodeError(
+                    "No progress in row decoding (possible zero-column result with malformed data)"
+                )
 
         return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
 
