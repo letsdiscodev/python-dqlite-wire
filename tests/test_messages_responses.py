@@ -296,6 +296,26 @@ class TestServersResponse:
         assert decoded.nodes[0].address == "node1:9001"
         assert decoded.nodes[1].role == 2
 
+    def test_wire_format_starts_with_count(self) -> None:
+        """Body must start with uint64 node count per Go reference."""
+        from dqlitewire.types import decode_uint64
+
+        nodes = [
+            NodeInfo(node_id=1, address="node1:9001", role=1),
+            NodeInfo(node_id=2, address="node2:9002", role=2),
+        ]
+        msg = ServersResponse(nodes=nodes)
+        body = msg.encode_body()
+        count = decode_uint64(body[:8])
+        assert count == 2
+
+    def test_empty_wire_format(self) -> None:
+        """Empty nodes should encode as just uint64 count=0."""
+        msg = ServersResponse(nodes=[])
+        body = msg.encode_body()
+        assert len(body) == 8
+        assert body == b"\x00" * 8
+
 
 class TestMetadataResponse:
     def test_roundtrip(self) -> None:

@@ -330,7 +330,7 @@ class ServersResponse(Message):
     nodes: list[NodeInfo] = field(default_factory=list)
 
     def encode_body(self) -> bytes:
-        result = b""
+        result = encode_uint64(len(self.nodes))
         for node in self.nodes:
             result += encode_uint64(node.node_id)
             result += encode_text(node.address)
@@ -341,7 +341,9 @@ class ServersResponse(Message):
     def decode_body(cls, data: bytes) -> "ServersResponse":
         nodes: list[NodeInfo] = []
         offset = 0
-        while offset < len(data):
+        count = decode_uint64(data[offset:])
+        offset += 8
+        for _ in range(count):
             node_id = decode_uint64(data[offset:])
             offset += 8
             address, consumed = decode_text(data[offset:])
