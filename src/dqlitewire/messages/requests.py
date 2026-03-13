@@ -345,25 +345,32 @@ class AddRequest(Message):
 
 @dataclass
 class AssignRequest(Message):
-    """Assign a role to a node.
+    """Assign a role to a node, or promote a node (legacy).
 
-    Body: uint64 node_id, uint64 role
+    ASSIGN and PROMOTE share type code 13. They are distinguished by body size:
+    - PROMOTE (legacy): uint64 node_id (1 word)
+    - ASSIGN: uint64 node_id, uint64 role (2 words)
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.ASSIGN
 
     node_id: int
-    role: int
+    role: int | None = None
 
     def encode_body(self) -> bytes:
-        return encode_uint64(self.node_id) + encode_uint64(self.role)
+        result = encode_uint64(self.node_id)
+        if self.role is not None:
+            result += encode_uint64(self.role)
+        return result
 
     @classmethod
     def decode_body(cls, data: bytes) -> "AssignRequest":
         from dqlitewire.types import decode_uint64
 
         node_id = decode_uint64(data)
-        role = decode_uint64(data[8:])
+        role: int | None = None
+        if len(data) >= 16:
+            role = decode_uint64(data[8:])
         return cls(node_id, role)
 
 

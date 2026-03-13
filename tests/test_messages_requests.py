@@ -258,6 +258,22 @@ class TestAssignRequest:
         assert decoded.node_id == 1
         assert decoded.role == 2
 
+    def test_decode_promote_single_field(self) -> None:
+        """Legacy PROMOTE request shares type code 13 but has only node_id.
+
+        The Go/C server distinguishes PROMOTE from ASSIGN by body size:
+        - PROMOTE: 1 word (8 bytes) = just node_id
+        - ASSIGN: 2 words (16 bytes) = node_id + role
+        decode_body must handle both.
+        """
+        from dqlitewire.types import encode_uint64
+
+        # Simulate a PROMOTE body: just node_id, no role field
+        promote_body = encode_uint64(5)
+        decoded = AssignRequest.decode_body(promote_body)
+        assert decoded.node_id == 5
+        assert decoded.role is None
+
 
 class TestRemoveRequest:
     def test_roundtrip(self) -> None:
