@@ -295,22 +295,24 @@ class InterruptRequest(Message):
 class ConnectRequest(Message):
     """Connect to a specific node.
 
-    Body: text address
+    Body: uint64 id, text address
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CONNECT
 
+    node_id: int
     address: str
 
     def encode_body(self) -> bytes:
-        return encode_text(self.address)
+        return encode_uint64(self.node_id) + encode_text(self.address)
 
     @classmethod
     def decode_body(cls, data: bytes) -> "ConnectRequest":
-        from dqlitewire.types import decode_text
+        from dqlitewire.types import decode_text, decode_uint64
 
-        address, _ = decode_text(data)
-        return cls(address)
+        node_id = decode_uint64(data)
+        address, _ = decode_text(data[8:])
+        return cls(node_id, address)
 
 
 @dataclass
