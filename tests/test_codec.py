@@ -114,6 +114,20 @@ class TestMessageDecoder:
         with pytest.raises(DecodeError, match="Unknown message type"):
             decoder.decode_bytes(invalid)
 
+    def test_header_decode_short_data_raises_decode_error(self) -> None:
+        """Header.decode() must raise DecodeError, not ValueError."""
+        from dqlitewire.messages.base import Header
+
+        with pytest.raises(DecodeError):
+            Header.decode(b"\x00" * 7)
+
+    def test_header_decode_empty_raises_decode_error(self) -> None:
+        """Header.decode() with empty bytes must raise DecodeError."""
+        from dqlitewire.messages.base import Header
+
+        with pytest.raises(DecodeError):
+            Header.decode(b"")
+
 
 class TestConvenienceFunctions:
     def test_encode_message(self) -> None:

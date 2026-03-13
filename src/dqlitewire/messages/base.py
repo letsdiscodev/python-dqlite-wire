@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
+from dqlitewire.exceptions import DecodeError
 
 
 @dataclass
@@ -38,7 +39,7 @@ class Header:
     def decode(cls, data: bytes) -> "Header":
         """Decode header from bytes."""
         if len(data) < HEADER_SIZE:
-            raise ValueError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
+            raise DecodeError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
         size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
         return cls(size_words, msg_type, schema, reserved)
 
