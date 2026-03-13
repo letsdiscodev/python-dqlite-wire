@@ -27,17 +27,18 @@ from dqlitewire.messages.requests import (
 
 
 class TestLeaderRequest:
-    def test_encode(self) -> None:
+    def test_encode_has_body(self) -> None:
+        """LeaderRequest body must contain a reserved uint64 per Go spec."""
         msg = LeaderRequest()
         encoded = msg.encode()
-        assert len(encoded) == HEADER_SIZE  # Header only, no body
+        assert len(encoded) == HEADER_SIZE + 8  # Header + reserved uint64
 
     def test_header(self) -> None:
         msg = LeaderRequest()
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.msg_type == RequestType.LEADER
-        assert header.size_words == 0
+        assert header.size_words == 1  # 1 word = 8 bytes reserved field
 
     def test_roundtrip(self) -> None:
         msg = LeaderRequest()

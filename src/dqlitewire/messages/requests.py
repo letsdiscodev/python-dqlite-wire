@@ -14,13 +14,13 @@ from dqlitewire.types import encode_text, encode_uint32, encode_uint64
 class LeaderRequest(Message):
     """Request current cluster leader address.
 
-    Body: empty
+    Body: uint64 (reserved, unused)
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.LEADER
 
     def encode_body(self) -> bytes:
-        return b""
+        return encode_uint64(0)
 
     @classmethod
     def decode_body(cls, data: bytes) -> "LeaderRequest":

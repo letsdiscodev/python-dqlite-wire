@@ -33,7 +33,7 @@ class TestMessageEncoder:
         encoder = MessageEncoder()
         msg = LeaderRequest()
         encoded = encoder.encode(msg)
-        assert len(encoded) == 8  # Header only
+        assert len(encoded) == 16  # Header + reserved uint64
 
 
 class TestMessageDecoder:
