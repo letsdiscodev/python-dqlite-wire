@@ -293,12 +293,25 @@ class TestFilesResponse:
         decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.files["main.db"] == b"\x00\x01\x02\x03"
 
-    def test_roundtrip_non_aligned_content(self) -> None:
-        """File content not aligned to 8 bytes must still roundtrip correctly.
+    def test_roundtrip_aligned_content(self) -> None:
+        """Real dqlite content is always word-aligned (SQLite pages are multiples of 512)."""
+        page = b"\x00" * 512  # Realistic SQLite page size
+        msg = FilesResponse(
+            files={
+                "main.db": page,
+                "wal.db": page + page,
+            }
+        )
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files["main.db"] == page
+        assert decoded.files["wal.db"] == page + page
 
-        The Go implementation uses blob-style encoding with padding to word
-        boundary after raw content bytes. This test verifies that non-aligned
-        content sizes work correctly with multiple files.
+    def test_roundtrip_non_aligned_content(self) -> None:
+        """Non-aligned content is handled defensively with padding.
+
+        The C server asserts content is always word-aligned, but the Python
+        implementation pads defensively for correctness with arbitrary content.
         """
         msg = FilesResponse(
             files={
@@ -311,22 +324,13 @@ class TestFilesResponse:
         assert decoded.files["file1.db"] == b"\x01\x02\x03"
         assert decoded.files["file2.db"] == b"\x04\x05\x06\x07\x08\x09\x0a"
 
-    def test_content_padded_to_word_boundary(self) -> None:
-        """Each file's content must be padded so subsequent fields stay aligned."""
-        from dqlitewire.types import decode_text, decode_uint64
-
-        msg = FilesResponse(files={"a": b"\x01\x02\x03"})
+    def test_aligned_content_has_no_padding(self) -> None:
+        """Word-aligned content must not produce any extra padding bytes."""
+        content = b"\x00" * 16  # exactly 2 words
+        msg = FilesResponse(files={"a.db": content})
         body = msg.encode_body()
-        offset = 8  # skip count
-        _name, consumed = decode_text(body[offset:])
-        offset += consumed
-        size = decode_uint64(body[offset:])
-        offset += 8
-        assert size == 3
-        # Content (3 bytes) + padding should advance to next word boundary
-        content_with_padding = offset + size + (8 - size % 8) % 8
-        # Total body should account for padding
-        assert len(body) >= content_with_padding
+        # count(8) + name "a.db\0"(8) + size(8) + content(16) = 40
+        assert len(body) == 40
 
 
 class TestServersResponse:

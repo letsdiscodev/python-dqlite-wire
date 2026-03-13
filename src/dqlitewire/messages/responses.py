@@ -282,6 +282,10 @@ class FilesResponse(Message):
     """Database dump files response.
 
     Body: uint64 count, then repeated (text filename, uint64 size, raw bytes content)
+
+    Note: the C server asserts content size is always word-aligned (SQLite pages
+    are multiples of 512), so no padding is written after content. The decoder
+    handles padding defensively in case of non-aligned sizes.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.FILES
@@ -296,8 +300,11 @@ class FilesResponse(Message):
             result += encode_text(name)
             result += encode_uint64(len(content))
             result += content
+            # The C server only produces word-aligned content (SQLite pages),
+            # but we pad defensively for correctness with arbitrary content.
             padding = pad_to_word(len(content))
-            result += b"\x00" * padding
+            if padding:
+                result += b"\x00" * padding
         return result
 
     @classmethod
@@ -314,6 +321,8 @@ class FilesResponse(Message):
             size = decode_uint64(data[offset:])
             offset += 8
             content = data[offset : offset + size]
+            # Content from the C server is always word-aligned, but we
+            # account for padding defensively.
             offset += size + pad_to_word(size)
             files[name] = content
         return cls(files)
