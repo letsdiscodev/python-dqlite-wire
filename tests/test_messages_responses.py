@@ -93,6 +93,25 @@ class TestStmtResponse:
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.body_size == 16
 
+    def test_roundtrip_v1_with_tail_offset(self) -> None:
+        """V1 STMT response includes tail_offset for multi-statement prepare."""
+        msg = StmtResponse(db_id=1, stmt_id=5, num_params=3, tail_offset=42)
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.body_size == 24  # 16 + 8 for tail_offset
+        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 5
+        assert decoded.num_params == 3
+        assert decoded.tail_offset == 42
+
+    def test_v0_has_no_tail_offset(self) -> None:
+        """V0 STMT response has no tail_offset."""
+        msg = StmtResponse(db_id=1, stmt_id=5, num_params=3)
+        encoded = msg.encode()
+        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.tail_offset is None
+
 
 class TestResultResponse:
     def test_roundtrip(self) -> None:

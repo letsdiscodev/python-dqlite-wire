@@ -106,12 +106,18 @@ class PrepareRequest(Message):
     """Prepare a SQL statement.
 
     Body: uint64 db_id, text sql
+
+    Set schema=1 to request V1 response with tail_offset for multi-statement SQL.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.PREPARE
 
     db_id: int
     sql: str
+    schema: int = 0
+
+    def _get_schema(self) -> int:
+        return self.schema
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.db_id) + encode_text(self.sql)

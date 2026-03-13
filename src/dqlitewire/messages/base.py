@@ -60,6 +60,10 @@ class Message(ABC):
         """Encode message body (without header)."""
         ...
 
+    def _get_schema(self) -> int:
+        """Return the schema version for the header. Override for per-instance schema."""
+        return self.SCHEMA
+
     def encode(self) -> bytes:
         """Encode complete message with header."""
         body = self.encode_body()
@@ -67,7 +71,7 @@ class Message(ABC):
         if len(body) % WORD_SIZE != 0:
             body += b"\x00" * (WORD_SIZE - (len(body) % WORD_SIZE))
         size_words = len(body) // WORD_SIZE
-        header = Header(size_words, self.MSG_TYPE, schema=self.SCHEMA)
+        header = Header(size_words, self.MSG_TYPE, schema=self._get_schema())
         return header.encode() + body
 
     @classmethod

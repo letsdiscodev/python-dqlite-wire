@@ -107,7 +107,8 @@ class DbResponse(Message):
 class StmtResponse(Message):
     """Statement prepared response.
 
-    Body: uint32 db_id, uint32 stmt_id, uint64 num_params
+    V0 body: uint32 db_id, uint32 stmt_id, uint64 num_params
+    V1 body: uint32 db_id, uint32 stmt_id, uint64 num_params, uint64 tail_offset
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.STMT
@@ -115,13 +116,17 @@ class StmtResponse(Message):
     db_id: int
     stmt_id: int
     num_params: int
+    tail_offset: int | None = None
 
     def encode_body(self) -> bytes:
         from dqlitewire.types import encode_uint32
 
-        return (
+        result = (
             encode_uint32(self.db_id) + encode_uint32(self.stmt_id) + encode_uint64(self.num_params)
         )
+        if self.tail_offset is not None:
+            result += encode_uint64(self.tail_offset)
+        return result
 
     @classmethod
     def decode_body(cls, data: bytes) -> "StmtResponse":
@@ -130,7 +135,10 @@ class StmtResponse(Message):
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
-        return cls(db_id, stmt_id, num_params)
+        tail_offset: int | None = None
+        if len(data) >= 24:
+            tail_offset = decode_uint64(data[16:])
+        return cls(db_id, stmt_id, num_params, tail_offset)
 
 
 @dataclass

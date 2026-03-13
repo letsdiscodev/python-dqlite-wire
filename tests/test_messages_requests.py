@@ -107,6 +107,13 @@ class TestPrepareRequest:
         assert decoded.db_id == 1
         assert decoded.sql == "SELECT * FROM users WHERE id = ?"
 
+    def test_v1_schema_in_header(self) -> None:
+        """V1 PrepareRequest sets schema=1 in the header for multi-statement support."""
+        msg = PrepareRequest(db_id=1, sql="SELECT 1; SELECT 2", schema=1)
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.schema == 1
+
 
 class TestExecRequest:
     def test_encode_no_params(self) -> None:
