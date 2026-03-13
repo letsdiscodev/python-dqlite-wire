@@ -45,18 +45,16 @@ class ResponseType(IntEnum):
     """Server to client message types."""
 
     FAILURE = 0
-    LEADER = 1  # Also called NODE
+    LEADER = 1  # Also called NODE (NodeLegacy is also 1 in Go)
     WELCOME = 2
-    NODE_LEGACY = 3
+    SERVERS = 3  # Also called NODES
     DB = 4
     STMT = 5
     RESULT = 6
     ROWS = 7
     EMPTY = 8
     FILES = 9
-    SERVERS = 10  # Also called CLUSTER or NODES
-    METADATA = 11
-    DESCRIPTION = 12
+    METADATA = 10
 
 
 class ValueType(IntEnum):

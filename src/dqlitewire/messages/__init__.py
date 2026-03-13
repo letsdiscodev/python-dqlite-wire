@@ -25,7 +25,6 @@ from dqlitewire.messages.requests import (
 )
 from dqlitewire.messages.responses import (
     DbResponse,
-    DescriptionResponse,
     EmptyResponse,
     FailureResponse,
     FilesResponse,
@@ -75,5 +74,4 @@ __all__ = [
     "FilesResponse",
     "ServersResponse",
     "MetadataResponse",
-    "DescriptionResponse",
 ]

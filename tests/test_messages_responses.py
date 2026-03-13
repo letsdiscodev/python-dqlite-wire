@@ -4,7 +4,6 @@ from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
     DbResponse,
-    DescriptionResponse,
     EmptyResponse,
     FailureResponse,
     FilesResponse,
@@ -224,19 +223,3 @@ class TestMetadataResponse:
         decoded = MetadataResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.failure_domain == 1
         assert decoded.weight == 50
-
-
-class TestDescriptionResponse:
-    def test_roundtrip_aligned(self) -> None:
-        # Use data that's already 8-byte aligned to avoid padding issues
-        msg = DescriptionResponse(data=b"12345678")
-        encoded = msg.encode()
-        decoded = DescriptionResponse.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.data == b"12345678"
-
-    def test_encode(self) -> None:
-        # Non-aligned data gets padded in wire format
-        msg = DescriptionResponse(data=b"test")
-        encoded = msg.encode()
-        # Body is padded to 8 bytes
-        assert len(encoded) == HEADER_SIZE + 8

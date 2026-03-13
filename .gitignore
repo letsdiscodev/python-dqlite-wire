@@ -44,3 +44,6 @@ htmlcov/
 # Distribution
 dist/
 build/
+
+# Issue tracking
+issues/

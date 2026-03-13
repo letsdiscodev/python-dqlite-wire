@@ -354,22 +354,3 @@ class MetadataResponse(Message):
         failure_domain = decode_uint64(data)
         weight = decode_uint64(data[8:])
         return cls(failure_domain, weight)
-
-
-@dataclass
-class DescriptionResponse(Message):
-    """Database description response.
-
-    Body: varies based on format requested
-    """
-
-    MSG_TYPE: ClassVar[int] = ResponseType.DESCRIPTION
-
-    data: bytes = b""
-
-    def encode_body(self) -> bytes:
-        return self.data
-
-    @classmethod
-    def decode_body(cls, data: bytes) -> "DescriptionResponse":
-        return cls(data)

@@ -28,7 +28,6 @@ from dqlitewire.messages.requests import (
 )
 from dqlitewire.messages.responses import (
     DbResponse,
-    DescriptionResponse,
     EmptyResponse,
     FailureResponse,
     FilesResponse,
@@ -69,15 +68,14 @@ RESPONSE_TYPES: dict[int, type[Message]] = {
     ResponseType.FAILURE: FailureResponse,
     ResponseType.LEADER: LeaderResponse,
     ResponseType.WELCOME: WelcomeResponse,
+    ResponseType.SERVERS: ServersResponse,
     ResponseType.DB: DbResponse,
     ResponseType.STMT: StmtResponse,
     ResponseType.RESULT: ResultResponse,
     ResponseType.ROWS: RowsResponse,
     ResponseType.EMPTY: EmptyResponse,
     ResponseType.FILES: FilesResponse,
-    ResponseType.SERVERS: ServersResponse,
     ResponseType.METADATA: MetadataResponse,
-    ResponseType.DESCRIPTION: DescriptionResponse,
 }
 
 
