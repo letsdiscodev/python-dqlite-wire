@@ -203,20 +203,22 @@ class TestRowHeader:
         assert result == (RowMarker.DONE, 8)
 
     def test_full_uint64_marker_comparison(self) -> None:
-        """Marker detection uses full uint64 comparison, not byte-by-byte.
-
-        Go checks byte-by-byte (first byte == 0xFF -> DONE). Python compares
-        the full 8-byte word against 0xFFFFFFFFFFFFFFFF. Both produce the same
-        result for well-formed server markers (all 8 bytes identical).
-        """
-        # Full marker must be detected
+        """Full uniform markers must be detected."""
         assert decode_row_header(b"\xff" * 8, 1) == (RowMarker.DONE, 8)
         assert decode_row_header(b"\xee" * 8, 1) == (RowMarker.PART, 8)
-        # Verify the uint64 comparison constants
-        from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER
 
-        assert ROW_DONE_MARKER == 0xFFFFFFFFFFFFFFFF
-        assert ROW_PART_MARKER == 0xEEEEEEEEEEEEEEEE
+    def test_first_byte_marker_detection(self) -> None:
+        """Marker detection uses first byte, matching Go's byte-by-byte check.
+
+        Go checks the first byte (0xFF -> DONE, 0xEE -> PART). A non-uniform
+        marker where only the first byte matches must still be detected.
+        """
+        # Non-uniform marker: first byte 0xFF, rest different
+        data = b"\xff\x00\x00\x00\x00\x00\x00\x00"
+        assert decode_row_header(data, 1) == (RowMarker.DONE, 8)
+
+        data = b"\xee\x00\x00\x00\x00\x00\x00\x00"
+        assert decode_row_header(data, 1) == (RowMarker.PART, 8)
 
 
 class TestRowValues:
