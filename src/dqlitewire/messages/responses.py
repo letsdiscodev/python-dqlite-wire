@@ -276,7 +276,10 @@ class RowsResponse(Message):
                     "No progress in row decoding (possible zero-column result with malformed data)"
                 )
 
-        return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
+        raise DecodeError(
+            f"RowsResponse body exhausted without end marker "
+            f"(decoded {len(rows)} rows, consumed {offset} of {len(data)} bytes)"
+        )
 
     @classmethod
     def decode_rows_continuation(

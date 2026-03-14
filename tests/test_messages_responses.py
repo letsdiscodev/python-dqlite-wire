@@ -255,6 +255,24 @@ class TestRowsResponse:
         assert decoded.rows[1] == [4, "Diana"]
         assert decoded.has_more is False
 
+    def test_truncated_body_without_marker_raises(self) -> None:
+        """Body exhausted without DONE/PART marker must raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        # Build a body with rows but NO end marker
+        body = encode_uint64(1)  # column_count=1
+        body += encode_text("id")
+        body += encode_row_header([ValueType.INTEGER])
+        body += encode_row_values([42], [ValueType.INTEGER])
+        # No marker at the end!
+
+        with pytest.raises(DecodeError, match="end marker"):
+            RowsResponse.decode_body(body)
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:
