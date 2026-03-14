@@ -115,6 +115,13 @@ class TestPrepareRequest:
 
 
 class TestExecRequest:
+    def test_schema_v0_for_small_params(self) -> None:
+        """Go uses schema=0 (V0 uint8 count) when params <= 255."""
+        msg = ExecRequest(db_id=1, stmt_id=2, params=[1, 2, 3])
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.schema == 0
+
     def test_encode_no_params(self) -> None:
         msg = ExecRequest(db_id=1, stmt_id=2, params=[])
         encoded = msg.encode()
@@ -138,24 +145,21 @@ class TestExecRequest:
         assert decoded.params[1] == "hello"
         assert abs(decoded.params[2] - 3.14) < 0.0001
 
-    def test_schema_version_1_in_header(self) -> None:
-        """Go client always sends Exec with schema=1 in the header."""
+    def test_schema_v0_for_small_params_in_header(self) -> None:
+        """Go uses schema=0 for <= 255 params, schema=1 for > 255."""
         msg = ExecRequest(db_id=1, stmt_id=2, params=[42])
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])
-        assert header.schema == 1
+        assert header.schema == 0
 
-    def test_params_use_v1_uint32_count(self) -> None:
-        """Parameters must use V1 format (uint32 count) per Go reference."""
-        import struct
-
+    def test_params_use_v0_uint8_count_for_small_lists(self) -> None:
+        """Parameters use V0 format (uint8 count) when <= 255 params."""
         msg = ExecRequest(db_id=1, stmt_id=2, params=[42])
         body = msg.encode_body()
         # After db_id (4) + stmt_id (4) = 8, params start
         params_data = body[8:]
-        # V1: first 4 bytes are uint32 count
-        count = struct.unpack("<I", params_data[:4])[0]
-        assert count == 1
+        # V0: first byte is uint8 count
+        assert params_data[0] == 1
 
 
 class TestQueryRequest:

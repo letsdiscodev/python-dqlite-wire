@@ -135,19 +135,23 @@ class PrepareRequest(Message):
 class ExecRequest(Message):
     """Execute a prepared statement.
 
-    Body: uint32 db_id, uint32 stmt_id, params tuple (V1/PARAMS32)
+    Body: uint32 db_id, uint32 stmt_id, params tuple
+    Uses V0 (uint8 count) for <= 255 params, V1 (uint32 count) otherwise.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.EXEC
-    SCHEMA: ClassVar[int] = 1
 
     db_id: int
     stmt_id: int
     params: Sequence[Any] = field(default_factory=list)
 
+    def _get_schema(self) -> int:
+        return 1 if len(self.params) > 255 else 0
+
     def encode_body(self) -> bytes:
+        schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
-        result += encode_params_tuple(self.params, schema=1)
+        result += encode_params_tuple(self.params, schema=schema)
         return result
 
     @classmethod
@@ -157,7 +161,7 @@ class ExecRequest(Message):
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:], schema=1)
+        params, _ = decode_params_tuple(data[8:])
         return cls(db_id, stmt_id, params)
 
 
@@ -165,19 +169,23 @@ class ExecRequest(Message):
 class QueryRequest(Message):
     """Query a prepared statement.
 
-    Body: uint32 db_id, uint32 stmt_id, params tuple (V1/PARAMS32)
+    Body: uint32 db_id, uint32 stmt_id, params tuple
+    Uses V0 (uint8 count) for <= 255 params, V1 (uint32 count) otherwise.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.QUERY
-    SCHEMA: ClassVar[int] = 1
 
     db_id: int
     stmt_id: int
     params: Sequence[Any] = field(default_factory=list)
 
+    def _get_schema(self) -> int:
+        return 1 if len(self.params) > 255 else 0
+
     def encode_body(self) -> bytes:
+        schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
-        result += encode_params_tuple(self.params, schema=1)
+        result += encode_params_tuple(self.params, schema=schema)
         return result
 
     @classmethod
@@ -187,7 +195,7 @@ class QueryRequest(Message):
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:], schema=1)
+        params, _ = decode_params_tuple(data[8:])
         return cls(db_id, stmt_id, params)
 
 
@@ -219,20 +227,24 @@ class FinalizeRequest(Message):
 class ExecSqlRequest(Message):
     """Execute SQL directly (without prepare).
 
-    Body: uint64 db_id, text sql, params tuple (V1/PARAMS32)
+    Body: uint64 db_id, text sql, params tuple
+    Uses V0 (uint8 count) for <= 255 params, V1 (uint32 count) otherwise.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.EXEC_SQL
-    SCHEMA: ClassVar[int] = 1
 
     db_id: int
     sql: str
     params: Sequence[Any] = field(default_factory=list)
 
+    def _get_schema(self) -> int:
+        return 1 if len(self.params) > 255 else 0
+
     def encode_body(self) -> bytes:
+        schema = self._get_schema()
         result = encode_uint64(self.db_id)
         result += encode_text(self.sql)
-        result += encode_params_tuple(self.params, schema=1)
+        result += encode_params_tuple(self.params, schema=schema)
         return result
 
     @classmethod
@@ -243,7 +255,7 @@ class ExecSqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:], schema=1)
+        params, _ = decode_params_tuple(data[offset:])
         return cls(db_id, sql, params)
 
 
@@ -251,20 +263,24 @@ class ExecSqlRequest(Message):
 class QuerySqlRequest(Message):
     """Query SQL directly (without prepare).
 
-    Body: uint64 db_id, text sql, params tuple (V1/PARAMS32)
+    Body: uint64 db_id, text sql, params tuple
+    Uses V0 (uint8 count) for <= 255 params, V1 (uint32 count) otherwise.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.QUERY_SQL
-    SCHEMA: ClassVar[int] = 1
 
     db_id: int
     sql: str
     params: Sequence[Any] = field(default_factory=list)
 
+    def _get_schema(self) -> int:
+        return 1 if len(self.params) > 255 else 0
+
     def encode_body(self) -> bytes:
+        schema = self._get_schema()
         result = encode_uint64(self.db_id)
         result += encode_text(self.sql)
-        result += encode_params_tuple(self.params, schema=1)
+        result += encode_params_tuple(self.params, schema=schema)
         return result
 
     @classmethod
@@ -275,7 +291,7 @@ class QuerySqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:], schema=1)
+        params, _ = decode_params_tuple(data[offset:])
         return cls(db_id, sql, params)
 
 
