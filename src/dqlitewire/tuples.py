@@ -155,7 +155,9 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
     # Check for markers first — markers are always exactly one 8-byte word,
     # regardless of column count. Must check before header size validation
     # because for large column counts the header would be >8 bytes.
-    # Compare the full uint64, matching the Go reference (peekUint64).
+    # Note: Go checks byte-by-byte (first byte == 0xFF/0xEE), while we
+    # compare the full uint64. Both produce the same result for well-formed
+    # server markers where all 8 bytes are identical.
     if len(data) >= 8:
         marker = decode_uint64(data)
         if marker == ROW_DONE_MARKER:
