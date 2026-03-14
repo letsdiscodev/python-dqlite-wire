@@ -143,6 +143,12 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
     if not types:
         return b""
 
+    for i, t in enumerate(types):
+        if int(t) > 15:
+            raise EncodeError(
+                f"Value type {t} at index {i} exceeds 4-bit nibble range (max 15)"
+            )
+
     header = bytearray()
     for i in range(0, len(types), 2):
         low = types[i]

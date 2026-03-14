@@ -153,6 +153,17 @@ class TestRowHeader:
         # 3 types need 2 bytes (4 slots, 1 unused) + 6 padding = 8 bytes
         assert len(encoded) == 8
 
+    def test_encode_rejects_type_exceeding_nibble(self) -> None:
+        """ValueType codes >= 16 cannot fit in 4-bit nibble and must be rejected."""
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        # Create a fake type with value 16 (doesn't fit in 4 bits)
+        fake_type = 16
+        with pytest.raises(EncodeError, match="nibble"):
+            encode_row_header([fake_type])  # type: ignore[list-item]
+
     def test_decode_empty(self) -> None:
         types, consumed = decode_row_header(b"", 0)
         assert types == []
