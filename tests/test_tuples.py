@@ -77,6 +77,16 @@ class TestParamsTuple:
         assert decoded[0] == 42
         assert decoded[1] == "hello"
 
+    def test_v0_rejects_more_than_255_params(self) -> None:
+        """V0 schema uses uint8 count, so > 255 params must raise EncodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        params = list(range(256))
+        with pytest.raises(EncodeError, match="255"):
+            encode_params_tuple(params, schema=0)
+
 
 class TestRowHeader:
     def test_encode_empty(self) -> None:

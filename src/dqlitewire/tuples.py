@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Any
 
 from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.types import decode_uint64, decode_value, encode_value, pad_to_word
 
 
@@ -49,6 +49,11 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0) -> bytes:
         header.extend(struct.pack("<I", len(params)))
     else:
         # V0: uint8 count
+        if len(params) > 255:
+            raise EncodeError(
+                f"V0 params tuple supports at most 255 parameters, got {len(params)}. "
+                f"Use schema=1 for larger parameter lists."
+            )
         header.append(len(params))
     for t in types:
         header.append(t)
