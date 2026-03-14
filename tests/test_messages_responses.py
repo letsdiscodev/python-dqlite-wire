@@ -107,7 +107,13 @@ class TestStmtResponse:
         assert header.body_size == 16
 
     def test_roundtrip_v1_with_tail_offset(self) -> None:
-        """V1 STMT response includes tail_offset for multi-statement prepare."""
+        """V1 STMT response includes tail_offset for multi-statement prepare.
+
+        Note: tail_offset is not present in the canonical Go client
+        (go-dqlite). It may be supported by the C server but the Go
+        client's EncodePrepare always uses schema=0 and DecodeStmt
+        never reads tail_offset.
+        """
         msg = StmtResponse(db_id=1, stmt_id=5, num_params=3, tail_offset=42)
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])

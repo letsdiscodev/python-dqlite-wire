@@ -125,6 +125,11 @@ class StmtResponse(Message):
 
     V0 body: uint32 db_id, uint32 stmt_id, uint64 num_params
     V1 body: uint32 db_id, uint32 stmt_id, uint64 num_params, uint64 tail_offset
+
+    Note: V1 tail_offset is not present in the canonical Go client
+    (go-dqlite). The Go EncodePrepare always uses schema=0 and DecodeStmt
+    does not read tail_offset. This feature may be supported by the C
+    dqlite server for multi-statement SQL but is not exercised by Go.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.STMT

@@ -107,11 +107,23 @@ class TestPrepareRequest:
         assert decoded.sql == "SELECT * FROM users WHERE id = ?"
 
     def test_v1_schema_in_header(self) -> None:
-        """V1 PrepareRequest sets schema=1 in the header for multi-statement support."""
+        """V1 PrepareRequest sets schema=1 in the header for multi-statement support.
+
+        Note: schema=1 is not used by the canonical Go client (go-dqlite).
+        This is a feature supported by the C dqlite server but not exercised
+        by the Go reference implementation.
+        """
         msg = PrepareRequest(db_id=1, sql="SELECT 1; SELECT 2", schema=1)
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.schema == 1
+
+    def test_default_schema_is_0_matching_go(self) -> None:
+        """Default schema=0 matches Go's EncodePrepare which always uses schema=0."""
+        msg = PrepareRequest(db_id=1, sql="SELECT 1")
+        encoded = msg.encode()
+        header = Header.decode(encoded[:HEADER_SIZE])
+        assert header.schema == 0
 
 
 class TestExecRequest:

@@ -108,6 +108,9 @@ class PrepareRequest(Message):
     Body: uint64 db_id, text sql
 
     Set schema=1 to request V1 response with tail_offset for multi-statement SQL.
+    Note: schema=1 is not used by the canonical Go client (go-dqlite), which
+    always sends schema=0. The tail_offset feature may be supported by the C
+    dqlite server but is not exercised by Go.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.PREPARE
