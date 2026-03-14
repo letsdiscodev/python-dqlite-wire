@@ -227,6 +227,17 @@ class TestRowsResponse:
         assert decoded.row_types[1] == [ValueType.TEXT]
         assert decoded.row_types[2] == [ValueType.NULL]
 
+    def test_column_types_populated_on_decode(self) -> None:
+        """column_types should be populated from the first row's types after decode."""
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[[1, "Alice"], [2, "Bob"]],
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.column_types == [ValueType.INTEGER, ValueType.TEXT]
+
     def test_zero_columns_malformed_no_infinite_loop(self) -> None:
         """Zero-column result with non-marker data must not loop forever."""
         import pytest

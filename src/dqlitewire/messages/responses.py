@@ -254,6 +254,7 @@ class RowsResponse(Message):
         # Rows - each row has its own type header
         rows: list[list[Any]] = []
         all_row_types: list[list[ValueType]] = []
+        column_types: list[ValueType] = []
 
         while offset < len(data):
             prev_offset = offset
@@ -263,14 +264,28 @@ class RowsResponse(Message):
             offset += consumed
 
             if result is RowMarker.DONE:
-                return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
+                return cls(
+                    column_names,
+                    column_types=column_types,
+                    row_types=all_row_types,
+                    rows=rows,
+                    has_more=False,
+                )
             if result is RowMarker.PART:
-                return cls(column_names, row_types=all_row_types, rows=rows, has_more=True)
+                return cls(
+                    column_names,
+                    column_types=column_types,
+                    row_types=all_row_types,
+                    rows=rows,
+                    has_more=True,
+                )
 
             types = result
             if not isinstance(types, list):
                 raise DecodeError(f"Expected column types list, got {type(types).__name__}")
             all_row_types.append(types)
+            if not column_types:
+                column_types = types
 
             # Read row values
             values, consumed = decode_row_values(data[offset:], types)
@@ -305,6 +320,7 @@ class RowsResponse(Message):
         offset = 0
         rows: list[list[Any]] = []
         all_row_types: list[list[ValueType]] = []
+        column_types: list[ValueType] = []
 
         while offset < len(data):
             prev_offset = offset
@@ -313,14 +329,28 @@ class RowsResponse(Message):
             offset += consumed
 
             if result is RowMarker.DONE:
-                return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
+                return cls(
+                    column_names,
+                    column_types=column_types,
+                    row_types=all_row_types,
+                    rows=rows,
+                    has_more=False,
+                )
             if result is RowMarker.PART:
-                return cls(column_names, row_types=all_row_types, rows=rows, has_more=True)
+                return cls(
+                    column_names,
+                    column_types=column_types,
+                    row_types=all_row_types,
+                    rows=rows,
+                    has_more=True,
+                )
 
             types = result
             if not isinstance(types, list):
                 raise DecodeError(f"Expected column types list, got {type(types).__name__}")
             all_row_types.append(types)
+            if not column_types:
+                column_types = types
 
             values, consumed = decode_row_values(data[offset:], types)
             rows.append(values)
