@@ -76,6 +76,6 @@ class Message(ABC):
 
     @classmethod
     @abstractmethod
-    def decode_body(cls, data: bytes) -> "Message":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "Message":
         """Decode message from body data (without header)."""
         ...

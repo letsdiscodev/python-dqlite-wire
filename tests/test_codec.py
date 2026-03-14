@@ -17,7 +17,9 @@ from dqlitewire.messages import (
     LeaderRequest,
     LeaderResponse,
     OpenRequest,
+    PrepareRequest,
     ResultResponse,
+    StmtResponse,
     WelcomeResponse,
 )
 
@@ -196,3 +198,26 @@ class TestRoundTrip:
         decoded = decode_message(encoded, is_request=False)
         assert isinstance(decoded, FailureResponse)
         assert decoded.message == "Error: \u00e9\u00e8\u00e0"
+
+    def test_prepare_request_schema_survives_roundtrip(self) -> None:
+        """PrepareRequest with schema=1 must preserve schema through codec round-trip."""
+        original = PrepareRequest(db_id=1, sql="SELECT 1", schema=1)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, PrepareRequest)
+        assert decoded.schema == 1
+
+    def test_stmt_response_v0_with_trailing_data_not_detected_as_v1(self) -> None:
+        """StmtResponse V0 with trailing bytes must not be misdetected as V1."""
+        from dqlitewire.messages.base import Header
+        from dqlitewire.types import encode_uint32, encode_uint64
+
+        # Build a V0 body (16 bytes) + 8 extra trailing bytes (total 24)
+        # Without schema awareness, len >= 24 triggers V1 decode reading garbage tail_offset
+        body = encode_uint32(1) + encode_uint32(2) + encode_uint64(3) + b"\x00" * 8
+        header = Header(size_words=3, msg_type=5, schema=0)
+        data = header.encode() + body
+        decoded = decode_message(data, is_request=False)
+        assert isinstance(decoded, StmtResponse)
+        # With schema=0 in header, tail_offset should NOT be decoded
+        assert decoded.tail_offset is None

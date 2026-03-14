@@ -99,7 +99,7 @@ class TestStmtResponse:
         encoded = msg.encode()
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.body_size == 24  # 16 + 8 for tail_offset
-        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
+        decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:], schema=header.schema)
         assert decoded.db_id == 1
         assert decoded.stmt_id == 5
         assert decoded.num_params == 3

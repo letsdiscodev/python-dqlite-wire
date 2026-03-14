@@ -140,7 +140,7 @@ class MessageDecoder:
         if msg_class is None:
             raise DecodeError(f"Unknown message type: {header.msg_type}")
 
-        return msg_class.decode_body(body)
+        return msg_class.decode_body(body, schema=header.schema)
 
     def decode_handshake(self) -> int | None:
         """Decode protocol version handshake.

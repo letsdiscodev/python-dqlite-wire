@@ -31,7 +31,7 @@ class FailureResponse(Message):
         return encode_uint64(self.code) + encode_text(self.message)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "FailureResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         code = decode_uint64(data)
         message, _ = decode_text(data[8:])
         return cls(code, message)
@@ -53,7 +53,7 @@ class LeaderResponse(Message):
         return encode_uint64(self.node_id) + encode_text(self.address)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "LeaderResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
         node_id = decode_uint64(data)
         address, _ = decode_text(data[8:])
         return cls(node_id, address)
@@ -74,7 +74,7 @@ class WelcomeResponse(Message):
         return encode_uint64(self.heartbeat_timeout)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "WelcomeResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "WelcomeResponse":
         heartbeat_timeout = decode_uint64(data)
         return cls(heartbeat_timeout)
 
@@ -96,7 +96,7 @@ class DbResponse(Message):
         return encode_uint32(self.db_id) + encode_uint32(0)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "DbResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "DbResponse":
         from dqlitewire.types import decode_uint32
 
         db_id = decode_uint32(data)
@@ -118,6 +118,9 @@ class StmtResponse(Message):
     num_params: int
     tail_offset: int | None = None
 
+    def _get_schema(self) -> int:
+        return 1 if self.tail_offset is not None else 0
+
     def encode_body(self) -> bytes:
         from dqlitewire.types import encode_uint32
 
@@ -129,14 +132,14 @@ class StmtResponse(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "StmtResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
         from dqlitewire.types import decode_uint32
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
         tail_offset: int | None = None
-        if len(data) >= 24:
+        if schema >= 1 and len(data) >= 24:
             tail_offset = decode_uint64(data[16:])
         return cls(db_id, stmt_id, num_params, tail_offset)
 
@@ -157,7 +160,7 @@ class ResultResponse(Message):
         return encode_uint64(self.last_insert_id) + encode_uint64(self.rows_affected)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "ResultResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ResultResponse":
         last_insert_id = decode_uint64(data)
         rows_affected = decode_uint64(data[8:])
         return cls(last_insert_id, rows_affected)
@@ -213,7 +216,7 @@ class RowsResponse(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "RowsResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "RowsResponse":
         offset = 0
 
         # Column count
@@ -273,7 +276,7 @@ class EmptyResponse(Message):
         return encode_uint64(0)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "EmptyResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "EmptyResponse":
         return cls()
 
 
@@ -308,7 +311,7 @@ class FilesResponse(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "FilesResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
         from dqlitewire.types import pad_to_word
 
         files: dict[str, bytes] = {}
@@ -357,7 +360,7 @@ class ServersResponse(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "ServersResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ServersResponse":
         nodes: list[NodeInfo] = []
         offset = 0
         count = decode_uint64(data[offset:])
@@ -389,7 +392,7 @@ class MetadataResponse(Message):
         return encode_uint64(self.failure_domain) + encode_uint64(self.weight)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "MetadataResponse":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "MetadataResponse":
         failure_domain = decode_uint64(data)
         weight = decode_uint64(data[8:])
         return cls(failure_domain, weight)

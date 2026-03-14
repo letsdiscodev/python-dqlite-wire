@@ -23,7 +23,7 @@ class LeaderRequest(Message):
         return encode_uint64(0)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "LeaderRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderRequest":
         return cls()
 
 
@@ -42,7 +42,7 @@ class ClientRequest(Message):
         return encode_uint64(self.client_id)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "ClientRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ClientRequest":
         from dqlitewire.types import decode_uint64
 
         client_id = decode_uint64(data)
@@ -64,7 +64,7 @@ class HeartbeatRequest(Message):
         return encode_uint64(self.timestamp)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "HeartbeatRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "HeartbeatRequest":
         from dqlitewire.types import decode_uint64
 
         timestamp = decode_uint64(data)
@@ -91,7 +91,7 @@ class OpenRequest(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "OpenRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "OpenRequest":
         from dqlitewire.types import decode_text, decode_uint64
 
         name, offset = decode_text(data)
@@ -123,12 +123,12 @@ class PrepareRequest(Message):
         return encode_uint64(self.db_id) + encode_text(self.sql)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "PrepareRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
         from dqlitewire.types import decode_text, decode_uint64
 
         db_id = decode_uint64(data)
         sql, _ = decode_text(data[8:])
-        return cls(db_id, sql)
+        return cls(db_id, sql, schema=schema)
 
 
 @dataclass
@@ -151,7 +151,7 @@ class ExecRequest(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "ExecRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ExecRequest":
         from dqlitewire.tuples import decode_params_tuple
         from dqlitewire.types import decode_uint32
 
@@ -181,7 +181,7 @@ class QueryRequest(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "QueryRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "QueryRequest":
         from dqlitewire.tuples import decode_params_tuple
         from dqlitewire.types import decode_uint32
 
@@ -207,7 +207,7 @@ class FinalizeRequest(Message):
         return encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "FinalizeRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "FinalizeRequest":
         from dqlitewire.types import decode_uint32
 
         db_id = decode_uint32(data)
@@ -236,7 +236,7 @@ class ExecSqlRequest(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "ExecSqlRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ExecSqlRequest":
         from dqlitewire.tuples import decode_params_tuple
         from dqlitewire.types import decode_text, decode_uint64
 
@@ -268,7 +268,7 @@ class QuerySqlRequest(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "QuerySqlRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "QuerySqlRequest":
         from dqlitewire.tuples import decode_params_tuple
         from dqlitewire.types import decode_text, decode_uint64
 
@@ -294,7 +294,7 @@ class InterruptRequest(Message):
         return encode_uint64(self.db_id)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "InterruptRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "InterruptRequest":
         from dqlitewire.types import decode_uint64
 
         db_id = decode_uint64(data)
@@ -317,7 +317,7 @@ class AddRequest(Message):
         return encode_uint64(self.node_id) + encode_text(self.address)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "AddRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "AddRequest":
         from dqlitewire.types import decode_text, decode_uint64
 
         node_id = decode_uint64(data)
@@ -346,7 +346,7 @@ class AssignRequest(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "AssignRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "AssignRequest":
         from dqlitewire.types import decode_uint64
 
         node_id = decode_uint64(data)
@@ -371,7 +371,7 @@ class RemoveRequest(Message):
         return encode_uint64(self.node_id)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "RemoveRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "RemoveRequest":
         from dqlitewire.types import decode_uint64
 
         node_id = decode_uint64(data)
@@ -393,7 +393,7 @@ class DumpRequest(Message):
         return encode_text(self.name)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "DumpRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
         from dqlitewire.types import decode_text
 
         name, _ = decode_text(data)
@@ -415,7 +415,7 @@ class ClusterRequest(Message):
         return encode_uint64(self.format)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "ClusterRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
         from dqlitewire.types import decode_uint64
 
         format_val = decode_uint64(data)
@@ -437,7 +437,7 @@ class TransferRequest(Message):
         return encode_uint64(self.target_node_id)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "TransferRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "TransferRequest":
         from dqlitewire.types import decode_uint64
 
         target_node_id = decode_uint64(data)
@@ -459,7 +459,7 @@ class DescribeRequest(Message):
         return encode_uint64(self.format)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "DescribeRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "DescribeRequest":
         from dqlitewire.types import decode_uint64
 
         format_val = decode_uint64(data)
@@ -481,7 +481,7 @@ class WeightRequest(Message):
         return encode_uint64(self.weight)
 
     @classmethod
-    def decode_body(cls, data: bytes) -> "WeightRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "WeightRequest":
         from dqlitewire.types import decode_uint64
 
         weight = decode_uint64(data)
