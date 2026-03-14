@@ -31,6 +31,11 @@ class TestMessageEncoder:
         assert len(handshake) == 8
         assert int.from_bytes(handshake, "little") == PROTOCOL_VERSION
 
+    def test_encoder_has_no_buffer_attribute(self) -> None:
+        """MessageEncoder should not have unused _buffer attribute."""
+        encoder = MessageEncoder()
+        assert not hasattr(encoder, "_buffer")
+
     def test_encode_message(self) -> None:
         from dqlitewire.constants import RequestType
         from dqlitewire.messages.base import Header

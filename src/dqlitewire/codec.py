@@ -1,6 +1,6 @@
 """Message encoder and decoder for dqlite wire protocol."""
 
-from dqlitewire.buffer import ReadBuffer, WriteBuffer
+from dqlitewire.buffer import ReadBuffer
 from dqlitewire.constants import HEADER_SIZE, PROTOCOL_VERSION, RequestType, ResponseType
 from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Header, Message
@@ -79,9 +79,6 @@ RESPONSE_TYPES: dict[int, type[Message]] = {
 
 class MessageEncoder:
     """Encodes messages to wire protocol format."""
-
-    def __init__(self) -> None:
-        self._buffer = WriteBuffer()
 
     def encode(self, message: Message) -> bytes:
         """Encode a message to bytes."""
