@@ -55,6 +55,19 @@ class TestLeaderResponse:
         assert decoded.node_id == 0
         assert decoded.address == ""
 
+    def test_decode_body_legacy(self) -> None:
+        """Pre-1.0 servers send only a text address (no node_id) for type code 1.
+
+        Go has DecodeNodeLegacy for this. decode_body_legacy() handles the
+        legacy format, returning node_id=0.
+        """
+        from dqlitewire.types import encode_text
+
+        legacy_body = encode_text("192.168.1.1:9001")
+        decoded = LeaderResponse.decode_body_legacy(legacy_body)
+        assert decoded.node_id == 0
+        assert decoded.address == "192.168.1.1:9001"
+
 
 class TestWelcomeResponse:
     def test_roundtrip(self) -> None:

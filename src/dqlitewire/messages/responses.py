@@ -54,9 +54,25 @@ class LeaderResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
+        """Decode leader response body (modern v1+ format).
+
+        Modern format: uint64 node_id + text address.
+        For pre-1.0 (legacy) servers that send only text address without
+        node_id, use decode_body_legacy() instead.
+        """
         node_id = decode_uint64(data)
         address, _ = decode_text(data[8:])
         return cls(node_id, address)
+
+    @classmethod
+    def decode_body_legacy(cls, data: bytes) -> "LeaderResponse":
+        """Decode legacy (pre-1.0) leader response body.
+
+        Legacy format: text address only (no node_id). Returns node_id=0.
+        Go reference: DecodeNodeLegacy in internal/protocol/message.go.
+        """
+        address, _ = decode_text(data)
+        return cls(node_id=0, address=address)
 
 
 @dataclass
