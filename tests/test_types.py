@@ -401,6 +401,33 @@ class TestValue:
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
         assert ".123456" in decoded
 
+    def test_encode_value_unsupported_type_raises(self) -> None:
+        """Unsupported Python types should raise EncodeError."""
+        with pytest.raises(EncodeError, match="Cannot infer type"):
+            encode_value({"key": "value"})
+
+    def test_decode_value_unknown_type_raises(self) -> None:
+        """Unknown ValueType should raise DecodeError."""
+        with pytest.raises(DecodeError, match="Unknown value type"):
+            decode_value(b"\x00" * 8, 99)  # type: ignore[arg-type]
+
+    def test_encode_value_unknown_type_raises(self) -> None:
+        """Unknown explicit ValueType should raise EncodeError."""
+        with pytest.raises(EncodeError, match="Unknown value type"):
+            encode_value(42, 99)  # type: ignore[arg-type]
+
+    def test_decode_int64_short_data(self) -> None:
+        with pytest.raises(DecodeError):
+            decode_int64(b"\x00" * 7)
+
+    def test_decode_uint32_short_data(self) -> None:
+        with pytest.raises(DecodeError):
+            decode_uint32(b"\x00" * 3)
+
+    def test_decode_double_short_data(self) -> None:
+        with pytest.raises(DecodeError):
+            decode_double(b"\x00" * 7)
+
     def test_decode_null(self) -> None:
         value, consumed = decode_value(b"\x00" * 8, ValueType.NULL)
         assert value is None

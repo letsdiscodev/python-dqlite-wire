@@ -165,6 +165,18 @@ class TestMessageDecoder:
         with pytest.raises(DecodeError, match="[Uu]nsupported schema"):
             decoder.decode_bytes(data)
 
+    def test_decode_bytes_too_short(self) -> None:
+        """decode_bytes with data shorter than HEADER_SIZE should raise DecodeError."""
+        decoder = MessageDecoder()
+        with pytest.raises(DecodeError, match="too short"):
+            decoder.decode_bytes(b"\x00" * 7)
+
+    def test_decode_bytes_empty(self) -> None:
+        """decode_bytes with empty data should raise DecodeError."""
+        decoder = MessageDecoder()
+        with pytest.raises(DecodeError, match="too short"):
+            decoder.decode_bytes(b"")
+
 
 class TestConvenienceFunctions:
     def test_encode_message(self) -> None:

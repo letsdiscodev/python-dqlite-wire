@@ -275,6 +275,50 @@ class TestParamsTupleInvalidType:
             decode_params_tuple(data)
 
 
+class TestParamsTupleErrors:
+    def test_decode_insufficient_data_for_header(self) -> None:
+        """Data shorter than 8 bytes should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="Not enough data"):
+            decode_params_tuple(b"\x01\x02\x03")
+
+    def test_decode_insufficient_data_for_types(self) -> None:
+        """Data too short for declared type count should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # count=100, but only 8 bytes total (not enough for 100 type codes)
+        data = b"\x64" + b"\x00" * 7
+        with pytest.raises(DecodeError, match="Not enough data for param types"):
+            decode_params_tuple(data)
+
+
+class TestRowHeaderErrors:
+    def test_decode_insufficient_data(self) -> None:
+        """Row header with insufficient data should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # Need 8 bytes for 1 column header, but only have 4
+        with pytest.raises(DecodeError, match="Not enough data for row header"):
+            decode_row_header(b"\x01\x02\x03\x04", 1)
+
+
+class TestRowValuesBlob:
+    def test_roundtrip_with_blob(self) -> None:
+        """Blob values in rows should roundtrip correctly."""
+        values = [b"\x01\x02\x03"]
+        types = [ValueType.BLOB]
+        encoded = encode_row_values(values, types)
+        decoded, _ = decode_row_values(encoded, types)
+        assert decoded == values
+
+
 class TestRowValues:
     def test_encode_single_integer(self) -> None:
         values = [42]
