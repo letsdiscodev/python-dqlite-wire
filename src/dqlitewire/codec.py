@@ -77,6 +77,17 @@ RESPONSE_TYPES: dict[int, type[Message]] = {
 }
 
 
+# Maximum supported schema version per message type (default is 0)
+_MAX_SCHEMA: dict[int, int] = {
+    RequestType.PREPARE: 1,
+    RequestType.EXEC: 1,
+    RequestType.QUERY: 1,
+    RequestType.EXEC_SQL: 1,
+    RequestType.QUERY_SQL: 1,
+    ResponseType.STMT: 1,
+}
+
+
 class MessageEncoder:
     """Encodes messages to wire protocol format."""
 
@@ -136,6 +147,13 @@ class MessageDecoder:
         msg_class = self._type_map.get(header.msg_type)
         if msg_class is None:
             raise DecodeError(f"Unknown message type: {header.msg_type}")
+
+        max_schema = _MAX_SCHEMA.get(header.msg_type, 0)
+        if header.schema > max_schema:
+            raise DecodeError(
+                f"Unsupported schema version {header.schema} for message type "
+                f"{header.msg_type} (max supported: {max_schema})"
+            )
 
         return msg_class.decode_body(body, schema=header.schema)
 

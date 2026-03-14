@@ -152,6 +152,19 @@ class TestMessageDecoder:
         with pytest.raises(EncodeError, match="header"):
             header.encode()
 
+    def test_unknown_schema_version_raises(self) -> None:
+        """Unknown schema versions should raise DecodeError, not silently default."""
+        from dqlitewire.messages.base import Header
+
+        # Build an ExecRequest with schema=5 (unknown)
+        body = b"\x01\x00\x00\x00" + b"\x02\x00\x00\x00"  # db_id=1, stmt_id=2
+        header = Header(size_words=1, msg_type=5, schema=5)  # type 5 = EXEC
+        data = header.encode() + body
+
+        decoder = MessageDecoder(is_request=True)
+        with pytest.raises(DecodeError, match="[Uu]nsupported schema"):
+            decoder.decode_bytes(data)
+
 
 class TestConvenienceFunctions:
     def test_encode_message(self) -> None:
