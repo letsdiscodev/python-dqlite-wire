@@ -261,6 +261,24 @@ class TestRowsResponse:
         assert decoded.rows[1] == [4, "Diana"]
         assert decoded.has_more is False
 
+    def test_decode_rows_continuation_truncated_raises(self) -> None:
+        """Truncated continuation (no marker) must raise DecodeError, not silently return."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+
+        column_names = ["id", "name"]
+        types = [ValueType.INTEGER, ValueType.TEXT]
+        # Build continuation body with row data but NO end marker
+        body = b""
+        body += encode_row_header(types)
+        body += encode_row_values([3, "Charlie"], types)
+        # No DONE or PART marker at end!
+
+        with pytest.raises(DecodeError, match="end marker"):
+            RowsResponse.decode_rows_continuation(body, column_names, len(column_names))
+
     def test_truncated_body_without_marker_raises(self) -> None:
         """Body exhausted without DONE/PART marker must raise DecodeError."""
         import pytest
