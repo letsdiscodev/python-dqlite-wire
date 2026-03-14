@@ -4,6 +4,7 @@ All multi-byte integers are little-endian.
 Text is null-terminated UTF-8, padded to 8-byte boundary.
 """
 
+import datetime
 import struct
 from typing import Any
 
@@ -144,6 +145,20 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             value_type = ValueType.INTEGER
         elif isinstance(value, float):
             value_type = ValueType.FLOAT
+        elif isinstance(value, datetime.datetime):
+            value_type = ValueType.ISO8601
+            # Format to match Go's time format: "2006-01-02 15:04:05.999999999-07:00"
+            formatted = value.strftime("%Y-%m-%d %H:%M:%S")
+            if value.microsecond:
+                formatted += f".{value.microsecond:06d}"
+            utcoffset = value.utcoffset()
+            if utcoffset is not None:
+                total_seconds = int(utcoffset.total_seconds())
+                sign = "+" if total_seconds >= 0 else "-"
+                hours, remainder = divmod(abs(total_seconds), 3600)
+                minutes = remainder // 60
+                formatted += f"{sign}{hours:02d}:{minutes:02d}"
+            value = formatted
         elif isinstance(value, str):
             value_type = ValueType.TEXT
         elif isinstance(value, bytes):

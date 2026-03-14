@@ -1,5 +1,7 @@
 """Tests for primitive type encoding/decoding."""
 
+from datetime import UTC
+
 import pytest
 
 from dqlitewire.constants import ValueType
@@ -355,6 +357,18 @@ class TestValue:
             assert vtype == ValueType.INTEGER
             decoded, _ = decode_value(encoded, ValueType.INTEGER)
             assert decoded == val
+
+    def test_datetime_auto_detection(self) -> None:
+        """datetime.datetime should auto-detect as ISO8601."""
+        from datetime import datetime
+
+        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
+        encoded, vtype = encode_value(dt)
+        assert vtype == ValueType.ISO8601
+        # Should encode as a text string in Go-compatible format
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert "2024-01-15" in decoded
+        assert "10:30:45" in decoded
 
     def test_decode_null(self) -> None:
         value, consumed = decode_value(b"\x00" * 8, ValueType.NULL)
