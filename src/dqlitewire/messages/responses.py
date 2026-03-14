@@ -262,6 +262,51 @@ class RowsResponse(Message):
 
         return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
 
+    @classmethod
+    def decode_rows_continuation(
+        cls,
+        data: bytes,
+        column_names: list[str],
+        column_count: int,
+    ) -> "RowsResponse":
+        """Decode a continuation message (rows without column header prefix).
+
+        After receiving a RowsResponse with has_more=True (PART marker), the
+        server sends additional ROWS messages that contain only row data and a
+        trailing marker — no column_count or column_names prefix. Use this
+        method to decode those continuation messages, passing the column_names
+        and column_count from the initial response.
+        """
+        offset = 0
+        rows: list[list[Any]] = []
+        all_row_types: list[list[ValueType]] = []
+
+        while offset < len(data):
+            prev_offset = offset
+
+            result, consumed = decode_row_header(data[offset:], column_count)
+            offset += consumed
+
+            if result is RowMarker.DONE:
+                return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
+            if result is RowMarker.PART:
+                return cls(column_names, row_types=all_row_types, rows=rows, has_more=True)
+
+            types = result
+            assert isinstance(types, list)
+            all_row_types.append(types)
+
+            values, consumed = decode_row_values(data[offset:], types)
+            rows.append(values)
+            offset += consumed
+
+            if offset == prev_offset:
+                raise DecodeError(
+                    "No progress in row decoding (possible zero-column result with malformed data)"
+                )
+
+        return cls(column_names, row_types=all_row_types, rows=rows, has_more=False)
+
 
 @dataclass
 class EmptyResponse(Message):

@@ -220,6 +220,28 @@ class TestRowsResponse:
         with pytest.raises(DecodeError):
             RowsResponse.decode_body(data)
 
+    def test_decode_rows_continuation(self) -> None:
+        """Continuation messages (after PART marker) have rows but no column header."""
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_uint64
+
+        column_names = ["id", "name"]
+        types = [ValueType.INTEGER, ValueType.TEXT]
+        # Build a continuation body: rows + DONE marker (no column_count/names prefix)
+        body = b""
+        body += encode_row_header(types)
+        body += encode_row_values([3, "Charlie"], types)
+        body += encode_row_header(types)
+        body += encode_row_values([4, "Diana"], types)
+        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE marker
+
+        decoded = RowsResponse.decode_rows_continuation(body, column_names, len(column_names))
+        assert decoded.column_names == ["id", "name"]
+        assert len(decoded.rows) == 2
+        assert decoded.rows[0] == [3, "Charlie"]
+        assert decoded.rows[1] == [4, "Diana"]
+        assert decoded.has_more is False
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:
