@@ -279,6 +279,30 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="end marker"):
             RowsResponse.decode_rows_continuation(body, column_names, len(column_names))
 
+    def test_decode_body_rejects_non_list_row_header(self) -> None:
+        """decode_body must raise DecodeError if decode_row_header returns unexpected type."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        # Build a valid body
+        body = encode_uint64(1)  # column_count=1
+        body += encode_text("id")
+        body += encode_row_header([ValueType.INTEGER])
+        body += encode_row_values([42], [ValueType.INTEGER])
+        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
+
+        # Patch decode_row_header to return a string (simulating unexpected type)
+        with (
+            patch("dqlitewire.messages.responses.decode_row_header", return_value=("bad", 8)),
+            pytest.raises(DecodeError, match="Expected column types list"),
+        ):
+            RowsResponse.decode_body(body)
+
     def test_truncated_body_without_marker_raises(self) -> None:
         """Body exhausted without DONE/PART marker must raise DecodeError."""
         import pytest

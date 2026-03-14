@@ -268,7 +268,8 @@ class RowsResponse(Message):
                 return cls(column_names, row_types=all_row_types, rows=rows, has_more=True)
 
             types = result
-            assert isinstance(types, list)
+            if not isinstance(types, list):
+                raise DecodeError(f"Expected column types list, got {type(types).__name__}")
             all_row_types.append(types)
 
             # Read row values
@@ -317,7 +318,8 @@ class RowsResponse(Message):
                 return cls(column_names, row_types=all_row_types, rows=rows, has_more=True)
 
             types = result
-            assert isinstance(types, list)
+            if not isinstance(types, list):
+                raise DecodeError(f"Expected column types list, got {type(types).__name__}")
             all_row_types.append(types)
 
             values, consumed = decode_row_values(data[offset:], types)
