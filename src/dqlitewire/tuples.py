@@ -85,15 +85,24 @@ def decode_params_tuple(
         raise DecodeError(f"Not enough data for params tuple header: got {len(data)}")
 
     # Read count from data if not provided
+    count_size: int
     if count is None:
         if schema == 1:
             import struct
 
             count = struct.unpack("<I", data[:4])[0]
+            count_size = 4
         else:
             count = data[0]
+            count_size = 1
 
-    if count == 0:
+        if count == 0:
+            # Count field was consumed; return padded header size
+            header_len = count_size
+            consumed = header_len + pad_to_word(header_len)
+            return [], consumed
+    elif count == 0:
+        # Count was externally provided, no data consumed
         return [], 0
 
     # Header: count field + type codes, padded to word boundary

@@ -97,6 +97,24 @@ class TestParamsTuple:
         assert decoded[0] == 42
         assert decoded[1] == "hello"
 
+    def test_decode_zero_count_v0_consumes_header(self) -> None:
+        """Decoding a V0 tuple with count=0 should consume the header word."""
+        # V0: count=0 at byte 0, rest padding = 8 bytes total
+        data = b"\x00" * 8 + b"\xAA" * 8  # header + trailing data
+        values, consumed = decode_params_tuple(data, schema=0)
+        assert values == []
+        assert consumed == 8  # one word consumed for the header
+
+    def test_decode_zero_count_v1_consumes_header(self) -> None:
+        """Decoding a V1 tuple with count=0 should consume the header word."""
+        import struct
+
+        # V1: uint32 count=0 at bytes 0-3, rest padding = 8 bytes total
+        data = struct.pack("<I", 0) + b"\x00" * 4 + b"\xBB" * 8
+        values, consumed = decode_params_tuple(data, schema=1)
+        assert values == []
+        assert consumed == 8  # one word consumed for the header
+
     def test_v0_rejects_more_than_255_params(self) -> None:
         """V0 schema uses uint8 count, so > 255 params must raise EncodeError."""
         import pytest
