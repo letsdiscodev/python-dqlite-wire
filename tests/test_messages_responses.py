@@ -354,6 +354,22 @@ class TestFilesResponse:
         # count(8) + name "a.db\0"(8) + size(8) + content(16) = 40
         assert len(body) == 40
 
+    def test_no_padding_after_content_matches_go(self) -> None:
+        """Go reads file content without padding; encoder must not add padding."""
+        from dqlitewire.types import encode_text, encode_uint64
+
+        # Manually build Go-format body: no padding after non-aligned content
+        body = encode_uint64(2)  # count=2
+        body += encode_text("f1")  # filename
+        body += encode_uint64(3)  # size=3
+        body += b"\x01\x02\x03"  # content (not word-aligned, no padding!)
+        body += encode_text("f2")  # next filename immediately after
+        body += encode_uint64(1)  # size=1
+        body += b"\xff"  # content
+        decoded = FilesResponse.decode_body(body)
+        assert decoded.files["f1"] == b"\x01\x02\x03"
+        assert decoded.files["f2"] == b"\xff"
+
 
 class TestServersResponse:
     def test_empty(self) -> None:

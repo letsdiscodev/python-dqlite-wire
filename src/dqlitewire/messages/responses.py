@@ -341,24 +341,18 @@ class FilesResponse(Message):
     files: dict[str, bytes] = field(default_factory=dict)
 
     def encode_body(self) -> bytes:
-        from dqlitewire.types import pad_to_word
-
         result = encode_uint64(len(self.files))
         for name, content in self.files.items():
             result += encode_text(name)
             result += encode_uint64(len(content))
             result += content
-            # The C server only produces word-aligned content (SQLite pages),
-            # but we pad defensively for correctness with arbitrary content.
-            padding = pad_to_word(len(content))
-            if padding:
-                result += b"\x00" * padding
+            # No padding after content — matches Go's byte-by-byte read.
+            # The C server only produces word-aligned content (SQLite pages
+            # are multiples of 512), so padding is never needed in practice.
         return result
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
-        from dqlitewire.types import pad_to_word
-
         files: dict[str, bytes] = {}
         offset = 0
         count = decode_uint64(data[offset:])
@@ -369,9 +363,8 @@ class FilesResponse(Message):
             size = decode_uint64(data[offset:])
             offset += 8
             content = data[offset : offset + size]
-            # Content from the C server is always word-aligned, but we
-            # account for padding defensively.
-            offset += size + pad_to_word(size)
+            # No padding after content — matches Go's byte-by-byte read.
+            offset += size
             files[name] = content
         return cls(files)
 
