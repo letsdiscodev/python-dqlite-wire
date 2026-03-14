@@ -221,6 +221,31 @@ class TestRowHeader:
         assert decode_row_header(data, 1) == (RowMarker.PART, 8)
 
 
+    def test_decode_invalid_type_code_raises_decode_error(self) -> None:
+        """Invalid nibble value (0) in row header must raise DecodeError, not ValueError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # Byte 0x00 means both nibbles are 0, which is not a valid ValueType
+        data = b"\x00" * 8
+        with pytest.raises(DecodeError, match="Invalid value type"):
+            decode_row_header(data, 1)
+
+
+class TestParamsTupleInvalidType:
+    def test_decode_invalid_type_code_raises_decode_error(self) -> None:
+        """Invalid type byte (0) in params tuple must raise DecodeError, not ValueError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # count=1, type=0 (invalid), padding to 8 bytes
+        data = b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 8
+        with pytest.raises(DecodeError, match="Invalid value type"):
+            decode_params_tuple(data)
+
+
 class TestRowValues:
     def test_encode_single_integer(self) -> None:
         values = [42]
