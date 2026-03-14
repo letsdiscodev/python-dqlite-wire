@@ -108,3 +108,9 @@ class TestRequestTypeValues:
 
     def test_weight_is_19(self) -> None:
         assert RequestType.WEIGHT == 19
+
+    def test_no_connect_type_11(self) -> None:
+        """Go reference has no RequestConnect = 11; type codes skip from 10 to 12."""
+        assert not hasattr(RequestType, "CONNECT")
+        # Also verify no request type has value 11
+        assert 11 not in [t.value for t in RequestType]

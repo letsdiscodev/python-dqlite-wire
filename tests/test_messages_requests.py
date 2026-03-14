@@ -7,7 +7,6 @@ from dqlitewire.messages.requests import (
     AssignRequest,
     ClientRequest,
     ClusterRequest,
-    ConnectRequest,
     DescribeRequest,
     DumpRequest,
     ExecRequest,
@@ -228,24 +227,6 @@ class TestInterruptRequest:
         encoded = msg.encode()
         decoded = InterruptRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 42
-
-
-class TestConnectRequest:
-    def test_roundtrip(self) -> None:
-        msg = ConnectRequest(node_id=5, address="192.168.1.1:9001")
-        encoded = msg.encode()
-        decoded = ConnectRequest.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.node_id == 5
-        assert decoded.address == "192.168.1.1:9001"
-
-    def test_body_starts_with_id(self) -> None:
-        """Body must start with uint64 id, then text address per Go reference."""
-        from dqlitewire.types import decode_uint64
-
-        msg = ConnectRequest(node_id=42, address="node1:9001")
-        body = msg.encode_body()
-        node_id = decode_uint64(body[:8])
-        assert node_id == 42
 
 
 class TestAddRequest:
