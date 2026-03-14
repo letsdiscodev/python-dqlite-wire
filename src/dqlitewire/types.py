@@ -161,6 +161,9 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
                 hours, remainder = divmod(abs(total_seconds), 3600)
                 minutes = remainder // 60
                 formatted += f"{sign}{hours:02d}:{minutes:02d}"
+            else:
+                # Naive datetime: assume UTC to match Go's always-offset format
+                formatted += "+00:00"
             value = formatted
         elif isinstance(value, str):
             value_type = ValueType.TEXT

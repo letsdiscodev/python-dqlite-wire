@@ -377,6 +377,25 @@ class TestValue:
         assert "2024-01-15" in decoded
         assert "10:30:45" in decoded
 
+    def test_naive_datetime_includes_utc_offset(self) -> None:
+        """Naive datetime should include +00:00 offset to match Go's format."""
+        from datetime import datetime
+
+        dt = datetime(2024, 1, 15, 10, 30, 45)  # naive, no tzinfo
+        encoded, vtype = encode_value(dt)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert decoded.endswith("+00:00")
+
+    def test_datetime_with_microseconds(self) -> None:
+        """Datetime with microseconds should include them in the format."""
+        from datetime import datetime
+
+        dt = datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=UTC)
+        encoded, vtype = encode_value(dt)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert ".123456" in decoded
+
     def test_decode_null(self) -> None:
         value, consumed = decode_value(b"\x00" * 8, ValueType.NULL)
         assert value is None
