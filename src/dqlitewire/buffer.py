@@ -102,11 +102,7 @@ class ReadBuffer:
 
         message = bytes(self._data[self._pos : self._pos + total_size])
         self._pos += total_size
-
-        # Compact buffer if we've consumed a lot
-        if self._pos > 4096:
-            self._data = self._data[self._pos :]
-            self._pos = 0
+        self._maybe_compact()
 
         return message
 
@@ -121,7 +117,14 @@ class ReadBuffer:
 
         data = bytes(self._data[self._pos : self._pos + n])
         self._pos += n
+        self._maybe_compact()
         return data
+
+    def _maybe_compact(self) -> None:
+        """Compact buffer if we've consumed a lot."""
+        if self._pos > 4096:
+            self._data = self._data[self._pos :]
+            self._pos = 0
 
     def available(self) -> int:
         """Return number of bytes available to read."""

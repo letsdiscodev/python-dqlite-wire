@@ -170,6 +170,16 @@ class TestReadBuffer:
         with pytest.raises(DecodeError, match="exceeds maximum"):
             buf.feed(b"\x00" * 600)
 
+    def test_read_bytes_triggers_compaction(self) -> None:
+        """read_bytes should compact the buffer after consuming enough data."""
+        buf = ReadBuffer()
+        # Feed more than 4096 bytes worth of data
+        buf.feed(b"\x00" * 5000)
+        buf.read_bytes(4500)
+        # After compaction, internal _pos should be reset
+        assert buf._pos == 0
+        assert len(buf._data) == 500
+
     def test_buffer_compaction(self) -> None:
         buf = ReadBuffer()
         # Feed a lot of small messages to trigger compaction
