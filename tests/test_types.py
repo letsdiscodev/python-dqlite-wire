@@ -210,6 +210,13 @@ class TestText:
         with pytest.raises(DecodeError):
             decode_text(b"hello")
 
+    def test_decode_invalid_utf8_raises_decode_error(self) -> None:
+        """Invalid UTF-8 bytes should raise DecodeError, not UnicodeDecodeError."""
+        # 0xFF 0xFE are invalid UTF-8 start bytes
+        data = b"\xff\xfe\x00\x00\x00\x00\x00\x00"
+        with pytest.raises(DecodeError, match="UTF-8"):
+            decode_text(data)
+
 
 class TestBlob:
     def test_encode_empty(self) -> None:

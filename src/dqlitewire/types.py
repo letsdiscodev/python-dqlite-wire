@@ -96,7 +96,10 @@ def decode_text(data: bytes) -> tuple[str, int]:
     except ValueError as e:
         raise DecodeError("Text not null-terminated") from e
 
-    text = data[:null_pos].decode("utf-8")
+    try:
+        text = data[:null_pos].decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
     # Calculate total size including padding
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
     return text, total_size
