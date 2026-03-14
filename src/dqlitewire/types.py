@@ -5,6 +5,7 @@ Text is null-terminated UTF-8, padded to 8-byte boundary.
 """
 
 import datetime
+import math
 import struct
 from typing import Any
 
@@ -59,6 +60,8 @@ def decode_uint32(data: bytes) -> int:
 
 def encode_double(value: float) -> bytes:
     """Encode a 64-bit floating point number (little-endian)."""
+    if math.isnan(value):
+        raise EncodeError("NaN is not supported by the dqlite wire protocol")
     return struct.pack("<d", value)
 
 

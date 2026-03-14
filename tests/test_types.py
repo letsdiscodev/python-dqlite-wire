@@ -334,10 +334,15 @@ class TestValue:
             encoded, vtype = encode_value(val)
             assert vtype == ValueType.FLOAT
             decoded, _ = decode_value(encoded, ValueType.FLOAT)
-            if val != val:  # NaN check
-                assert decoded != decoded
-            else:
-                assert decoded == val
+            assert decoded == val
+
+    def test_nan_rejected(self) -> None:
+        """NaN should be rejected since SQLite and dqlite don't support it."""
+        with pytest.raises(EncodeError, match="NaN"):
+            encode_double(float("nan"))
+
+        with pytest.raises(EncodeError, match="NaN"):
+            encode_value(float("nan"))
 
     def test_integer_edge_cases(self) -> None:
         """Test integer edge cases."""
