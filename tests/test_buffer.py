@@ -157,6 +157,19 @@ class TestReadBuffer:
         with pytest.raises(DecodeError, match="exceeds maximum"):
             buf.has_message()
 
+    def test_feed_rejects_data_exceeding_max_message_size(self) -> None:
+        """feed() should raise DecodeError when buffer exceeds max_message_size."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        # First feed is fine
+        buf.feed(b"\x00" * 512)
+        # Second feed would exceed max
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.feed(b"\x00" * 600)
+
     def test_buffer_compaction(self) -> None:
         buf = ReadBuffer()
         # Feed a lot of small messages to trigger compaction
