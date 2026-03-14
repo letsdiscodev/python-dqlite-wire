@@ -32,10 +32,17 @@ class TestMessageEncoder:
         assert int.from_bytes(handshake, "little") == PROTOCOL_VERSION
 
     def test_encode_message(self) -> None:
+        from dqlitewire.constants import RequestType
+        from dqlitewire.messages.base import Header
+
         encoder = MessageEncoder()
         msg = LeaderRequest()
         encoded = encoder.encode(msg)
-        assert len(encoded) == 16  # Header + reserved uint64
+        assert len(encoded) == 16
+        header = Header.decode(encoded[:8])
+        assert header.msg_type == RequestType.LEADER
+        assert header.schema == 0
+        assert header.size_words == 1
 
 
 class TestMessageDecoder:
@@ -135,7 +142,10 @@ class TestConvenienceFunctions:
     def test_encode_message(self) -> None:
         msg = ClientRequest(client_id=42)
         encoded = encode_message(msg)
-        assert len(encoded) > 0
+        # Verify full roundtrip, not just length
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ClientRequest)
+        assert decoded.client_id == 42
 
     def test_decode_message_response(self) -> None:
         msg = FailureResponse(code=1, message="test")

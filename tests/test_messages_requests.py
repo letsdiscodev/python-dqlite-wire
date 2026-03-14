@@ -141,10 +141,13 @@ class TestExecRequest:
         assert header.msg_type == RequestType.EXEC
 
     def test_body_structure(self) -> None:
+        from dqlitewire.types import decode_uint32
+
         msg = ExecRequest(db_id=1, stmt_id=2, params=[])
         body = msg.encode_body()
-        # db_id (4) + stmt_id (4) + no params = 8 bytes (Go writes nothing for empty params)
         assert len(body) == 8
+        assert decode_uint32(body[:4]) == 1  # db_id
+        assert decode_uint32(body[4:8]) == 2  # stmt_id
 
     def test_roundtrip_with_params(self) -> None:
         """Parameters must survive encode/decode round-trip."""

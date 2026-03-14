@@ -20,21 +20,41 @@ class TestParamsTuple:
 
     def test_encode_single_integer(self) -> None:
         encoded = encode_params_tuple([42])
-        # Header: count(1) + type(1) + padding(6) = 8, value = 8, total = 16
         assert len(encoded) == 16
         assert encoded[0] == 1  # count
+        assert encoded[1] == ValueType.INTEGER  # type code
+        # Verify value: 42 as little-endian int64 at offset 8
+        import struct
+
+        assert struct.unpack("<q", encoded[8:16])[0] == 42
 
     def test_encode_multiple_integers(self) -> None:
         encoded = encode_params_tuple([1, 2, 3])
-        # Header: count(1) + 3 types + padding(4) = 8, 3 values = 24, total = 32
         assert len(encoded) == 32
         assert encoded[0] == 3  # count
+        assert encoded[1] == ValueType.INTEGER
+        assert encoded[2] == ValueType.INTEGER
+        assert encoded[3] == ValueType.INTEGER
+        # Roundtrip to verify values
+        decoded, _ = decode_params_tuple(encoded)
+        assert decoded == [1, 2, 3]
 
     def test_encode_mixed_types(self) -> None:
         params = [42, "hello", 3.14, None, b"blob"]
         encoded = encode_params_tuple(params)
-        assert len(encoded) > 0
         assert encoded[0] == 5  # count
+        assert encoded[1] == ValueType.INTEGER
+        assert encoded[2] == ValueType.TEXT
+        assert encoded[3] == ValueType.FLOAT
+        assert encoded[4] == ValueType.NULL
+        assert encoded[5] == ValueType.BLOB
+        # Verify full roundtrip
+        decoded, _ = decode_params_tuple(encoded)
+        assert decoded[0] == 42
+        assert decoded[1] == "hello"
+        assert abs(decoded[2] - 3.14) < 0.0001
+        assert decoded[3] is None
+        assert decoded[4] == b"blob"
 
     def test_decode_empty(self) -> None:
         """Empty params data should decode to empty list."""
