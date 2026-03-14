@@ -176,6 +176,19 @@ class TestExecRequest:
         # V0: first byte is uint8 count
         assert params_data[0] == 1
 
+    def test_roundtrip_v1_more_than_255_params(self) -> None:
+        """ExecRequest with >255 params must roundtrip correctly via V1 schema."""
+        from dqlitewire.codec import decode_message, encode_message
+
+        params = list(range(256))
+        msg = ExecRequest(db_id=1, stmt_id=2, params=params)
+        encoded = encode_message(msg)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ExecRequest)
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 2
+        assert list(decoded.params) == params
+
 
 class TestQueryRequest:
     def test_encode_no_params(self) -> None:
@@ -193,6 +206,17 @@ class TestQueryRequest:
         assert decoded.stmt_id == 2
         assert decoded.params[0] == 100
         assert decoded.params[1] == "world"
+
+    def test_roundtrip_v1_more_than_255_params(self) -> None:
+        """QueryRequest with >255 params must roundtrip correctly via V1 schema."""
+        from dqlitewire.codec import decode_message, encode_message
+
+        params = list(range(256))
+        msg = QueryRequest(db_id=1, stmt_id=2, params=params)
+        encoded = encode_message(msg)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, QueryRequest)
+        assert list(decoded.params) == params
 
 
 class TestFinalizeRequest:
@@ -221,6 +245,17 @@ class TestExecSqlRequest:
         assert decoded.sql == "INSERT INTO t VALUES(?)"
         assert decoded.params[0] == 42
 
+    def test_roundtrip_v1_more_than_255_params(self) -> None:
+        """ExecSqlRequest with >255 params must roundtrip correctly via V1 schema."""
+        from dqlitewire.codec import decode_message, encode_message
+
+        params = list(range(256))
+        msg = ExecSqlRequest(db_id=1, sql="SELECT 1", params=params)
+        encoded = encode_message(msg)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ExecSqlRequest)
+        assert list(decoded.params) == params
+
 
 class TestQuerySqlRequest:
     def test_roundtrip(self) -> None:
@@ -238,6 +273,17 @@ class TestQuerySqlRequest:
         assert decoded.db_id == 1
         assert decoded.sql == "SELECT * FROM t WHERE id=?"
         assert decoded.params[0] == 99
+
+    def test_roundtrip_v1_more_than_255_params(self) -> None:
+        """QuerySqlRequest with >255 params must roundtrip correctly via V1 schema."""
+        from dqlitewire.codec import decode_message, encode_message
+
+        params = list(range(256))
+        msg = QuerySqlRequest(db_id=1, sql="SELECT 1", params=params)
+        encoded = encode_message(msg)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, QuerySqlRequest)
+        assert list(decoded.params) == params
 
 
 class TestInterruptRequest:

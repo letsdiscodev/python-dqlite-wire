@@ -164,7 +164,7 @@ class ExecRequest(Message):
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:])
+        params, _ = decode_params_tuple(data[8:], schema=schema)
         return cls(db_id, stmt_id, params)
 
 
@@ -198,7 +198,7 @@ class QueryRequest(Message):
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:])
+        params, _ = decode_params_tuple(data[8:], schema=schema)
         return cls(db_id, stmt_id, params)
 
 
@@ -258,7 +258,7 @@ class ExecSqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:])
+        params, _ = decode_params_tuple(data[offset:], schema=schema)
         return cls(db_id, sql, params)
 
 
@@ -294,7 +294,7 @@ class QuerySqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:])
+        params, _ = decode_params_tuple(data[offset:], schema=schema)
         return cls(db_id, sql, params)
 
 
