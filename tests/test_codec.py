@@ -138,6 +138,16 @@ class TestMessageDecoder:
             Header.decode(b"")
 
 
+    def test_header_encode_overflow_raises_encode_error(self) -> None:
+        """Header with size_words exceeding uint32 must raise EncodeError."""
+        from dqlitewire.exceptions import EncodeError
+        from dqlitewire.messages.base import Header
+
+        header = Header(size_words=2**32, msg_type=0, schema=0)
+        with pytest.raises(EncodeError, match="header"):
+            header.encode()
+
+
 class TestConvenienceFunctions:
     def test_encode_message(self) -> None:
         msg = ClientRequest(client_id=42)

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 
 
 @dataclass
@@ -27,13 +27,16 @@ class Header:
 
     def encode(self) -> bytes:
         """Encode header to bytes."""
-        return struct.pack(
-            "<IBBH",
-            self.size_words,
-            self.msg_type,
-            self.schema,
-            self.reserved,
-        )
+        try:
+            return struct.pack(
+                "<IBBH",
+                self.size_words,
+                self.msg_type,
+                self.schema,
+                self.reserved,
+            )
+        except struct.error as e:
+            raise EncodeError(f"Failed to encode header: {e}") from e
 
     @classmethod
     def decode(cls, data: bytes) -> "Header":
