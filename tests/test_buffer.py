@@ -142,6 +142,21 @@ class TestReadBuffer:
         buf.clear()
         assert buf.available() == 0
 
+    def test_rejects_oversized_message(self) -> None:
+        """Messages exceeding max size should raise DecodeError."""
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        # Header claiming a huge body: size_words=1000 (8000 bytes > 1024 limit)
+        header = struct.pack("<IBBH", 1000, 0, 0, 0)
+        buf.feed(header)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.has_message()
+
     def test_buffer_compaction(self) -> None:
         buf = ReadBuffer()
         # Feed a lot of small messages to trigger compaction

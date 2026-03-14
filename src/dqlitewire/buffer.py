@@ -1,6 +1,7 @@
 """Buffer utilities for streaming protocol data."""
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
+from dqlitewire.exceptions import DecodeError
 
 
 class WriteBuffer:
@@ -38,9 +39,12 @@ class ReadBuffer:
     Handles partial reads and message framing.
     """
 
-    def __init__(self) -> None:
+    DEFAULT_MAX_MESSAGE_SIZE = 64 * 1024 * 1024  # 64 MiB
+
+    def __init__(self, max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE) -> None:
         self._data = bytearray()
         self._pos = 0
+        self._max_message_size = max_message_size
 
     def feed(self, data: bytes) -> None:
         """Add received data to the buffer."""
@@ -56,6 +60,11 @@ class ReadBuffer:
         # Read size from header (first 4 bytes = size in words)
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
+
+        if total_size > self._max_message_size:
+            raise DecodeError(
+                f"Message size {total_size} bytes exceeds maximum {self._max_message_size}"
+            )
 
         return available >= total_size
 
