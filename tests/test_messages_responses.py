@@ -433,10 +433,11 @@ class TestFilesResponse:
         assert decoded.files["wal.db"] == page + page
 
     def test_roundtrip_non_aligned_content(self) -> None:
-        """Non-aligned content is handled defensively with padding.
+        """Non-aligned content roundtrips correctly without padding.
 
-        The C server asserts content is always word-aligned, but the Python
-        implementation pads defensively for correctness with arbitrary content.
+        The C server asserts content is always word-aligned. Neither Go nor
+        Python adds padding after file content. This test verifies that
+        non-aligned content still works for encode/decode symmetry.
         """
         msg = FilesResponse(
             files={

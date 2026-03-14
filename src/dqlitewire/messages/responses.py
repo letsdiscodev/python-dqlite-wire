@@ -398,9 +398,10 @@ class FilesResponse(Message):
 
     Body: uint64 count, then repeated (text filename, uint64 size, raw bytes content)
 
-    Note: the C server asserts content size is always word-aligned (SQLite pages
-    are multiples of 512), so no padding is written after content. The decoder
-    handles padding defensively in case of non-aligned sizes.
+    Note: neither Go nor this implementation pads file content to word
+    boundaries. The C server asserts content is always word-aligned
+    (SQLite pages are multiples of 512), so padding is never needed
+    in practice.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.FILES
