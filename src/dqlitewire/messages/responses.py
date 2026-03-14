@@ -244,6 +244,14 @@ class RowsResponse(Message):
         column_count = decode_uint64(data[offset:])
         offset += 8
 
+        # Bounds check: each column name is at least 8 bytes (null + padding)
+        remaining = len(data) - offset
+        if column_count > remaining // 8:
+            raise DecodeError(
+                f"Column count {column_count} exceeds maximum possible in "
+                f"{remaining} bytes of remaining data"
+            )
+
         # Column names
         column_names: list[str] = []
         for _ in range(column_count):
@@ -416,6 +424,13 @@ class FilesResponse(Message):
         offset = 0
         count = decode_uint64(data[offset:])
         offset += 8
+        # Bounds check: each file is at least 16 bytes (name + size)
+        remaining = len(data) - offset
+        if count > remaining // 16:
+            raise DecodeError(
+                f"File count {count} exceeds maximum possible in "
+                f"{remaining} bytes of remaining data"
+            )
         for _ in range(count):
             name, consumed = decode_text(data[offset:])
             offset += consumed
@@ -462,6 +477,13 @@ class ServersResponse(Message):
         offset = 0
         count = decode_uint64(data[offset:])
         offset += 8
+        # Bounds check: each node is at least 24 bytes (id + address + role)
+        remaining = len(data) - offset
+        if count > remaining // 24:
+            raise DecodeError(
+                f"Node count {count} exceeds maximum possible in "
+                f"{remaining} bytes of remaining data"
+            )
         for _ in range(count):
             node_id = decode_uint64(data[offset:])
             offset += 8

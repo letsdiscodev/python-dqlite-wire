@@ -333,6 +333,19 @@ class TestRowsResponse:
             RowsResponse.decode_body(body)
 
 
+    def test_bogus_column_count_raises(self) -> None:
+        """A column_count larger than remaining data should raise DecodeError early."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        # column_count = 1 billion, but only 8 bytes of data after count
+        body = encode_uint64(1_000_000_000) + b"\x00" * 8
+        with pytest.raises(DecodeError, match="exceeds.*remaining"):
+            RowsResponse.decode_body(body)
+
+
 class TestEmptyResponse:
     def test_encode(self) -> None:
         msg = EmptyResponse()
@@ -460,6 +473,17 @@ class TestFilesResponse:
         assert decoded.files["f1"] == b"\x01\x02\x03"
         assert decoded.files["f2"] == b"\xff"
 
+    def test_bogus_file_count_raises(self) -> None:
+        """A file count larger than remaining data should raise DecodeError early."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(1_000_000_000) + b"\x00" * 8
+        with pytest.raises(DecodeError, match="exceeds.*remaining"):
+            FilesResponse.decode_body(body)
+
 
 class TestServersResponse:
     def test_empty(self) -> None:
@@ -501,6 +525,17 @@ class TestServersResponse:
         body = msg.encode_body()
         assert len(body) == 8
         assert body == b"\x00" * 8
+
+    def test_bogus_node_count_raises(self) -> None:
+        """A node count larger than remaining data should raise DecodeError early."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(1_000_000_000) + b"\x00" * 8
+        with pytest.raises(DecodeError, match="exceeds.*remaining"):
+            ServersResponse.decode_body(body)
 
 
 class TestMetadataResponse:
