@@ -303,20 +303,20 @@ class TestValue:
     def test_encode_bool_true(self) -> None:
         encoded, vtype = encode_value(True)
         assert vtype == ValueType.BOOLEAN
-        assert decode_uint64(encoded) == 1
+        assert decode_int64(encoded) == 1
 
     def test_encode_bool_false(self) -> None:
         encoded, vtype = encode_value(False)
         assert vtype == ValueType.BOOLEAN
-        assert decode_uint64(encoded) == 0
+        assert decode_int64(encoded) == 0
 
-    def test_boolean_uses_uint64_encoding(self) -> None:
-        """Go reference encodes BOOLEAN as uint64, not int64."""
+    def test_boolean_uses_int64_encoding(self) -> None:
+        """Go reference encodes BOOLEAN as int64 (putInt64/getInt64)."""
         encoded_true, _ = encode_value(True, ValueType.BOOLEAN)
         encoded_false, _ = encode_value(False, ValueType.BOOLEAN)
-        # Must be decodable as uint64 (unsigned)
-        assert decode_uint64(encoded_true) == 1
-        assert decode_uint64(encoded_false) == 0
+        # Must be decodable as int64 (signed), matching Go's putInt64
+        assert decode_int64(encoded_true) == 1
+        assert decode_int64(encoded_false) == 0
 
     def test_boolean_explicit_rejects_non_bool_non_int(self) -> None:
         """encode_value with explicit BOOLEAN should reject non-bool/int types."""
@@ -335,7 +335,7 @@ class TestValue:
         assert consumed == 8
 
     def test_decode_boolean(self) -> None:
-        value, consumed = decode_value(encode_uint64(1), ValueType.BOOLEAN)
+        value, consumed = decode_value(encode_int64(1), ValueType.BOOLEAN)
         assert value is True
         assert consumed == 8
 
