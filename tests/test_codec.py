@@ -81,7 +81,9 @@ class TestMessageDecoder:
         encoded = msg.encode()
 
         decoder = MessageDecoder(is_request=True)
-        decoder.feed(encoded)
+        handshake = PROTOCOL_VERSION.to_bytes(8, "little")
+        decoder.feed(handshake + encoded)
+        decoder.decode_handshake()
         assert decoder.has_message()
 
         decoded = decoder.decode()
@@ -142,7 +144,6 @@ class TestMessageDecoder:
         with pytest.raises(DecodeError):
             Header.decode(b"")
 
-
     def test_header_encode_overflow_raises_encode_error(self) -> None:
         """Header with size_words exceeding uint32 must raise EncodeError."""
         from dqlitewire.exceptions import EncodeError
@@ -176,6 +177,51 @@ class TestMessageDecoder:
         decoder = MessageDecoder()
         with pytest.raises(DecodeError, match="too short"):
             decoder.decode_bytes(b"")
+
+
+class TestHandshakeStateEnforcement:
+    """Verify that request decoders enforce handshake-before-decode ordering."""
+
+    def test_request_decoder_rejects_decode_before_handshake(self) -> None:
+        """A request decoder must not allow decode() before decode_handshake().
+
+        The dqlite wire protocol requires the client to send an 8-byte protocol
+        version before any messages. If a request decoder (server-side) skips
+        the handshake, it would misinterpret the version bytes as a message header.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        msg = LeaderRequest()
+        decoder.feed(msg.encode())
+
+        with pytest.raises(ProtocolError, match="[Hh]andshake"):
+            decoder.decode()
+
+    def test_request_decoder_allows_decode_after_handshake(self) -> None:
+        """After handshake, decode() should work normally."""
+        decoder = MessageDecoder(is_request=True)
+
+        # Feed handshake + message
+        handshake = PROTOCOL_VERSION.to_bytes(8, "little")
+        msg = LeaderRequest()
+        decoder.feed(handshake + msg.encode())
+
+        version = decoder.decode_handshake()
+        assert version == PROTOCOL_VERSION
+
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderRequest)
+
+    def test_response_decoder_allows_decode_without_handshake(self) -> None:
+        """Response decoders (client-side) don't require inbound handshake."""
+        decoder = MessageDecoder(is_request=False)
+        msg = LeaderResponse(node_id=1, address="localhost:9001")
+        decoder.feed(msg.encode())
+
+        # Should work without calling decode_handshake first
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderResponse)
 
 
 class TestConvenienceFunctions:
