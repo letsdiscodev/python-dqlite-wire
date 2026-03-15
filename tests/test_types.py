@@ -209,15 +209,13 @@ class TestText:
             text, _ = decode_text(encode_text(s))
             assert text == s, f"Failed for: {repr(s)}"
 
-    def test_null_character_limitation(self) -> None:
-        """Null characters are truncated due to null-terminated string format."""
-        # Single null becomes empty string
-        text, _ = decode_text(encode_text("\x00"))
-        assert text == ""
+    def test_embedded_null_raises_encode_error(self) -> None:
+        """Strings with embedded null bytes should be rejected by encode_text."""
+        with pytest.raises(EncodeError, match="embedded null byte"):
+            encode_text("hello\x00world")
 
-        # Embedded null truncates string
-        text, _ = decode_text(encode_text("hello\x00world"))
-        assert text == "hello"
+        with pytest.raises(EncodeError, match="embedded null byte"):
+            encode_text("\x00")
 
     def test_decode_not_terminated_fails(self) -> None:
         with pytest.raises(DecodeError):

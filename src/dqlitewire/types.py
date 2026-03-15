@@ -85,6 +85,11 @@ def pad_to_word(size: int) -> int:
 
 def encode_text(value: str) -> bytes:
     """Encode text as null-terminated UTF-8, padded to 8-byte boundary."""
+    if "\x00" in value:
+        raise EncodeError(
+            f"Text value contains embedded null byte at position {value.index(chr(0))}; "
+            "null-terminated encoding would lose data"
+        )
     encoded = value.encode("utf-8") + b"\x00"
     padding = pad_to_word(len(encoded))
     return encoded + (b"\x00" * padding)
