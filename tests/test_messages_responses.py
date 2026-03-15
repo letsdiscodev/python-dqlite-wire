@@ -481,6 +481,37 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="Row count.*exceeds maximum"):
             RowsResponse.decode_rows_continuation(body, ["x"], 1, max_rows=2)
 
+    def test_max_rows_exact_boundary_rejects_at_limit(self) -> None:
+        """max_rows=3 with exactly 3 rows should raise DecodeError.
+
+        The max_rows parameter is a strict upper bound: at most max_rows - 1
+        rows should be decoded without error. When the number of rows
+        reaches max_rows, the limit has been exceeded and DecodeError
+        should fire immediately — without decoding another row first.
+        """
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        def build_body(n_rows: int) -> bytes:
+            body = encode_uint64(1)  # column_count=1
+            body += encode_text("x")
+            for i in range(n_rows):
+                body += encode_row_header([ValueType.INTEGER])
+                body += encode_row_values([i], [ValueType.INTEGER])
+            body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
+            return body
+
+        # Exactly max_rows rows should raise
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            RowsResponse.decode_body(build_body(3), max_rows=3)
+
+        # One fewer than max_rows should succeed
+        decoded = RowsResponse.decode_body(build_body(2), max_rows=3)
+        assert len(decoded.rows) == 2
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:

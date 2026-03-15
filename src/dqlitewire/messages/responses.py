@@ -349,7 +349,7 @@ class RowsResponse(Message):
             rows.append(values)
             offset += consumed
 
-            if len(rows) > max_rows:
+            if len(rows) >= max_rows:
                 raise DecodeError(f"Row count {len(rows)} exceeds maximum {max_rows}")
 
             if offset == prev_offset:
@@ -441,7 +441,7 @@ class RowsResponse(Message):
             rows.append(values)
             offset += consumed
 
-            if len(rows) > max_rows:
+            if len(rows) >= max_rows:
                 raise DecodeError(f"Row count {len(rows)} exceeds maximum {max_rows}")
 
             if offset == prev_offset:
