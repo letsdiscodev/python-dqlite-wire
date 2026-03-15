@@ -58,7 +58,12 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0) -> bytes:
     for t in types:
         header.append(t)
 
-    # Pad header to word boundary
+    # Pad header to word boundary.
+    # NOTE: Go pads based on the absolute buffer offset, not the relative
+    # header length. This produces the same result only when the params tuple
+    # starts at a word-aligned offset within the message body. All existing
+    # message types satisfy this (ExecRequest/QueryRequest: 4+4=8 bytes
+    # before params; ExecSqlRequest/QuerySqlRequest: 8 + word-aligned text).
     padding = pad_to_word(len(header))
     header.extend(b"\x00" * padding)
 
@@ -145,9 +150,7 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
 
     for i, t in enumerate(types):
         if int(t) > 15:
-            raise EncodeError(
-                f"Value type {t} at index {i} exceeds 4-bit nibble range (max 15)"
-            )
+            raise EncodeError(f"Value type {t} at index {i} exceeds 4-bit nibble range (max 15)")
 
     header = bytearray()
     for i in range(0, len(types), 2):
