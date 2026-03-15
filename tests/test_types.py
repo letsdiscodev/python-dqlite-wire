@@ -318,6 +318,17 @@ class TestValue:
         assert decode_uint64(encoded_true) == 1
         assert decode_uint64(encoded_false) == 0
 
+    def test_boolean_explicit_rejects_non_bool_non_int(self) -> None:
+        """encode_value with explicit BOOLEAN should reject non-bool/int types."""
+        import pytest
+
+        with pytest.raises(EncodeError, match="[Bb]ool"):
+            encode_value("hello", ValueType.BOOLEAN)
+        with pytest.raises(EncodeError, match="[Bb]ool"):
+            encode_value([1, 2], ValueType.BOOLEAN)
+        with pytest.raises(EncodeError, match="[Bb]ool"):
+            encode_value({"key": "val"}, ValueType.BOOLEAN)
+
     def test_decode_integer(self) -> None:
         value, consumed = decode_value(encode_int64(42), ValueType.INTEGER)
         assert value == 42

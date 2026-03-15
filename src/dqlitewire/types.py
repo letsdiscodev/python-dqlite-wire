@@ -189,6 +189,8 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             raise EncodeError(f"Cannot infer type for value: {type(value)}")
 
     if value_type == ValueType.BOOLEAN:
+        if not isinstance(value, (bool, int)):
+            raise EncodeError(f"Expected bool or int for BOOLEAN, got {type(value).__name__}")
         return encode_uint64(1 if value else 0), value_type
     elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
         if isinstance(value, bool):
