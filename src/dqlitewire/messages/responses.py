@@ -378,6 +378,11 @@ class RowsResponse(Message):
         method to decode those continuation messages, passing the column_names
         and column_count from the initial response.
         """
+        if len(column_names) != column_count:
+            raise DecodeError(
+                f"column_names length ({len(column_names)}) does not match "
+                f"column_count ({column_count})"
+            )
         offset = 0
         rows: list[list[Any]] = []
         all_row_types: list[list[ValueType]] = []

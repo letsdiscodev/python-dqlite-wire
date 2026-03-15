@@ -512,6 +512,27 @@ class TestRowsResponse:
         decoded = RowsResponse.decode_body(build_body(2), max_rows=3)
         assert len(decoded.rows) == 2
 
+    def test_continuation_column_count_mismatch_raises(self) -> None:
+        """decode_rows_continuation should reject mismatched column_names/column_count."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_uint64
+
+        types = [ValueType.INTEGER, ValueType.TEXT]
+        body = encode_row_header(types)
+        body += encode_row_values([1, "hello"], types)
+        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
+
+        # column_names has 3 elements but column_count is 2 — mismatch
+        with pytest.raises(DecodeError, match="column_names.*does not match.*column_count"):
+            RowsResponse.decode_rows_continuation(
+                body,
+                column_names=["a", "b", "c"],
+                column_count=2,
+            )
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:
