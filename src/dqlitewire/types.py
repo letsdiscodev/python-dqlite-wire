@@ -181,6 +181,10 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
                 # Naive datetime: assume UTC to match Go's always-offset format
                 formatted += "+00:00"
             value = formatted
+        elif isinstance(value, datetime.date):
+            # Must come after datetime.datetime check (datetime is a subclass of date)
+            value_type = ValueType.ISO8601
+            value = value.isoformat()
         elif isinstance(value, str):
             value_type = ValueType.TEXT
         elif isinstance(value, bytes):

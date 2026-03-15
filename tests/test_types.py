@@ -329,6 +329,18 @@ class TestValue:
         with pytest.raises(EncodeError, match="[Bb]ool"):
             encode_value({"key": "val"}, ValueType.BOOLEAN)
 
+    def test_encode_date_as_iso8601(self) -> None:
+        """datetime.date should encode as ISO8601 text."""
+        import datetime
+
+        encoded, vtype = encode_value(datetime.date(2024, 1, 15))
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.year == 2024
+        assert decoded.month == 1
+        assert decoded.day == 15
+
     def test_decode_integer(self) -> None:
         value, consumed = decode_value(encode_int64(42), ValueType.INTEGER)
         assert value == 42
