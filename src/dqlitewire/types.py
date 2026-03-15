@@ -70,6 +70,8 @@ def decode_double(data: bytes) -> float:
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for double, got {len(data)}")
     result: float = struct.unpack("<d", data[:8])[0]
+    if math.isnan(result):
+        raise DecodeError("Received NaN double value, not supported by dqlite wire protocol")
     return result
 
 

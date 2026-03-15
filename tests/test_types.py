@@ -111,6 +111,19 @@ class TestDouble:
         for val in values:
             assert decode_double(encode_double(val)) == val
 
+    def test_decode_nan_rejected(self) -> None:
+        """Decoding NaN should raise DecodeError, matching encode_double's NaN rejection.
+
+        The dqlite wire protocol does not support NaN. encode_double rejects it
+        with EncodeError, so decode_double should also reject NaN bytes received
+        from the wire rather than silently returning float('nan').
+        """
+        import struct
+
+        nan_bytes = struct.pack("<d", float("nan"))
+        with pytest.raises(DecodeError, match="NaN"):
+            decode_double(nan_bytes)
+
 
 class TestPadding:
     def test_pad_to_word_aligned(self) -> None:
