@@ -302,6 +302,32 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="Expected DONE or PART marker"):
             RowsResponse.decode_body(data)
 
+    def test_zero_columns_missing_marker_raises(self) -> None:
+        """Zero-column result with no end marker should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        # column_count=0, but no marker follows
+        data = encode_uint64(0)
+        with pytest.raises(DecodeError, match="end marker"):
+            RowsResponse.decode_body(data)
+
+    def test_zero_columns_continuation_missing_marker_raises(self) -> None:
+        """Zero-column continuation with no end marker should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # Empty data for a zero-column continuation
+        with pytest.raises(DecodeError, match="end marker"):
+            RowsResponse.decode_rows_continuation(
+                data=b"",
+                column_names=[],
+                column_count=0,
+            )
+
     def test_decode_rows_continuation(self) -> None:
         """Continuation messages (after PART marker) have rows but no column header."""
         from dqlitewire.tuples import encode_row_header, encode_row_values
