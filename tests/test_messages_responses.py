@@ -238,6 +238,37 @@ class TestRowsResponse:
         decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.column_types == [ValueType.INTEGER, ValueType.TEXT]
 
+    def test_zero_columns_with_done_marker(self) -> None:
+        """Zero-column result with DONE marker should decode to empty rows."""
+        from dqlitewire.types import encode_uint64
+
+        # column_count=0, followed by DONE marker
+        data = encode_uint64(0) + encode_uint64(0xFFFFFFFFFFFFFFFF)
+        decoded = RowsResponse.decode_body(data)
+        assert decoded.column_names == []
+        assert decoded.rows == []
+        assert decoded.has_more is False
+
+    def test_zero_columns_with_part_marker(self) -> None:
+        """Zero-column result with PART marker should decode with has_more=True."""
+        from dqlitewire.types import encode_uint64
+
+        # column_count=0, followed by PART marker
+        data = encode_uint64(0) + encode_uint64(0xEEEEEEEEEEEEEEEE)
+        decoded = RowsResponse.decode_body(data)
+        assert decoded.column_names == []
+        assert decoded.rows == []
+        assert decoded.has_more is True
+
+    def test_zero_columns_roundtrip(self) -> None:
+        """Zero-column RowsResponse should roundtrip correctly."""
+        msg = RowsResponse(column_names=[], rows=[], has_more=False)
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.column_names == []
+        assert decoded.rows == []
+        assert decoded.has_more is False
+
     def test_zero_columns_malformed_no_infinite_loop(self) -> None:
         """Zero-column result with non-marker data must not loop forever."""
         import pytest
@@ -331,7 +362,6 @@ class TestRowsResponse:
 
         with pytest.raises(DecodeError, match="end marker"):
             RowsResponse.decode_body(body)
-
 
     def test_bogus_column_count_raises(self) -> None:
         """A column_count larger than remaining data should raise DecodeError early."""

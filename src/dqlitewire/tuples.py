@@ -173,9 +173,6 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
     before validating header size, matching the Go reference implementation.
     Returns (types_or_marker, bytes_consumed).
     """
-    if column_count == 0:
-        return [], 0
-
     # Check for markers first — markers are always exactly one 8-byte word,
     # regardless of column count. Must check before header size validation
     # because for large column counts the header would be >8 bytes.
