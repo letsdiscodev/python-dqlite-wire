@@ -156,7 +156,7 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             # Format to match Go's time format: "2006-01-02 15:04:05.999999999-07:00"
             formatted = value.strftime("%Y-%m-%d %H:%M:%S")
             if value.microsecond:
-                formatted += f".{value.microsecond:06d}"
+                formatted += f".{value.microsecond:06d}".rstrip("0")
             utcoffset = value.utcoffset()
             if utcoffset is not None:
                 total_seconds = int(utcoffset.total_seconds())
