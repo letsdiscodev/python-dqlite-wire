@@ -48,6 +48,7 @@ class ReadBuffer:
 
     def feed(self, data: bytes) -> None:
         """Add received data to the buffer."""
+        self._maybe_compact()
         unconsumed = len(self._data) - self._pos + len(data)
         if unconsumed > self._max_message_size:
             raise DecodeError(f"Buffer size {unconsumed} exceeds maximum {self._max_message_size}")

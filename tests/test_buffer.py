@@ -272,6 +272,22 @@ class TestReadBuffer:
         # Buffer position should not have changed
         assert buf.available() == 24  # 8 header + 16 partial body
 
+    def test_feed_compacts_consumed_data(self) -> None:
+        """feed() should compact consumed data before extending the buffer.
+
+        When _pos is past the compaction threshold, feed() should compact
+        the buffer to reclaim consumed bytes before adding new data.
+        """
+        buf = ReadBuffer(max_message_size=65536)
+        # Simulate a state where data was consumed but not yet compacted
+        # (e.g., by external manipulation or edge case in read patterns)
+        buf._data = bytearray(b"\x00" * 5000)
+        buf._pos = 4500  # 4500 consumed, 500 remaining
+        # feed() should compact (since _pos > 4096) before extending
+        buf.feed(b"\x01" * 100)
+        assert buf._pos == 0
+        assert len(buf._data) == 600  # 500 remaining + 100 new
+
     def test_buffer_compaction(self) -> None:
         buf = ReadBuffer()
         # Feed a lot of small messages to trigger compaction
