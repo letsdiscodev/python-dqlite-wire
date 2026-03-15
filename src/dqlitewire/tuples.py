@@ -163,9 +163,12 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
     if not types:
         return b""
 
+    _valid_type_codes = frozenset(ValueType)
     for i, t in enumerate(types):
         if int(t) > 15:
             raise EncodeError(f"Value type {t} at index {i} exceeds 4-bit nibble range (max 15)")
+        if int(t) not in _valid_type_codes:
+            raise EncodeError(f"Invalid type code {int(t)} at index {i}: not a valid ValueType")
 
     header = bytearray()
     for i in range(0, len(types), 2):

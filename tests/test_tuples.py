@@ -365,6 +365,26 @@ class TestRowHeaderErrors:
         with pytest.raises(DecodeError, match="Not enough data for row header"):
             decode_row_header(b"\x01\x02\x03\x04", 1)
 
+    def test_encode_rejects_type_code_zero(self) -> None:
+        """encode_row_header should reject type code 0, which is not a valid ValueType."""
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="[Ii]nvalid.*type"):
+            encode_row_header([0])
+
+    def test_encode_rejects_undefined_type_codes(self) -> None:
+        """encode_row_header should reject type codes not defined in ValueType."""
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        # Type codes 6, 7, 8 are undefined
+        for code in [6, 7, 8, 12, 13, 14, 15]:
+            with pytest.raises(EncodeError, match="[Ii]nvalid.*type"):
+                encode_row_header([code])
+
 
 class TestRowValuesBlob:
     def test_roundtrip_with_blob(self) -> None:
