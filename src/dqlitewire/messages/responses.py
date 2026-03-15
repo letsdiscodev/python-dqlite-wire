@@ -14,6 +14,13 @@ from dqlitewire.types import (
     encode_uint64,
 )
 
+# Defense-in-depth upper bounds for count fields in response messages.
+# These are far above any legitimate use case but prevent CPU/memory
+# exhaustion from malicious or corrupted messages.
+_MAX_COLUMN_COUNT = 10_000
+_MAX_FILE_COUNT = 100
+_MAX_NODE_COUNT = 10_000
+
 
 @dataclass
 class FailureResponse(Message):
@@ -248,6 +255,11 @@ class RowsResponse(Message):
         column_count = decode_uint64(data[offset:])
         offset += 8
 
+        if column_count > _MAX_COLUMN_COUNT:
+            raise DecodeError(
+                f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}"
+            )
+
         # Bounds check: each column name is at least 8 bytes (null + padding)
         remaining = len(data) - offset
         if column_count > remaining // 8:
@@ -440,6 +452,10 @@ class FilesResponse(Message):
         offset = 0
         count = decode_uint64(data[offset:])
         offset += 8
+        if count > _MAX_FILE_COUNT:
+            raise DecodeError(
+                f"File count {count} exceeds maximum {_MAX_FILE_COUNT}"
+            )
         # Bounds check: each file is at least 16 bytes (name + size)
         remaining = len(data) - offset
         if count > remaining // 16:
@@ -493,6 +509,10 @@ class ServersResponse(Message):
         offset = 0
         count = decode_uint64(data[offset:])
         offset += 8
+        if count > _MAX_NODE_COUNT:
+            raise DecodeError(
+                f"Node count {count} exceeds maximum {_MAX_NODE_COUNT}"
+            )
         # Bounds check: each node is at least 24 bytes (id + address + role)
         remaining = len(data) - offset
         if count > remaining // 24:

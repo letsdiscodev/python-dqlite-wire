@@ -372,7 +372,19 @@ class TestRowsResponse:
 
         # column_count = 1 billion, but only 8 bytes of data after count
         body = encode_uint64(1_000_000_000) + b"\x00" * 8
-        with pytest.raises(DecodeError, match="exceeds.*remaining"):
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            RowsResponse.decode_body(body)
+
+    def test_column_count_exceeds_hard_limit(self) -> None:
+        """Column count exceeding the hard limit should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        # 20_000 columns, with enough data to pass the data-size check
+        body = encode_uint64(20_000) + b"\x00" * (20_000 * 8 + 8)
+        with pytest.raises(DecodeError, match="Column count.*exceeds maximum"):
             RowsResponse.decode_body(body)
 
     def test_max_rows_limit_decode_body(self) -> None:
@@ -559,7 +571,19 @@ class TestFilesResponse:
         from dqlitewire.types import encode_uint64
 
         body = encode_uint64(1_000_000_000) + b"\x00" * 8
-        with pytest.raises(DecodeError, match="exceeds.*remaining"):
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            FilesResponse.decode_body(body)
+
+    def test_file_count_exceeds_hard_limit(self) -> None:
+        """File count exceeding the hard limit should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        # 200 files, enough data to pass data-size check
+        body = encode_uint64(200) + b"\x00" * (200 * 16 + 8)
+        with pytest.raises(DecodeError, match="File count.*exceeds maximum"):
             FilesResponse.decode_body(body)
 
 
@@ -612,7 +636,19 @@ class TestServersResponse:
         from dqlitewire.types import encode_uint64
 
         body = encode_uint64(1_000_000_000) + b"\x00" * 8
-        with pytest.raises(DecodeError, match="exceeds.*remaining"):
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            ServersResponse.decode_body(body)
+
+    def test_node_count_exceeds_hard_limit(self) -> None:
+        """Node count exceeding the hard limit should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        # 20_000 nodes, enough data to pass data-size check
+        body = encode_uint64(20_000) + b"\x00" * (20_000 * 24 + 8)
+        with pytest.raises(DecodeError, match="Node count.*exceeds maximum"):
             ServersResponse.decode_body(body)
 
 
