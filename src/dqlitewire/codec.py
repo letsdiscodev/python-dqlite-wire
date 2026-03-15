@@ -167,7 +167,15 @@ class MessageDecoder:
         return self.decode_bytes(data)
 
     def decode_bytes(self, data: bytes) -> Message:
-        """Decode a message from bytes."""
+        """Decode a message from bytes.
+
+        Raises ProtocolError if called on a request decoder before decode_handshake().
+        """
+        if not self._handshake_done:
+            raise ProtocolError(
+                "Protocol handshake not yet received. "
+                "Call decode_handshake() before decode_bytes()."
+            )
         if len(data) < HEADER_SIZE:
             raise DecodeError(f"Message too short: {len(data)} bytes")
 
@@ -205,8 +213,14 @@ class MessageDecoder:
 
 
 def decode_message(data: bytes, is_request: bool = False) -> Message:
-    """Convenience function to decode a single message."""
+    """Convenience function to decode a single message.
+
+    This is a stateless decode — it does not enforce protocol handshake
+    since there is no connection context. Use MessageDecoder for full
+    protocol-aware streaming decode with handshake enforcement.
+    """
     decoder = MessageDecoder(is_request=is_request)
+    decoder._handshake_done = True
     return decoder.decode_bytes(data)
 
 

@@ -173,9 +173,8 @@ class TestMessageDecoder:
         header = Header(size_words=1, msg_type=5, schema=5)  # type 5 = EXEC
         data = header.encode() + body
 
-        decoder = MessageDecoder(is_request=True)
         with pytest.raises(DecodeError, match="[Uu]nsupported schema"):
-            decoder.decode_bytes(data)
+            decode_message(data, is_request=True)
 
     def test_decode_bytes_too_short(self) -> None:
         """decode_bytes with data shorter than HEADER_SIZE should raise DecodeError."""
@@ -249,6 +248,22 @@ class TestHandshakeStateEnforcement:
 
         decoded = decoder.decode()
         assert isinstance(decoded, LeaderRequest)
+
+    def test_request_decoder_decode_bytes_rejects_before_handshake(self) -> None:
+        """decode_bytes() must also enforce handshake on request decoders."""
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        msg = LeaderRequest()
+        with pytest.raises(ProtocolError, match="[Hh]andshake"):
+            decoder.decode_bytes(msg.encode())
+
+    def test_response_decoder_decode_bytes_works_without_handshake(self) -> None:
+        """decode_bytes() on response decoders should work without handshake."""
+        decoder = MessageDecoder(is_request=False)
+        msg = LeaderResponse(node_id=1, address="localhost:9001")
+        decoded = decoder.decode_bytes(msg.encode())
+        assert isinstance(decoded, LeaderResponse)
 
     def test_response_decoder_allows_decode_without_handshake(self) -> None:
         """Response decoders (client-side) don't require inbound handshake."""
