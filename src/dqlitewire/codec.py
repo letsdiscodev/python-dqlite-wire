@@ -1,7 +1,13 @@
 """Message encoder and decoder for dqlite wire protocol."""
 
 from dqlitewire.buffer import ReadBuffer
-from dqlitewire.constants import HEADER_SIZE, PROTOCOL_VERSION, RequestType, ResponseType
+from dqlitewire.constants import (
+    HEADER_SIZE,
+    PROTOCOL_VERSION,
+    PROTOCOL_VERSION_LEGACY,
+    RequestType,
+    ResponseType,
+)
 from dqlitewire.exceptions import DecodeError, ProtocolError
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.requests import (
@@ -88,6 +94,9 @@ _MAX_SCHEMA: dict[int, int] = {
     RequestType.QUERY_SQL: 1,
     ResponseType.STMT: 1,
 }
+
+
+_SUPPORTED_VERSIONS = {PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY}
 
 
 class MessageEncoder:
@@ -183,12 +192,16 @@ class MessageDecoder:
 
         Returns the protocol version or None if not enough data.
         Must be called before decode() on request decoders.
+        Raises ProtocolError if the version is not recognized.
         """
         data = self._buffer.read_bytes(8)
         if data is None:
             return None
+        version = int.from_bytes(data, "little")
+        if version not in _SUPPORTED_VERSIONS:
+            raise ProtocolError(f"Unsupported protocol version: {version:#x}")
         self._handshake_done = True
-        return int.from_bytes(data, "little")
+        return version
 
 
 def decode_message(data: bytes, is_request: bool = False) -> Message:

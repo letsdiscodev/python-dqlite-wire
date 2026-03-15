@@ -193,6 +193,32 @@ class TestMessageDecoder:
 class TestHandshakeStateEnforcement:
     """Verify that request decoders enforce handshake-before-decode ordering."""
 
+    def test_decode_handshake_rejects_unknown_version(self) -> None:
+        """decode_handshake() must reject unknown protocol versions."""
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        # Feed garbage version bytes
+        decoder.feed(b"\x42\x42\x42\x42\x42\x42\x42\x42")
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+
+    def test_decode_handshake_rejects_zero_version(self) -> None:
+        """Version 0 is not a valid protocol version."""
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        decoder.feed(b"\x00" * 8)
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+
+    def test_decode_handshake_accepts_legacy_version(self) -> None:
+        """Legacy version (0x86104dd760433fe5) must be accepted."""
+        decoder = MessageDecoder(is_request=True)
+        decoder.feed(PROTOCOL_VERSION_LEGACY.to_bytes(8, "little"))
+        version = decoder.decode_handshake()
+        assert version == PROTOCOL_VERSION_LEGACY
+
     def test_request_decoder_rejects_decode_before_handshake(self) -> None:
         """A request decoder must not allow decode() before decode_handshake().
 
