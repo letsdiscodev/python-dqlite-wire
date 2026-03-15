@@ -93,6 +93,16 @@ _MAX_SCHEMA: dict[int, int] = {
 class MessageEncoder:
     """Encodes messages to wire protocol format."""
 
+    def __init__(self, version: int = PROTOCOL_VERSION) -> None:
+        """Initialize encoder.
+
+        Args:
+            version: Protocol version to use in handshake. Defaults to
+                     PROTOCOL_VERSION (1). Use PROTOCOL_VERSION_LEGACY
+                     (0x86104dd760433fe5) for pre-1.0 dqlite servers.
+        """
+        self._version = version
+
     def encode(self, message: Message) -> bytes:
         """Encode a message to bytes."""
         return message.encode()
@@ -102,7 +112,7 @@ class MessageEncoder:
 
         Must be sent before any other message.
         """
-        return PROTOCOL_VERSION.to_bytes(8, "little")
+        return self._version.to_bytes(8, "little")
 
 
 class MessageDecoder:
