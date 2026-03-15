@@ -348,6 +348,23 @@ class TestConvenienceFunctions:
         assert isinstance(decoded, OpenRequest)
         assert decoded.name == "test.db"
 
+    def test_decode_message_with_legacy_version(self) -> None:
+        """decode_message with version=PROTOCOL_VERSION_LEGACY should use legacy format."""
+        from dqlitewire.messages.base import Header
+        from dqlitewire.types import encode_text
+
+        address = "10.0.0.1:9001"
+        body = encode_text(address)
+        from dqlitewire.constants import ResponseType
+
+        header = Header(size_words=len(body) // 8, msg_type=ResponseType.LEADER)
+        message_bytes = header.encode() + body
+
+        decoded = decode_message(message_bytes, version=PROTOCOL_VERSION_LEGACY)
+        assert isinstance(decoded, LeaderResponse)
+        assert decoded.node_id == 0
+        assert decoded.address == address
+
 
 class TestRoundTrip:
     """End-to-end encode/decode tests."""

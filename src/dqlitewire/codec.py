@@ -234,15 +234,25 @@ class MessageDecoder:
         return version
 
 
-def decode_message(data: bytes, is_request: bool = False) -> Message:
+def decode_message(
+    data: bytes, is_request: bool = False, version: int = PROTOCOL_VERSION
+) -> Message:
     """Convenience function to decode a single message.
 
     This is a stateless decode — it does not enforce protocol handshake
     since there is no connection context. Use MessageDecoder for full
     protocol-aware streaming decode with handshake enforcement.
+
+    Args:
+        data: Raw message bytes (header + body).
+        is_request: If True, decode as a request message.
+        version: Protocol version to assume. Use PROTOCOL_VERSION_LEGACY
+                 to decode legacy-format messages (e.g., LeaderResponse
+                 without node_id).
     """
     decoder = MessageDecoder(is_request=is_request)
     decoder._handshake_done = True
+    decoder._version = version
     return decoder.decode_bytes(data)
 
 
