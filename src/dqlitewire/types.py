@@ -74,6 +74,8 @@ def decode_double(data: bytes) -> float:
     result: float = struct.unpack("<d", data[:8])[0]
     if math.isnan(result):
         raise DecodeError("Received NaN double value, not supported by dqlite wire protocol")
+    if math.isinf(result):
+        raise DecodeError("Received infinity double value, not supported by dqlite wire protocol")
     return result
 
 

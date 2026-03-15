@@ -124,6 +124,22 @@ class TestDouble:
         with pytest.raises(DecodeError, match="NaN"):
             decode_double(nan_bytes)
 
+    def test_decode_positive_infinity_rejected(self) -> None:
+        """Decoding +inf should raise DecodeError, matching encode_double's rejection."""
+        import struct
+
+        inf_bytes = struct.pack("<d", float("inf"))
+        with pytest.raises(DecodeError, match="[Ii]nfinity"):
+            decode_double(inf_bytes)
+
+    def test_decode_negative_infinity_rejected(self) -> None:
+        """Decoding -inf should raise DecodeError, matching encode_double's rejection."""
+        import struct
+
+        inf_bytes = struct.pack("<d", float("-inf"))
+        with pytest.raises(DecodeError, match="[Ii]nfinity"):
+            decode_double(inf_bytes)
+
 
 class TestPadding:
     def test_pad_to_word_aligned(self) -> None:
