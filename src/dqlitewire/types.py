@@ -219,14 +219,18 @@ def _parse_iso8601(text: str) -> datetime.datetime:
 
     # Try Python's fromisoformat first — handles most formats since Python 3.11
     try:
-        return datetime.datetime.fromisoformat(text)
+        dt = datetime.datetime.fromisoformat(text)
+        # Go parses all formats without explicit timezone in UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.UTC)
+        return dt
     except ValueError:
         pass
 
     # Fallback: date-only format
     try:
         d = datetime.date.fromisoformat(text)
-        return datetime.datetime(d.year, d.month, d.day)
+        return datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.UTC)
     except ValueError:
         pass
 

@@ -362,6 +362,26 @@ class TestValue:
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
         assert isinstance(decoded, datetime.datetime)
 
+    def test_iso8601_date_only_returns_utc_aware_datetime(self) -> None:
+        """Date-only ISO8601 should return a timezone-aware datetime (UTC), not naive."""
+        import datetime
+
+        encoded, _ = encode_value("2024-01-15", ValueType.ISO8601)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.tzinfo is not None, "Date-only ISO8601 should be UTC-aware, got naive"
+        assert decoded == datetime.datetime(2024, 1, 15, tzinfo=datetime.UTC)
+
+    def test_iso8601_no_timezone_returns_utc_aware_datetime(self) -> None:
+        """ISO8601 without timezone should return UTC-aware datetime, matching Go."""
+        import datetime
+
+        encoded, _ = encode_value("2024-01-15 10:30:45", ValueType.ISO8601)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.tzinfo is not None, "No-tz ISO8601 should be UTC-aware, got naive"
+        assert decoded == datetime.datetime(2024, 1, 15, 10, 30, 45, tzinfo=datetime.UTC)
+
     def test_encode_decode_unixtime(self) -> None:
         """Test Unix timestamp decodes to datetime, matching Go's time.Unix."""
         import datetime
