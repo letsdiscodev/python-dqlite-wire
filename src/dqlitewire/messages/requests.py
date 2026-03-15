@@ -321,6 +321,35 @@ class InterruptRequest(Message):
 
 
 @dataclass
+class ConnectRequest(Message):
+    """Establish a Raft transport connection (node-to-node).
+
+    Body: uint64 node_id, text address
+
+    This message type is defined in the C dqlite protocol (DQLITE_REQUEST_CONNECT = 11)
+    but is not used by the Go client library (go-dqlite), which is a client-only
+    implementation. It is used for inter-node Raft transport connections within a
+    dqlite cluster.
+    """
+
+    MSG_TYPE: ClassVar[int] = RequestType.CONNECT
+
+    node_id: int
+    address: str
+
+    def encode_body(self) -> bytes:
+        return encode_uint64(self.node_id) + encode_text(self.address)
+
+    @classmethod
+    def decode_body(cls, data: bytes, schema: int = 0) -> "ConnectRequest":
+        from dqlitewire.types import decode_text, decode_uint64
+
+        node_id = decode_uint64(data)
+        address, _ = decode_text(data[8:])
+        return cls(node_id, address)
+
+
+@dataclass
 class AddRequest(Message):
     """Add a node to the cluster.
 

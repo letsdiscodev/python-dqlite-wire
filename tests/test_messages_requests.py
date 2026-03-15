@@ -7,6 +7,7 @@ from dqlitewire.messages.requests import (
     AssignRequest,
     ClientRequest,
     ClusterRequest,
+    ConnectRequest,
     DescribeRequest,
     DumpRequest,
     ExecRequest,
@@ -292,6 +293,19 @@ class TestInterruptRequest:
         encoded = msg.encode()
         decoded = InterruptRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 42
+
+
+class TestConnectRequest:
+    def test_roundtrip(self) -> None:
+        msg = ConnectRequest(node_id=3, address="node3:9001")
+        encoded = msg.encode()
+        decoded = ConnectRequest.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.node_id == 3
+        assert decoded.address == "node3:9001"
+
+    def test_type_code_is_11(self) -> None:
+        msg = ConnectRequest(node_id=1, address="localhost:9001")
+        assert msg.MSG_TYPE == 11
 
 
 class TestAddRequest:
