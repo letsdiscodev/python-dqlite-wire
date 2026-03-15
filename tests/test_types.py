@@ -445,8 +445,6 @@ class TestValue:
             3.14159265358979,
             1e10,
             1e-10,
-            float("inf"),
-            float("-inf"),
         ]
         for val in floats:
             encoded, vtype = encode_value(val)
@@ -461,6 +459,17 @@ class TestValue:
 
         with pytest.raises(EncodeError, match="NaN"):
             encode_value(float("nan"))
+
+    def test_infinity_rejected(self) -> None:
+        """Infinity should be rejected to prevent NaN from server-side arithmetic."""
+        with pytest.raises(EncodeError, match="[Ii]nfinity"):
+            encode_double(float("inf"))
+
+        with pytest.raises(EncodeError, match="[Ii]nfinity"):
+            encode_double(float("-inf"))
+
+        with pytest.raises(EncodeError, match="[Ii]nfinity"):
+            encode_value(float("inf"))
 
     def test_integer_edge_cases(self) -> None:
         """Test integer edge cases."""

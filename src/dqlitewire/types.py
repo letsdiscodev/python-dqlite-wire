@@ -62,6 +62,8 @@ def encode_double(value: float) -> bytes:
     """Encode a 64-bit floating point number (little-endian)."""
     if math.isnan(value):
         raise EncodeError("NaN is not supported by the dqlite wire protocol")
+    if math.isinf(value):
+        raise EncodeError("Infinity is not supported by the dqlite wire protocol")
     return struct.pack("<d", value)
 
 
