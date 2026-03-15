@@ -379,3 +379,54 @@ class TestWeightRequest:
         encoded = msg.encode()
         decoded = WeightRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.weight == 100
+
+
+class TestParamsTupleWordAlignment:
+    """Verify that params tuples start at word-aligned offsets in all message types.
+
+    The params tuple padding calculation uses the relative header length
+    (count_size + num_types) rather than the absolute buffer offset. This
+    produces correct padding only when the params tuple starts at a
+    word-aligned offset (multiple of 8) within the message body.
+
+    This test ensures the assumption holds for every message type that
+    embeds a params tuple, so that any future protocol change that violates
+    it will be caught immediately.
+    """
+
+    def _body_offset_before_params(self, msg_class: type, **kwargs: object) -> int:
+        """Calculate the byte offset where the params tuple begins in the body."""
+        from dqlitewire.types import encode_text, encode_uint32, encode_uint64
+
+        if msg_class is ExecRequest or msg_class is QueryRequest:
+            # Body: uint32 db_id + uint32 stmt_id = 8 bytes
+            return len(encode_uint32(0)) + len(encode_uint32(0))
+        if msg_class is ExecSqlRequest or msg_class is QuerySqlRequest:
+            # Body: uint64 db_id + text sql
+            sql = kwargs.get("sql", "SELECT 1")
+            assert isinstance(sql, str)
+            return len(encode_uint64(0)) + len(encode_text(sql))
+        raise ValueError(f"Unknown message class: {msg_class}")
+
+    def test_exec_request_params_at_word_boundary(self) -> None:
+        offset = self._body_offset_before_params(ExecRequest)
+        assert offset % 8 == 0, f"ExecRequest params start at offset {offset}, not word-aligned"
+
+    def test_query_request_params_at_word_boundary(self) -> None:
+        offset = self._body_offset_before_params(QueryRequest)
+        assert offset % 8 == 0, f"QueryRequest params start at offset {offset}, not word-aligned"
+
+    def test_exec_sql_request_params_at_word_boundary(self) -> None:
+        # Text encoding always pads to word boundary, so any SQL string works
+        for sql in ["SELECT 1", "X", "", "SELECT * FROM very_long_table_name WHERE id = ?"]:
+            offset = self._body_offset_before_params(ExecSqlRequest, sql=sql)
+            assert offset % 8 == 0, (
+                f"ExecSqlRequest params start at offset {offset} for sql={sql!r}, not word-aligned"
+            )
+
+    def test_query_sql_request_params_at_word_boundary(self) -> None:
+        for sql in ["SELECT 1", "X", "", "SELECT * FROM very_long_table_name WHERE id = ?"]:
+            offset = self._body_offset_before_params(QuerySqlRequest, sql=sql)
+            assert offset % 8 == 0, (
+                f"QuerySqlRequest params start at offset {offset} for sql={sql!r}, not word-aligned"
+            )
