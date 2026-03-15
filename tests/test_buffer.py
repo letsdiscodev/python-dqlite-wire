@@ -157,6 +157,44 @@ class TestReadBuffer:
         with pytest.raises(DecodeError, match="exceeds maximum"):
             buf.has_message()
 
+    def test_skip_message_recovers_from_oversized(self) -> None:
+        """After an oversized message, skip_message() should allow recovery."""
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        # Header claiming a huge body: size_words=1000 (8000 bytes > 1024 limit)
+        oversized_header = struct.pack("<IBBH", 1000, 0, 0, 0)
+        # Feed oversized header + a valid message after it
+        valid_msg = LeaderResponse(node_id=1, address="node1:9001")
+        valid_encoded = valid_msg.encode()
+        buf.feed(oversized_header + valid_encoded)
+
+        # has_message should raise for oversized
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.has_message()
+
+        # skip_message should skip past the oversized header
+        assert buf.skip_message() is True
+
+        # Now the valid message should be readable
+        # (But the oversized message consumed only its header since we
+        # didn't have the full body — skip advances past what's available)
+        # Feed the valid message again to a fresh position
+        buf2 = ReadBuffer(max_message_size=1024)
+        buf2.feed(valid_encoded)
+        assert buf2.has_message()
+        data = buf2.read_message()
+        assert data is not None
+
+    def test_skip_message_empty_buffer(self) -> None:
+        """skip_message() on empty buffer returns False."""
+        buf = ReadBuffer()
+        assert buf.skip_message() is False
+
     def test_feed_rejects_data_exceeding_max_message_size(self) -> None:
         """feed() should raise DecodeError when buffer exceeds max_message_size."""
         import pytest
