@@ -8,7 +8,7 @@ from dqlitewire.codec import (
     decode_message,
     encode_message,
 )
-from dqlitewire.constants import PROTOCOL_VERSION
+from dqlitewire.constants import PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY
 from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages import (
     ClientRequest,
@@ -30,6 +30,17 @@ class TestMessageEncoder:
         handshake = encoder.encode_handshake()
         assert len(handshake) == 8
         assert int.from_bytes(handshake, "little") == PROTOCOL_VERSION
+
+    def test_encode_handshake_legacy(self) -> None:
+        """Encoder with legacy version should produce the legacy handshake word."""
+        encoder = MessageEncoder(version=PROTOCOL_VERSION_LEGACY)
+        handshake = encoder.encode_handshake()
+        assert len(handshake) == 8
+        assert int.from_bytes(handshake, "little") == PROTOCOL_VERSION_LEGACY
+
+    def test_legacy_version_constant_matches_go(self) -> None:
+        """PROTOCOL_VERSION_LEGACY must match Go's VersionLegacy = 0x86104dd760433fe5."""
+        assert PROTOCOL_VERSION_LEGACY == 0x86104DD760433FE5
 
     def test_encoder_has_no_buffer_attribute(self) -> None:
         """MessageEncoder should not have unused _buffer attribute."""

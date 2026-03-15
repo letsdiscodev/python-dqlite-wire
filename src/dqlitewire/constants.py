@@ -2,8 +2,9 @@
 
 from enum import IntEnum
 
-# Protocol version
+# Protocol versions
 PROTOCOL_VERSION = 1
+PROTOCOL_VERSION_LEGACY = 0x86104DD760433FE5  # Pre-1.0 dqlite servers
 
 # Word size in bytes (all messages are padded to 8-byte boundaries)
 WORD_SIZE = 8
