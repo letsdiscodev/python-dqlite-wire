@@ -404,6 +404,41 @@ class TestRoundTrip:
         assert isinstance(decoded, PrepareRequest)
         assert decoded.schema == 1
 
+    def test_decode_bytes_slices_body_to_header_size(self) -> None:
+        """decode_bytes() must not pass trailing bytes to the message decoder.
+
+        AssignRequest uses len(data) to distinguish Promote (1 word) from
+        Assign (2 words). If trailing bytes leak through, a Promote message
+        would be misinterpreted as Assign with a garbage role.
+        """
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.requests import AssignRequest
+        from dqlitewire.types import encode_uint64
+
+        # Build a Promote message (1 word body: just node_id)
+        body = encode_uint64(42)  # node_id=42, no role
+        header = Header(size_words=1, msg_type=13, schema=0)  # type 13 = ASSIGN
+
+        # Append garbage trailing bytes that look like a role field
+        trailing = encode_uint64(99)
+        data = header.encode() + body + trailing
+
+        decoded = decode_message(data, is_request=True)
+        assert isinstance(decoded, AssignRequest)
+        assert decoded.node_id == 42
+        # Must be None (Promote), not 99 (which would happen if trailing leaked)
+        assert decoded.role is None
+
+    def test_decode_bytes_rejects_short_body(self) -> None:
+        """decode_bytes() must raise DecodeError if body is shorter than header claims."""
+        from dqlitewire.messages.base import Header
+
+        # Header claims 2 words (16 bytes) but only 8 bytes follow
+        header = Header(size_words=2, msg_type=0, schema=0)
+        data = header.encode() + b"\x00" * 8  # Only 8 bytes, not 16
+        with pytest.raises(DecodeError, match="[Bb]ody.*short"):
+            decode_message(data, is_request=True)
+
     def test_stmt_response_v0_with_trailing_data_not_detected_as_v1(self) -> None:
         """StmtResponse V0 with trailing bytes must not be misdetected as V1."""
         from dqlitewire.messages.base import Header

@@ -186,7 +186,13 @@ class MessageDecoder:
             raise DecodeError(f"Message too short: {len(data)} bytes")
 
         header = Header.decode(data[:HEADER_SIZE])
-        body = data[HEADER_SIZE:]
+        body_size = header.size_words * 8
+        if len(data) < HEADER_SIZE + body_size:
+            raise DecodeError(
+                f"Message body too short: header says {body_size} bytes, "
+                f"got {len(data) - HEADER_SIZE}"
+            )
+        body = data[HEADER_SIZE : HEADER_SIZE + body_size]
 
         msg_class = self._type_map.get(header.msg_type)
         if msg_class is None:
