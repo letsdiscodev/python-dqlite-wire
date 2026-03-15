@@ -265,9 +265,7 @@ class RowsResponse(Message):
         offset += 8
 
         if column_count > _MAX_COLUMN_COUNT:
-            raise DecodeError(
-                f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}"
-            )
+            raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
 
         # Bounds check: each column name is at least 8 bytes (null + padding)
         remaining = len(data) - offset
@@ -351,9 +349,7 @@ class RowsResponse(Message):
             offset += consumed
 
             if len(rows) > max_rows:
-                raise DecodeError(
-                    f"Row count {len(rows)} exceeds maximum {max_rows}"
-                )
+                raise DecodeError(f"Row count {len(rows)} exceeds maximum {max_rows}")
 
             if offset == prev_offset:
                 raise DecodeError(
@@ -444,9 +440,7 @@ class RowsResponse(Message):
             offset += consumed
 
             if len(rows) > max_rows:
-                raise DecodeError(
-                    f"Row count {len(rows)} exceeds maximum {max_rows}"
-                )
+                raise DecodeError(f"Row count {len(rows)} exceeds maximum {max_rows}")
 
             if offset == prev_offset:
                 raise DecodeError(
@@ -510,9 +504,7 @@ class FilesResponse(Message):
         count = decode_uint64(data[offset:])
         offset += 8
         if count > _MAX_FILE_COUNT:
-            raise DecodeError(
-                f"File count {count} exceeds maximum {_MAX_FILE_COUNT}"
-            )
+            raise DecodeError(f"File count {count} exceeds maximum {_MAX_FILE_COUNT}")
         # Bounds check: each file is at least 16 bytes (name + size)
         remaining = len(data) - offset
         if count > remaining // 16:
@@ -567,9 +559,7 @@ class ServersResponse(Message):
         count = decode_uint64(data[offset:])
         offset += 8
         if count > _MAX_NODE_COUNT:
-            raise DecodeError(
-                f"Node count {count} exceeds maximum {_MAX_NODE_COUNT}"
-            )
+            raise DecodeError(f"Node count {count} exceeds maximum {_MAX_NODE_COUNT}")
         # Bounds check: each node is at least 24 bytes (id + address + role)
         remaining = len(data) - offset
         if count > remaining // 24:
