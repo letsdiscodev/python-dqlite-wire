@@ -401,6 +401,14 @@ class TestValue:
             with pytest.raises(DecodeError, match="outside the representable datetime range"):
                 decode_value(data, ValueType.UNIXTIME)
 
+    def test_encode_datetime_with_explicit_unixtime_raises_encode_error(self) -> None:
+        """Passing a datetime with ValueType.UNIXTIME should raise EncodeError, not TypeError."""
+        import datetime
+
+        dt = datetime.datetime(2024, 1, 15, 12, 30, 0, tzinfo=datetime.UTC)
+        with pytest.raises(EncodeError, match="Expected int for UNIXTIME"):
+            encode_value(dt, ValueType.UNIXTIME)
+
     def test_boolean_roundtrip(self) -> None:
         """Test boolean encoding/decoding."""
         for val in [True, False]:

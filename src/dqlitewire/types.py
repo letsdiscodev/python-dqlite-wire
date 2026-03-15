@@ -184,6 +184,10 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
     elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
         if isinstance(value, bool):
             value = 1 if value else 0
+        if not isinstance(value, int):
+            raise EncodeError(
+                f"Expected int for {value_type.name}, got {type(value).__name__}"
+            )
         return encode_int64(value), value_type
     elif value_type == ValueType.FLOAT:
         return encode_double(value), value_type
