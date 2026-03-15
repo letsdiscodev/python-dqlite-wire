@@ -401,6 +401,37 @@ class TestValue:
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
         assert ".123456" in decoded
 
+    def test_datetime_microseconds_trailing_zeros_stripped(self) -> None:
+        """Microsecond trailing zeros must be stripped to match Go's time.Format.
+
+        Go uses the format "2006-01-02 15:04:05.999999999-07:00" which strips
+        trailing zeros from the fractional part. For example, 100000 microseconds
+        should produce ".1" not ".100000", and 123000 microseconds should produce
+        ".123" not ".123000".
+        """
+        from datetime import datetime
+
+        # 100000 microseconds = 0.1 seconds -> Go produces ".1"
+        dt1 = datetime(2024, 1, 15, 10, 30, 45, 100000, tzinfo=UTC)
+        encoded1, _ = encode_value(dt1)
+        decoded1, _ = decode_value(encoded1, ValueType.ISO8601)
+        assert ".1+" in decoded1, f"Expected '.1+' but got: {decoded1}"
+        assert ".100000" not in decoded1, f"Trailing zeros not stripped: {decoded1}"
+
+        # 123000 microseconds = 0.123 seconds -> Go produces ".123"
+        dt2 = datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC)
+        encoded2, _ = encode_value(dt2)
+        decoded2, _ = decode_value(encoded2, ValueType.ISO8601)
+        assert ".123+" in decoded2, f"Expected '.123+' but got: {decoded2}"
+        assert ".123000" not in decoded2, f"Trailing zeros not stripped: {decoded2}"
+
+        # 10000 microseconds = 0.01 seconds -> Go produces ".01"
+        dt3 = datetime(2024, 1, 15, 10, 30, 45, 10000, tzinfo=UTC)
+        encoded3, _ = encode_value(dt3)
+        decoded3, _ = decode_value(encoded3, ValueType.ISO8601)
+        assert ".01+" in decoded3, f"Expected '.01+' but got: {decoded3}"
+        assert ".010000" not in decoded3, f"Trailing zeros not stripped: {decoded3}"
+
     def test_encode_value_unsupported_type_raises(self) -> None:
         """Unsupported Python types should raise EncodeError."""
         with pytest.raises(EncodeError, match="Cannot infer type"):
