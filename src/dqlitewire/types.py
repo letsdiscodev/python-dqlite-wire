@@ -235,7 +235,13 @@ def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
         return decode_int64(data), 8
     elif value_type == ValueType.UNIXTIME:
         timestamp = decode_int64(data)
-        return datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC), 8
+        try:
+            dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
+        except (OverflowError, OSError) as exc:
+            raise DecodeError(
+                f"UNIXTIME value {timestamp} is outside the representable datetime range"
+            ) from exc
+        return dt, 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
     elif value_type == ValueType.TEXT:

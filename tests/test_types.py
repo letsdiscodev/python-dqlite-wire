@@ -394,6 +394,13 @@ class TestValue:
         assert isinstance(decoded, datetime.datetime)
         assert decoded == datetime.datetime(1969, 12, 31, tzinfo=datetime.UTC)
 
+    def test_unixtime_extreme_values_raise_decode_error(self) -> None:
+        """Extreme UNIXTIME values outside datetime range should raise DecodeError, not OSError."""
+        for timestamp in [2**63 - 1, -(2**63)]:
+            data = encode_int64(timestamp)
+            with pytest.raises(DecodeError, match="outside the representable datetime range"):
+                decode_value(data, ValueType.UNIXTIME)
+
     def test_boolean_roundtrip(self) -> None:
         """Test boolean encoding/decoding."""
         for val in [True, False]:
