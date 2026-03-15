@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any
 
-from dqlitewire.constants import ValueType
+from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.types import decode_value, encode_value, pad_to_word
 
@@ -183,9 +183,9 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
     # behavior so non-uniform markers are also detected.
     if len(data) >= 8:
         first_byte = data[0]
-        if first_byte == 0xFF:
+        if first_byte == ROW_DONE_BYTE:
             return RowMarker.DONE, 8
-        if first_byte == 0xEE:
+        if first_byte == ROW_PART_BYTE:
             return RowMarker.PART, 8
 
     # Calculate bytes needed: 2 types per byte, rounded up

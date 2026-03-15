@@ -100,7 +100,7 @@ class TestParamsTuple:
     def test_decode_zero_count_v0_consumes_header(self) -> None:
         """Decoding a V0 tuple with count=0 should consume the header word."""
         # V0: count=0 at byte 0, rest padding = 8 bytes total
-        data = b"\x00" * 8 + b"\xAA" * 8  # header + trailing data
+        data = b"\x00" * 8 + b"\xaa" * 8  # header + trailing data
         values, consumed = decode_params_tuple(data, schema=0)
         assert values == []
         assert consumed == 8  # one word consumed for the header
@@ -110,7 +110,7 @@ class TestParamsTuple:
         import struct
 
         # V1: uint32 count=0 at bytes 0-3, rest padding = 8 bytes total
-        data = struct.pack("<I", 0) + b"\x00" * 4 + b"\xBB" * 8
+        data = struct.pack("<I", 0) + b"\x00" * 4 + b"\xbb" * 8
         values, consumed = decode_params_tuple(data, schema=1)
         assert values == []
         assert consumed == 8  # one word consumed for the header
@@ -249,6 +249,27 @@ class TestRowHeader:
         data = b"\xee\x00\x00\x00\x00\x00\x00\x00"
         assert decode_row_header(data, 1) == (RowMarker.PART, 8)
 
+    def test_marker_sentinel_bytes_match_full_constants(self) -> None:
+        """ROW_DONE_BYTE/ROW_PART_BYTE must match the first byte of the full marker words.
+
+        The full marker words (ROW_DONE_MARKER, ROW_PART_MARKER) are written as
+        uint64 on the wire, but detection uses only the first byte. The sentinel
+        byte constants must be consistent with the full words.
+        """
+        from dqlitewire.constants import (
+            ROW_DONE_BYTE,
+            ROW_DONE_MARKER,
+            ROW_PART_BYTE,
+            ROW_PART_MARKER,
+        )
+        from dqlitewire.types import encode_uint64
+
+        # Sentinel bytes must match the first byte of encoded marker words
+        done_wire = encode_uint64(ROW_DONE_MARKER)
+        assert done_wire[0] == ROW_DONE_BYTE
+
+        part_wire = encode_uint64(ROW_PART_MARKER)
+        assert part_wire[0] == ROW_PART_BYTE
 
     def test_decode_invalid_type_code_raises_decode_error(self) -> None:
         """Invalid nibble value (0) in row header must raise DecodeError, not ValueError."""

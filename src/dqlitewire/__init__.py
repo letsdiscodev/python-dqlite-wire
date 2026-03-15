@@ -4,6 +4,10 @@ from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder
 from dqlitewire.constants import (
     PROTOCOL_VERSION,
+    ROW_DONE_BYTE,
+    ROW_DONE_MARKER,
+    ROW_PART_BYTE,
+    ROW_PART_MARKER,
     RequestType,
     ResponseType,
     ValueType,
@@ -18,6 +22,10 @@ __all__ = [
     "DecodeError",
     "EncodeError",
     "ReadBuffer",
+    "ROW_DONE_BYTE",
+    "ROW_DONE_MARKER",
+    "ROW_PART_BYTE",
+    "ROW_PART_MARKER",
     "WriteBuffer",
     "RequestType",
     "ResponseType",
