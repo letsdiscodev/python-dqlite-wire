@@ -341,6 +341,28 @@ class TestAssignRequest:
         assert decoded.node_id == 5
         assert decoded.role is None
 
+    def test_encode_without_role_emits_deprecation_warning(self) -> None:
+        """Encoding AssignRequest without role should warn about legacy Promote."""
+        import warnings
+
+        msg = AssignRequest(node_id=1)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            msg.encode()
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "legacy" in str(w[0].message).lower() or "promote" in str(w[0].message).lower()
+
+    def test_encode_with_role_no_warning(self) -> None:
+        """Encoding AssignRequest with role should not warn."""
+        import warnings
+
+        msg = AssignRequest(node_id=1, role=0)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            msg.encode()
+            assert len(w) == 0
+
 
 class TestRemoveRequest:
     def test_roundtrip(self) -> None:

@@ -391,6 +391,16 @@ class AssignRequest(Message):
         result = encode_uint64(self.node_id)
         if self.role is not None:
             result += encode_uint64(self.role)
+        else:
+            import warnings
+
+            warnings.warn(
+                "Encoding AssignRequest without role sends a legacy Promote message "
+                "(1-word body). Modern dqlite servers and the Go client always send "
+                "both node_id and role. Use role=0 (VOTER) for equivalent behavior.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
         return result
 
     @classmethod
