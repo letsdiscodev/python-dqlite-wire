@@ -43,7 +43,10 @@ class Header:
         """Decode header from bytes."""
         if len(data) < HEADER_SIZE:
             raise DecodeError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
-        size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
+        try:
+            size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
+        except struct.error as e:
+            raise DecodeError(f"Failed to decode header: {e}") from e
         return cls(size_words, msg_type, schema, reserved)
 
     @property

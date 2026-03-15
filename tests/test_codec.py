@@ -155,6 +155,22 @@ class TestMessageDecoder:
         with pytest.raises(DecodeError):
             Header.decode(b"")
 
+    def test_header_decode_wraps_struct_error(self) -> None:
+        """Header.decode should wrap struct.error in DecodeError for consistency.
+
+        Header.encode wraps struct.error in EncodeError. Header.decode should
+        do the same with DecodeError, even though the length check makes
+        struct.error unlikely in practice.
+        """
+        from dqlitewire.messages.base import Header
+
+        # Valid length but still exercises the try/except path
+        header = Header(size_words=1, msg_type=0, schema=0)
+        data = header.encode()
+        decoded = Header.decode(data)
+        assert decoded.size_words == 1
+        assert decoded.msg_type == 0
+
     def test_header_encode_overflow_raises_encode_error(self) -> None:
         """Header with size_words exceeding uint32 must raise EncodeError."""
         from dqlitewire.exceptions import EncodeError
