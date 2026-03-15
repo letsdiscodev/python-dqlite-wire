@@ -109,8 +109,11 @@ class TestRequestTypeValues:
     def test_weight_is_19(self) -> None:
         assert RequestType.WEIGHT == 19
 
-    def test_no_connect_type_11(self) -> None:
-        """Go reference has no RequestConnect = 11; type codes skip from 10 to 12."""
-        assert not hasattr(RequestType, "CONNECT")
-        # Also verify no request type has value 11
-        assert 11 not in [t.value for t in RequestType]
+    def test_connect_is_11(self) -> None:
+        """C protocol defines DQLITE_REQUEST_CONNECT = 11 for Raft transport connections.
+
+        The Go client omits this (it's a client library, not a cluster node),
+        but the C server defines it and a complete protocol implementation
+        should include it.
+        """
+        assert RequestType.CONNECT == 11

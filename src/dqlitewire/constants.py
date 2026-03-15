@@ -35,7 +35,7 @@ class RequestType(IntEnum):
     EXEC_SQL = 8
     QUERY_SQL = 9
     INTERRUPT = 10
-    # Type code 11 is unused in the Go reference (skips from 10 to 12)
+    CONNECT = 11  # Raft transport connection (node-to-node, not in Go client)
     ADD = 12
     ASSIGN = 13
     REMOVE = 14
