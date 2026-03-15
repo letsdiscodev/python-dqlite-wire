@@ -2,7 +2,7 @@
 
 from dqlitewire.buffer import ReadBuffer
 from dqlitewire.constants import HEADER_SIZE, PROTOCOL_VERSION, RequestType, ResponseType
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, ProtocolError
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.requests import (
     AddRequest,
@@ -116,6 +116,10 @@ class MessageDecoder:
         self._buffer = ReadBuffer()
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
+        # Request decoders (server-side) must receive the protocol version
+        # handshake before decoding any messages. Response decoders (client-side)
+        # don't receive an inbound handshake, so they skip this check.
+        self._handshake_done = not is_request
 
     def feed(self, data: bytes) -> None:
         """Feed data to the decoder."""
@@ -129,7 +133,12 @@ class MessageDecoder:
         """Decode the next message from the buffer.
 
         Returns None if no complete message is available.
+        Raises ProtocolError if called on a request decoder before decode_handshake().
         """
+        if not self._handshake_done:
+            raise ProtocolError(
+                "Protocol handshake not yet received. Call decode_handshake() before decode()."
+            )
         data = self._buffer.read_message()
         if data is None:
             return None
@@ -161,10 +170,12 @@ class MessageDecoder:
         """Decode protocol version handshake.
 
         Returns the protocol version or None if not enough data.
+        Must be called before decode() on request decoders.
         """
         data = self._buffer.read_bytes(8)
         if data is None:
             return None
+        self._handshake_done = True
         return int.from_bytes(data, "little")
 
 
