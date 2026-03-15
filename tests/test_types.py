@@ -315,20 +315,84 @@ class TestValue:
         assert consumed == 8
 
     def test_encode_decode_iso8601(self) -> None:
-        """Test ISO8601 datetime string encoding."""
-        iso_string = "2024-01-15T10:30:45"
+        """Test ISO8601 datetime encoding returns datetime object."""
+        import datetime
+
+        iso_string = "2024-01-15 10:30:45+00:00"
         encoded, vtype = encode_value(iso_string, ValueType.ISO8601)
         assert vtype == ValueType.ISO8601
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
-        assert decoded == iso_string
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.year == 2024
+        assert decoded.month == 1
+        assert decoded.day == 15
+        assert decoded.hour == 10
+        assert decoded.minute == 30
+        assert decoded.second == 45
+
+    def test_decode_iso8601_empty_string_returns_none(self) -> None:
+        """Empty ISO8601 string should decode as None, matching Go's nil."""
+        encoded, _ = encode_value("", ValueType.ISO8601)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert decoded is None
+
+    def test_decode_iso8601_date_only(self) -> None:
+        """ISO8601 date-only string should decode to datetime."""
+        import datetime
+
+        encoded, _ = encode_value("2024-01-15", ValueType.ISO8601)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.year == 2024
+        assert decoded.month == 1
+        assert decoded.day == 15
+
+    def test_decode_iso8601_with_microseconds(self) -> None:
+        """ISO8601 with microseconds should decode correctly."""
+        import datetime
+
+        encoded, _ = encode_value("2024-01-15 10:30:45.123456+00:00", ValueType.ISO8601)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.microsecond == 123456
+
+    def test_decode_iso8601_with_t_separator(self) -> None:
+        """ISO8601 with T separator should also decode."""
+        import datetime
+
+        encoded, _ = encode_value("2024-01-15T10:30:45+00:00", ValueType.ISO8601)
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
 
     def test_encode_decode_unixtime(self) -> None:
-        """Test Unix timestamp encoding."""
-        timestamp = 1705312245  # 2024-01-15 10:30:45 UTC
+        """Test Unix timestamp decodes to datetime, matching Go's time.Unix."""
+        import datetime
+
+        timestamp = 1705312245
         encoded, vtype = encode_value(timestamp, ValueType.UNIXTIME)
         assert vtype == ValueType.UNIXTIME
         decoded, _ = decode_value(encoded, ValueType.UNIXTIME)
-        assert decoded == timestamp
+        assert isinstance(decoded, datetime.datetime)
+        expected = datetime.datetime(2024, 1, 15, 9, 50, 45, tzinfo=datetime.UTC)
+        assert decoded == expected
+
+    def test_encode_decode_unixtime_zero(self) -> None:
+        """Unix timestamp 0 should decode to epoch."""
+        import datetime
+
+        encoded, _ = encode_value(0, ValueType.UNIXTIME)
+        decoded, _ = decode_value(encoded, ValueType.UNIXTIME)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded == datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+
+    def test_encode_decode_unixtime_negative(self) -> None:
+        """Negative Unix timestamps (before epoch) should decode."""
+        import datetime
+
+        encoded, _ = encode_value(-86400, ValueType.UNIXTIME)
+        decoded, _ = decode_value(encoded, ValueType.UNIXTIME)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded == datetime.datetime(1969, 12, 31, tzinfo=datetime.UTC)
 
     def test_boolean_roundtrip(self) -> None:
         """Test boolean encoding/decoding."""
@@ -392,16 +456,17 @@ class TestValue:
             assert decoded == val
 
     def test_datetime_auto_detection(self) -> None:
-        """datetime.datetime should auto-detect as ISO8601."""
+        """datetime.datetime should auto-detect as ISO8601 and roundtrip."""
         from datetime import datetime
 
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         encoded, vtype = encode_value(dt)
         assert vtype == ValueType.ISO8601
-        # Should encode as a text string in Go-compatible format
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
-        assert "2024-01-15" in decoded
-        assert "10:30:45" in decoded
+        assert isinstance(decoded, datetime)
+        assert decoded.year == 2024
+        assert decoded.hour == 10
+        assert decoded.second == 45
 
     def test_naive_datetime_includes_utc_offset(self) -> None:
         """Naive datetime should include +00:00 offset to match Go's format."""
@@ -410,17 +475,21 @@ class TestValue:
         dt = datetime(2024, 1, 15, 10, 30, 45)  # naive, no tzinfo
         encoded, vtype = encode_value(dt)
         assert vtype == ValueType.ISO8601
-        decoded, _ = decode_value(encoded, ValueType.ISO8601)
-        assert decoded.endswith("+00:00")
+        # Check the raw encoded text contains +00:00
+        from dqlitewire.types import decode_text
+
+        text, _ = decode_text(encoded)
+        assert text.endswith("+00:00")
 
     def test_datetime_with_microseconds(self) -> None:
-        """Datetime with microseconds should include them in the format."""
+        """Datetime with microseconds should roundtrip correctly."""
         from datetime import datetime
 
         dt = datetime(2024, 1, 15, 10, 30, 45, 123456, tzinfo=UTC)
         encoded, vtype = encode_value(dt)
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
-        assert ".123456" in decoded
+        assert isinstance(decoded, datetime)
+        assert decoded.microsecond == 123456
 
     def test_datetime_microseconds_trailing_zeros_stripped(self) -> None:
         """Microsecond trailing zeros must be stripped to match Go's time.Format.
@@ -432,26 +501,28 @@ class TestValue:
         """
         from datetime import datetime
 
+        from dqlitewire.types import decode_text
+
         # 100000 microseconds = 0.1 seconds -> Go produces ".1"
         dt1 = datetime(2024, 1, 15, 10, 30, 45, 100000, tzinfo=UTC)
         encoded1, _ = encode_value(dt1)
-        decoded1, _ = decode_value(encoded1, ValueType.ISO8601)
-        assert ".1+" in decoded1, f"Expected '.1+' but got: {decoded1}"
-        assert ".100000" not in decoded1, f"Trailing zeros not stripped: {decoded1}"
+        text1, _ = decode_text(encoded1)
+        assert ".1+" in text1, f"Expected '.1+' but got: {text1}"
+        assert ".100000" not in text1, f"Trailing zeros not stripped: {text1}"
 
         # 123000 microseconds = 0.123 seconds -> Go produces ".123"
         dt2 = datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC)
         encoded2, _ = encode_value(dt2)
-        decoded2, _ = decode_value(encoded2, ValueType.ISO8601)
-        assert ".123+" in decoded2, f"Expected '.123+' but got: {decoded2}"
-        assert ".123000" not in decoded2, f"Trailing zeros not stripped: {decoded2}"
+        text2, _ = decode_text(encoded2)
+        assert ".123+" in text2, f"Expected '.123+' but got: {text2}"
+        assert ".123000" not in text2, f"Trailing zeros not stripped: {text2}"
 
         # 10000 microseconds = 0.01 seconds -> Go produces ".01"
         dt3 = datetime(2024, 1, 15, 10, 30, 45, 10000, tzinfo=UTC)
         encoded3, _ = encode_value(dt3)
-        decoded3, _ = decode_value(encoded3, ValueType.ISO8601)
-        assert ".01+" in decoded3, f"Expected '.01+' but got: {decoded3}"
-        assert ".010000" not in decoded3, f"Trailing zeros not stripped: {decoded3}"
+        text3, _ = decode_text(encoded3)
+        assert ".01+" in text3, f"Expected '.01+' but got: {text3}"
+        assert ".010000" not in text3, f"Trailing zeros not stripped: {text3}"
 
     def test_encode_value_unsupported_type_raises(self) -> None:
         """Unsupported Python types should raise EncodeError."""

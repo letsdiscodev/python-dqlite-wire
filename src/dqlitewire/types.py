@@ -197,6 +197,33 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
         raise EncodeError(f"Unknown value type: {value_type}")
 
 
+def _parse_iso8601(text: str) -> datetime.datetime:
+    """Parse an ISO 8601 datetime string, trying multiple formats.
+
+    Matches Go's iso8601Formats parsing which tries 9 patterns including
+    with/without timezone, with/without fractional seconds, T vs space
+    separator, and date-only.
+    """
+    # Strip trailing Z (Go does this before parsing)
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    # Try Python's fromisoformat first — handles most formats since Python 3.11
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        pass
+
+    # Fallback: date-only format
+    try:
+        d = datetime.date.fromisoformat(text)
+        return datetime.datetime(d.year, d.month, d.day)
+    except ValueError:
+        pass
+
+    raise DecodeError(f"Cannot parse ISO 8601 datetime: {text!r}")
+
+
 def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
     """Decode a value from wire format.
 
@@ -204,12 +231,20 @@ def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
     """
     if value_type == ValueType.BOOLEAN:
         return bool(decode_uint64(data)), 8
-    elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
+    elif value_type == ValueType.INTEGER:
         return decode_int64(data), 8
+    elif value_type == ValueType.UNIXTIME:
+        timestamp = decode_int64(data)
+        return datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
-    elif value_type in (ValueType.TEXT, ValueType.ISO8601):
+    elif value_type == ValueType.TEXT:
         return decode_text(data)
+    elif value_type == ValueType.ISO8601:
+        text, consumed = decode_text(data)
+        if not text:
+            return None, consumed
+        return _parse_iso8601(text), consumed
     elif value_type == ValueType.BLOB:
         return decode_blob(data)
     elif value_type == ValueType.NULL:
