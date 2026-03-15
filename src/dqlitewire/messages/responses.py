@@ -236,8 +236,12 @@ class RowsResponse(Message):
 
         return result
 
+    DEFAULT_MAX_ROWS = 1_000_000
+
     @classmethod
-    def decode_body(cls, data: bytes, schema: int = 0) -> "RowsResponse":
+    def decode_body(
+        cls, data: bytes, schema: int = 0, max_rows: int = DEFAULT_MAX_ROWS
+    ) -> "RowsResponse":
         offset = 0
 
         # Column count
@@ -300,6 +304,11 @@ class RowsResponse(Message):
             rows.append(values)
             offset += consumed
 
+            if len(rows) > max_rows:
+                raise DecodeError(
+                    f"Row count {len(rows)} exceeds maximum {max_rows}"
+                )
+
             if offset == prev_offset:
                 raise DecodeError(
                     "No progress in row decoding (possible zero-column result with malformed data)"
@@ -316,6 +325,7 @@ class RowsResponse(Message):
         data: bytes,
         column_names: list[str],
         column_count: int,
+        max_rows: int = DEFAULT_MAX_ROWS,
     ) -> "RowsResponse":
         """Decode a continuation message (rows without column header prefix).
 
@@ -363,6 +373,11 @@ class RowsResponse(Message):
             values, consumed = decode_row_values(data[offset:], types)
             rows.append(values)
             offset += consumed
+
+            if len(rows) > max_rows:
+                raise DecodeError(
+                    f"Row count {len(rows)} exceeds maximum {max_rows}"
+                )
 
             if offset == prev_offset:
                 raise DecodeError(

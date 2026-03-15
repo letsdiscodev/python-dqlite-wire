@@ -375,6 +375,53 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="exceeds.*remaining"):
             RowsResponse.decode_body(body)
 
+    def test_max_rows_limit_decode_body(self) -> None:
+        """decode_body should reject messages exceeding the max_rows limit."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        # Build a body with 5 rows
+        body = encode_uint64(1)  # column_count=1
+        body += encode_text("x")
+        for i in range(5):
+            body += encode_row_header([ValueType.INTEGER])
+            body += encode_row_values([i], [ValueType.INTEGER])
+        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
+
+        # Should succeed with default limit
+        decoded = RowsResponse.decode_body(body)
+        assert len(decoded.rows) == 5
+
+        # Should fail with max_rows=3
+        with pytest.raises(DecodeError, match="Row count.*exceeds maximum"):
+            RowsResponse.decode_body(body, max_rows=3)
+
+    def test_max_rows_limit_decode_rows_continuation(self) -> None:
+        """decode_rows_continuation should reject messages exceeding the max_rows limit."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_uint64
+
+        types = [ValueType.INTEGER]
+        body = b""
+        for i in range(5):
+            body += encode_row_header(types)
+            body += encode_row_values([i], types)
+        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
+
+        # Should succeed with default limit
+        decoded = RowsResponse.decode_rows_continuation(body, ["x"], 1)
+        assert len(decoded.rows) == 5
+
+        # Should fail with max_rows=2
+        with pytest.raises(DecodeError, match="Row count.*exceeds maximum"):
+            RowsResponse.decode_rows_continuation(body, ["x"], 1, max_rows=2)
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:
