@@ -280,6 +280,31 @@ class RowsResponse(Message):
         all_row_types: list[list[ValueType]] = []
         column_types: list[ValueType] = []
 
+        # Zero-column results cannot have row data (each row would be zero
+        # bytes), so skip the row loop and consume the end marker directly.
+        if column_count == 0:
+            from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE
+
+            has_more = False
+            if offset < len(data):
+                marker_byte = data[offset]
+                if marker_byte == ROW_DONE_BYTE:
+                    has_more = False
+                elif marker_byte == ROW_PART_BYTE:
+                    has_more = True
+                else:
+                    raise DecodeError(
+                        f"Expected DONE or PART marker for zero-column result, "
+                        f"got 0x{marker_byte:02x}"
+                    )
+            return cls(
+                column_names=[],
+                column_types=[],
+                row_types=[],
+                rows=[],
+                has_more=has_more,
+            )
+
         while offset < len(data):
             prev_offset = offset
 
@@ -351,6 +376,29 @@ class RowsResponse(Message):
         rows: list[list[Any]] = []
         all_row_types: list[list[ValueType]] = []
         column_types: list[ValueType] = []
+
+        if column_count == 0:
+            from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE
+
+            has_more = False
+            if offset < len(data):
+                marker_byte = data[offset]
+                if marker_byte == ROW_DONE_BYTE:
+                    has_more = False
+                elif marker_byte == ROW_PART_BYTE:
+                    has_more = True
+                else:
+                    raise DecodeError(
+                        f"Expected DONE or PART marker for zero-column result, "
+                        f"got 0x{marker_byte:02x}"
+                    )
+            return cls(
+                column_names=column_names,
+                column_types=[],
+                row_types=[],
+                rows=[],
+                has_more=has_more,
+            )
 
         while offset < len(data):
             prev_offset = offset

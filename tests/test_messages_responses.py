@@ -270,7 +270,7 @@ class TestRowsResponse:
         assert decoded.has_more is False
 
     def test_zero_columns_malformed_no_infinite_loop(self) -> None:
-        """Zero-column result with non-marker data must not loop forever."""
+        """Zero-column result with non-marker data must raise a clear error."""
         import pytest
 
         from dqlitewire.exceptions import DecodeError
@@ -278,7 +278,7 @@ class TestRowsResponse:
 
         # column_count=0, followed by non-marker bytes
         data = encode_uint64(0) + b"\x01\x02\x03\x04\x05\x06\x07\x08"
-        with pytest.raises(DecodeError):
+        with pytest.raises(DecodeError, match="Expected DONE or PART marker"):
             RowsResponse.decode_body(data)
 
     def test_decode_rows_continuation(self) -> None:
