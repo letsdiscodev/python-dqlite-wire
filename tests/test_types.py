@@ -223,6 +223,14 @@ class TestText:
         with pytest.raises(DecodeError):
             decode_text(b"hello")
 
+    def test_decode_truncated_padding_raises(self) -> None:
+        """decode_text with null terminator found but insufficient padding must raise."""
+        # "hello" + null = 6 bytes, needs 2 padding bytes to reach 8
+        # But we only provide the 6 bytes (null found, but padding truncated)
+        data = b"hello\x00"
+        with pytest.raises(DecodeError, match="[Nn]ot enough data for text"):
+            decode_text(data)
+
     def test_decode_invalid_utf8_raises_decode_error(self) -> None:
         """Invalid UTF-8 bytes should raise DecodeError, not UnicodeDecodeError."""
         # 0xFF 0xFE are invalid UTF-8 start bytes

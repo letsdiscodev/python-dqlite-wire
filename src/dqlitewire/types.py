@@ -107,6 +107,8 @@ def decode_text(data: bytes) -> tuple[str, int]:
         raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
     # Calculate total size including padding
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
+    if len(data) < total_size:
+        raise DecodeError(f"Not enough data for text padding: need {total_size}, got {len(data)}")
     return text, total_size
 
 
