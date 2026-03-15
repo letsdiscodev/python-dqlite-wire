@@ -218,6 +218,41 @@ class TestReadBuffer:
         assert buf._pos == 0
         assert len(buf._data) == 500
 
+    def test_read_message_validates_size_independently(self) -> None:
+        """read_message should validate message size even if has_message was not the last call."""
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        # Craft a message header claiming a huge body (200 words = 1600 bytes > 1024 limit)
+        size_words = 200
+        header = struct.pack("<IBBH", size_words, 0, 0, 0)
+        # Feed header + enough body data to make it "complete"
+        body = b"\x00" * (size_words * 8)
+        buf._data = bytearray(header + body)
+        buf._pos = 0
+        # Bypass has_message and call read_message directly — it calls has_message internally
+        # which should raise
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.read_message()
+
+    def test_skip_message_allows_oversized_for_recovery(self) -> None:
+        """skip_message should NOT reject oversized messages — it's the recovery mechanism."""
+        import struct
+
+        buf = ReadBuffer(max_message_size=1024)
+        # Craft a message header claiming a huge body (200 words = 1600 bytes > 1024 limit)
+        size_words = 200
+        header = struct.pack("<IBBH", size_words, 0, 0, 0)
+        body = b"\x00" * (size_words * 8)
+        buf._data = bytearray(header + body)
+        buf._pos = 0
+        # skip_message should succeed (it's the recovery tool for oversized messages)
+        assert buf.skip_message() is True
+
     def test_buffer_compaction(self) -> None:
         buf = ReadBuffer()
         # Feed a lot of small messages to trigger compaction
