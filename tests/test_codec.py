@@ -275,6 +275,55 @@ class TestHandshakeStateEnforcement:
         decoded = decoder.decode()
         assert isinstance(decoded, LeaderResponse)
 
+    def test_legacy_handshake_decodes_leader_response_as_legacy(self) -> None:
+        """After legacy handshake, LeaderResponse should use legacy format."""
+        from dqlitewire.types import encode_text
+
+        decoder = MessageDecoder(is_request=False)
+        # Feed legacy handshake + legacy LeaderResponse (address-only, no node_id)
+        handshake = PROTOCOL_VERSION_LEGACY.to_bytes(8, "little")
+        # Build a LeaderResponse with legacy body: just text address
+        from dqlitewire.constants import ResponseType
+        from dqlitewire.messages.base import Header
+
+        address = "192.168.1.1:9001"
+        body = encode_text(address)
+        header = Header(
+            size_words=len(body) // 8,
+            msg_type=ResponseType.LEADER,
+            schema=0,
+        )
+        decoder.feed(handshake + header.encode() + body)
+        version = decoder.decode_handshake()
+        assert version == PROTOCOL_VERSION_LEGACY
+
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderResponse)
+        assert decoded.node_id == 0
+        assert decoded.address == address
+
+    def test_modern_handshake_decodes_leader_response_as_modern(self) -> None:
+        """After modern handshake, LeaderResponse should use modern format."""
+        decoder = MessageDecoder(is_request=False)
+        handshake = PROTOCOL_VERSION.to_bytes(8, "little")
+        msg = LeaderResponse(node_id=42, address="node1:9001")
+        decoder.feed(handshake + msg.encode())
+        version = decoder.decode_handshake()
+        assert version == PROTOCOL_VERSION
+
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderResponse)
+        assert decoded.node_id == 42
+        assert decoded.address == "node1:9001"
+
+    def test_decoder_version_property(self) -> None:
+        """Decoder should expose the protocol version after handshake."""
+        decoder = MessageDecoder(is_request=False)
+        assert decoder.version is None
+        decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
+        decoder.decode_handshake()
+        assert decoder.version == PROTOCOL_VERSION
+
 
 class TestConvenienceFunctions:
     def test_encode_message(self) -> None:

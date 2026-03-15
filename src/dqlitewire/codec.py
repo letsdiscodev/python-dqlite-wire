@@ -137,10 +137,16 @@ class MessageDecoder:
         self._buffer = ReadBuffer()
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
+        self._version: int | None = None
         # Request decoders (server-side) must receive the protocol version
         # handshake before decoding any messages. Response decoders (client-side)
         # don't receive an inbound handshake, so they skip this check.
         self._handshake_done = not is_request
+
+    @property
+    def version(self) -> int | None:
+        """Protocol version from handshake, or None if not yet received."""
+        return self._version
 
     def feed(self, data: bytes) -> None:
         """Feed data to the decoder."""
@@ -193,6 +199,15 @@ class MessageDecoder:
                 f"{header.msg_type} (max supported: {max_schema})"
             )
 
+        # LeaderResponse has a version-dependent format: legacy servers
+        # send only text address (no node_id prefix).
+        if (
+            header.msg_type == ResponseType.LEADER
+            and self._version == PROTOCOL_VERSION_LEGACY
+            and msg_class is LeaderResponse
+        ):
+            return LeaderResponse.decode_body_legacy(body)
+
         return msg_class.decode_body(body, schema=header.schema)
 
     def decode_handshake(self) -> int | None:
@@ -208,6 +223,7 @@ class MessageDecoder:
         version = int.from_bytes(data, "little")
         if version not in _SUPPORTED_VERSIONS:
             raise ProtocolError(f"Unsupported protocol version: {version:#x}")
+        self._version = version
         self._handshake_done = True
         return version
 
