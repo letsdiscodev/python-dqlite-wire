@@ -21,11 +21,18 @@ class RowMarker(Enum):
     PART = "part"
 
 
-def encode_params_tuple(params: Sequence[Any], schema: int = 0) -> bytes:
+def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: int = 0) -> bytes:
     """Encode parameters as a params tuple.
 
     Schema 0 (V0): uint8 count + type codes + padding + values (max 255 params)
     Schema 1 (V1): uint32 count + type codes + padding + values (max ~4B params)
+
+    Args:
+        params: Parameter values to encode.
+        schema: 0 for V0 (uint8 count), 1 for V1 (uint32 count).
+        buffer_offset: Absolute byte offset where this tuple starts in the
+            message body. Used to compute padding from the absolute position,
+            matching Go's putNamedValues which pads based on m.Offset.
     """
     if not params:
         # Go writes nothing for empty params
@@ -58,13 +65,11 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0) -> bytes:
     for t in types:
         header.append(t)
 
-    # Pad header to word boundary.
-    # NOTE: Go pads based on the absolute buffer offset, not the relative
-    # header length. This produces the same result only when the params tuple
-    # starts at a word-aligned offset within the message body. All existing
-    # message types satisfy this (ExecRequest/QueryRequest: 4+4=8 bytes
-    # before params; ExecSqlRequest/QuerySqlRequest: 8 + word-aligned text).
-    padding = pad_to_word(len(header))
+    # Pad to word boundary using absolute offset, matching Go's behavior.
+    # Go pads based on m.Offset (the absolute buffer position), not the
+    # relative header length.
+    absolute_offset = buffer_offset + len(header)
+    padding = pad_to_word(absolute_offset)
     header.extend(b"\x00" * padding)
 
     # Concatenate header and values
@@ -72,13 +77,23 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0) -> bytes:
 
 
 def decode_params_tuple(
-    data: bytes, count: int | None = None, schema: int = 0
+    data: bytes,
+    count: int | None = None,
+    schema: int = 0,
+    buffer_offset: int = 0,
 ) -> tuple[list[Any], int]:
     """Decode a params tuple.
 
     Schema 0 (V0): uint8 count, schema 1 (V1): uint32 count.
     If count is None, reads the count from data.
     Returns (values, bytes_consumed).
+
+    Args:
+        data: Raw bytes to decode from.
+        count: If provided, the number of params (count field not in data).
+        schema: 0 for V0, 1 for V1.
+        buffer_offset: Absolute byte offset where this tuple starts in the
+            message body. Used for padding calculation matching Go's behavior.
     """
     # Go writes nothing for empty params
     if len(data) == 0:
@@ -104,7 +119,7 @@ def decode_params_tuple(
         if count == 0:
             # Count field was consumed; return padded header size
             header_len = count_size
-            consumed = header_len + pad_to_word(header_len)
+            consumed = header_len + pad_to_word(buffer_offset + header_len)
             return [], consumed
     elif count == 0:
         # Count was externally provided, no data consumed
@@ -113,7 +128,7 @@ def decode_params_tuple(
     # Header: count field + type codes, padded to word boundary
     count_size = 4 if schema == 1 else 1
     header_len = count_size + count
-    padded_header_len = header_len + pad_to_word(header_len)
+    padded_header_len = header_len + pad_to_word(buffer_offset + header_len)
 
     if len(data) < padded_header_len:
         raise DecodeError(

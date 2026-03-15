@@ -126,6 +126,42 @@ class TestParamsTuple:
             encode_params_tuple(params, schema=0)
 
 
+class TestParamsTupleBufferOffset:
+    def test_aligned_offset_matches_no_offset(self) -> None:
+        """With word-aligned buffer_offset, padding is same as offset=0."""
+        params = [42]
+        encoded_default = encode_params_tuple(params, buffer_offset=0)
+        encoded_aligned = encode_params_tuple(params, buffer_offset=8)
+        assert encoded_default == encoded_aligned
+
+    def test_non_aligned_offset_changes_padding(self) -> None:
+        """With non-word-aligned buffer_offset, padding differs from offset=0."""
+        # 1 param: count(1) + type(1) = 2 header bytes
+        # At buffer_offset=0: absolute=2, pad to 8 -> 6 padding bytes
+        # At buffer_offset=2: absolute=4, pad to 8 -> 4 padding bytes
+        params = [42]
+        encoded_at_0 = encode_params_tuple(params, buffer_offset=0)
+        encoded_at_2 = encode_params_tuple(params, buffer_offset=2)
+        # Header+padding at offset 0: 2 + 6 = 8 bytes + 8 value = 16
+        assert len(encoded_at_0) == 16
+        # Header+padding at offset 2: 2 + 4 = 6 bytes + 8 value = 14
+        assert len(encoded_at_2) == 14
+
+    def test_roundtrip_with_non_aligned_offset(self) -> None:
+        """Encode and decode with non-aligned offset must roundtrip."""
+        params = [42, "hello"]
+        encoded = encode_params_tuple(params, buffer_offset=4)
+        decoded, _ = decode_params_tuple(encoded, buffer_offset=4)
+        assert decoded == [42, "hello"]
+
+    def test_v1_with_non_aligned_offset(self) -> None:
+        """V1 schema with non-aligned offset must roundtrip."""
+        params = [1, 2, 3]
+        encoded = encode_params_tuple(params, schema=1, buffer_offset=4)
+        decoded, _ = decode_params_tuple(encoded, schema=1, buffer_offset=4)
+        assert decoded == [1, 2, 3]
+
+
 class TestRowHeader:
     def test_encode_empty(self) -> None:
         encoded = encode_row_header([])

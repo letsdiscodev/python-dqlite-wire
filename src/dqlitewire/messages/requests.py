@@ -154,7 +154,7 @@ class ExecRequest(Message):
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
-        result += encode_params_tuple(self.params, schema=schema)
+        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
         return result
 
     @classmethod
@@ -164,7 +164,7 @@ class ExecRequest(Message):
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:], schema=schema)
+        params, _ = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
         return cls(db_id, stmt_id, params)
 
 
@@ -188,7 +188,7 @@ class QueryRequest(Message):
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
-        result += encode_params_tuple(self.params, schema=schema)
+        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
         return result
 
     @classmethod
@@ -198,7 +198,7 @@ class QueryRequest(Message):
 
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:], schema=schema)
+        params, _ = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
         return cls(db_id, stmt_id, params)
 
 
@@ -247,7 +247,7 @@ class ExecSqlRequest(Message):
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
         result += encode_text(self.sql)
-        result += encode_params_tuple(self.params, schema=schema)
+        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
         return result
 
     @classmethod
@@ -258,7 +258,7 @@ class ExecSqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:], schema=schema)
+        params, _ = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
         return cls(db_id, sql, params)
 
 
@@ -283,7 +283,7 @@ class QuerySqlRequest(Message):
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
         result += encode_text(self.sql)
-        result += encode_params_tuple(self.params, schema=schema)
+        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
         return result
 
     @classmethod
@@ -294,7 +294,7 @@ class QuerySqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:], schema=schema)
+        params, _ = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
         return cls(db_id, sql, params)
 
 
