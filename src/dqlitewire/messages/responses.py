@@ -200,6 +200,15 @@ class RowsResponse(Message):
 
     Body: uint64 column_count, text[] column_names, then rows...
     Each row: header (types) + values, ending with marker
+
+    Attributes:
+        column_names: Column names from the query.
+        column_types: Types from the first row's header. SQLite uses dynamic
+            typing, so different rows may have different types for the same
+            column. Use ``row_types`` for accurate per-row type information.
+        row_types: Per-row type lists, one entry per decoded row.
+        rows: Decoded row values.
+        has_more: True if a PART marker was found (more rows in next message).
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.ROWS

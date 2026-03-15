@@ -238,6 +238,27 @@ class TestRowsResponse:
         decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.column_types == [ValueType.INTEGER, ValueType.TEXT]
 
+    def test_column_types_reflects_first_row_only(self) -> None:
+        """column_types reflects first row's types; use row_types for per-row types."""
+        msg = RowsResponse(
+            column_names=["x"],
+            row_types=[
+                [ValueType.INTEGER],
+                [ValueType.TEXT],
+                [ValueType.NULL],
+            ],
+            rows=[[42], ["hello"], [None]],
+            has_more=False,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+        # column_types reflects first row only
+        assert decoded.column_types == [ValueType.INTEGER]
+        # row_types has accurate per-row types
+        assert decoded.row_types[0] == [ValueType.INTEGER]
+        assert decoded.row_types[1] == [ValueType.TEXT]
+        assert decoded.row_types[2] == [ValueType.NULL]
+
     def test_zero_columns_with_done_marker(self) -> None:
         """Zero-column result with DONE marker should decode to empty rows."""
         from dqlitewire.types import encode_uint64
