@@ -517,6 +517,11 @@ class FilesResponse(Message):
             offset += consumed
             size = decode_uint64(data[offset:])
             offset += 8
+            if offset + size > len(data):
+                raise DecodeError(
+                    f"FilesResponse file content truncated: expected {size} bytes "
+                    f"at offset {offset}, but only {len(data) - offset} bytes available"
+                )
             content = data[offset : offset + size]
             # No padding after content — matches Go's byte-by-byte read.
             offset += size

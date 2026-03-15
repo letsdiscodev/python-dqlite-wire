@@ -607,6 +607,20 @@ class TestFilesResponse:
         with pytest.raises(DecodeError, match="File count.*exceeds maximum"):
             FilesResponse.decode_body(body)
 
+    def test_truncated_file_content_raises(self) -> None:
+        """Declared file size larger than available data should raise DecodeError."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(1)  # count=1
+        body += encode_text("test.db")  # filename
+        body += encode_uint64(4096)  # claims 4096 bytes
+        body += b"\x00" * 100  # but only 100 bytes available
+        with pytest.raises(DecodeError, match="truncated"):
+            FilesResponse.decode_body(body)
+
 
 class TestServersResponse:
     def test_empty(self) -> None:
