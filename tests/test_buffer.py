@@ -253,6 +253,25 @@ class TestReadBuffer:
         # skip_message should succeed (it's the recovery tool for oversized messages)
         assert buf.skip_message() is True
 
+    def test_skip_message_waits_for_complete_normal_sized_message(self) -> None:
+        """skip_message should return False for incomplete normal-sized messages.
+
+        If a message fits within max_message_size but hasn't fully arrived,
+        skip_message must not advance past partial data — doing so would
+        corrupt the stream when the remaining bytes arrive later.
+        """
+        import struct
+
+        buf = ReadBuffer(max_message_size=4096)
+        # Header claiming 5 words (40 bytes body), total 48 bytes — fits in limit
+        header = struct.pack("<IBBH", 5, 0, 0, 0)
+        # Feed only header + 16 bytes of body (incomplete: need 40)
+        buf.feed(header + b"\x00" * 16)
+        # Should return False since message is incomplete but not oversized
+        assert buf.skip_message() is False
+        # Buffer position should not have changed
+        assert buf.available() == 24  # 8 header + 16 partial body
+
     def test_buffer_compaction(self) -> None:
         buf = ReadBuffer()
         # Feed a lot of small messages to trigger compaction

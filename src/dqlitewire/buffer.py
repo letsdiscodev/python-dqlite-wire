@@ -107,12 +107,13 @@ class ReadBuffer:
     def skip_message(self) -> bool:
         """Skip the current message in the buffer.
 
-        Reads the message size from the header and advances past however many
-        bytes are available (up to the full message size). Useful for recovering
-        after an oversized or malformed message that has_message() rejects.
+        For normal-sized messages (within max_message_size), waits until the
+        full message is available before skipping. For oversized messages that
+        exceed max_message_size, skips whatever bytes are available — this is
+        the recovery path for messages that has_message() rejects.
 
-        Returns True if a message header was found and skipped, False if
-        not enough data for a header.
+        Returns True if a message was fully skipped, False if not enough data
+        for a header or if a normal-sized message is still incomplete.
         """
         available = len(self._data) - self._pos
         if available < HEADER_SIZE:
@@ -121,9 +122,17 @@ class ReadBuffer:
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
-        # Skip whatever is available (might be less than total_size for partial messages)
-        skip = min(total_size, available)
-        self._pos += skip
+        if total_size <= self._max_message_size:
+            # Normal-sized message: only skip when complete to avoid
+            # stream corruption from partially consumed messages.
+            if available < total_size:
+                return False
+            self._pos += total_size
+        else:
+            # Oversized message (recovery path): skip whatever is available
+            # since we'll never buffer the full message anyway.
+            self._pos += min(total_size, available)
+
         self._maybe_compact()
         return True
 
