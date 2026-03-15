@@ -11,7 +11,12 @@ WORD_SIZE = 8
 # Header size in bytes
 HEADER_SIZE = 8
 
-# Row markers
+# Row markers — written as full uint64 words on the wire, but detected by
+# checking only the first byte (0xFF = done, 0xEE = part). This matches Go's
+# byte-by-byte detection in columnTypes(). Use ROW_DONE_BYTE/ROW_PART_BYTE
+# for detection logic; use the full markers for encoding.
+ROW_DONE_BYTE = 0xFF
+ROW_PART_BYTE = 0xEE
 ROW_DONE_MARKER = 0xFFFFFFFFFFFFFFFF
 ROW_PART_MARKER = 0xEEEEEEEEEEEEEEEE
 
