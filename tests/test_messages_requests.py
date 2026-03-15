@@ -466,3 +466,40 @@ class TestParamsTupleWordAlignment:
             assert offset % 8 == 0, (
                 f"QuerySqlRequest params start at offset {offset} for sql={sql!r}, not word-aligned"
             )
+
+
+class TestRequestFieldValidation:
+    """Request fields should be validated at construction time, not just at encode time."""
+
+    def test_negative_uint32_field_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="db_id"):
+            ExecRequest(db_id=-1, stmt_id=0, params=[])
+
+    def test_overflow_uint32_field_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="stmt_id"):
+            FinalizeRequest(db_id=0, stmt_id=2**32)
+
+    def test_negative_uint64_field_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="client_id"):
+            ClientRequest(client_id=-1)
+
+    def test_overflow_uint64_field_rejected(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="timestamp"):
+            HeartbeatRequest(timestamp=2**64)
+
+    def test_valid_values_accepted(self) -> None:
+        """Valid values should not raise."""
+        ExecRequest(db_id=0, stmt_id=0, params=[])
+        ExecRequest(db_id=2**32 - 1, stmt_id=2**32 - 1, params=[])
+        ClientRequest(client_id=0)
+        ClientRequest(client_id=2**64 - 1)
+        HeartbeatRequest(timestamp=0)
+        OpenRequest(name="test.db", flags=0, vfs="")

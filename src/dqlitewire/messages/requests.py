@@ -10,6 +10,20 @@ from dqlitewire.tuples import encode_params_tuple
 from dqlitewire.types import encode_text, encode_uint32, encode_uint64
 
 
+def _check_uint32(name: str, value: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{name} must be int, got {type(value).__name__}")
+    if not (0 <= value <= 0xFFFFFFFF):
+        raise ValueError(f"{name} must be uint32 (0 to 4294967295), got {value}")
+
+
+def _check_uint64(name: str, value: int) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"{name} must be int, got {type(value).__name__}")
+    if not (0 <= value <= 0xFFFFFFFFFFFFFFFF):
+        raise ValueError(f"{name} must be uint64 (0 to 18446744073709551615), got {value}")
+
+
 @dataclass
 class LeaderRequest(Message):
     """Request current cluster leader address.
@@ -38,6 +52,9 @@ class ClientRequest(Message):
 
     client_id: int
 
+    def __post_init__(self) -> None:
+        _check_uint64("client_id", self.client_id)
+
     def encode_body(self) -> bytes:
         return encode_uint64(self.client_id)
 
@@ -59,6 +76,9 @@ class HeartbeatRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.HEARTBEAT
 
     timestamp: int
+
+    def __post_init__(self) -> None:
+        _check_uint64("timestamp", self.timestamp)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.timestamp)
@@ -83,6 +103,9 @@ class OpenRequest(Message):
     name: str
     flags: int = 0
     vfs: str = ""
+
+    def __post_init__(self) -> None:
+        _check_uint64("flags", self.flags)
 
     def encode_body(self) -> bytes:
         result = encode_text(self.name)
@@ -119,6 +142,9 @@ class PrepareRequest(Message):
     sql: str
     schema: int = 0
 
+    def __post_init__(self) -> None:
+        _check_uint64("db_id", self.db_id)
+
     def _get_schema(self) -> int:
         return self.schema
 
@@ -147,6 +173,10 @@ class ExecRequest(Message):
     db_id: int
     stmt_id: int
     params: Sequence[Any] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        _check_uint32("db_id", self.db_id)
+        _check_uint32("stmt_id", self.stmt_id)
 
     def _get_schema(self) -> int:
         return 1 if len(self.params) > 255 else 0
@@ -182,6 +212,10 @@ class QueryRequest(Message):
     stmt_id: int
     params: Sequence[Any] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        _check_uint32("db_id", self.db_id)
+        _check_uint32("stmt_id", self.stmt_id)
+
     def _get_schema(self) -> int:
         return 1 if len(self.params) > 255 else 0
 
@@ -214,6 +248,10 @@ class FinalizeRequest(Message):
     db_id: int
     stmt_id: int
 
+    def __post_init__(self) -> None:
+        _check_uint32("db_id", self.db_id)
+        _check_uint32("stmt_id", self.stmt_id)
+
     def encode_body(self) -> bytes:
         return encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
 
@@ -239,6 +277,9 @@ class ExecSqlRequest(Message):
     db_id: int
     sql: str
     params: Sequence[Any] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        _check_uint64("db_id", self.db_id)
 
     def _get_schema(self) -> int:
         return 1 if len(self.params) > 255 else 0
@@ -276,6 +317,9 @@ class QuerySqlRequest(Message):
     sql: str
     params: Sequence[Any] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        _check_uint64("db_id", self.db_id)
+
     def _get_schema(self) -> int:
         return 1 if len(self.params) > 255 else 0
 
@@ -309,6 +353,9 @@ class InterruptRequest(Message):
 
     db_id: int
 
+    def __post_init__(self) -> None:
+        _check_uint64("db_id", self.db_id)
+
     def encode_body(self) -> bytes:
         return encode_uint64(self.db_id)
 
@@ -337,6 +384,9 @@ class ConnectRequest(Message):
     node_id: int
     address: str
 
+    def __post_init__(self) -> None:
+        _check_uint64("node_id", self.node_id)
+
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(self.address)
 
@@ -360,6 +410,9 @@ class AddRequest(Message):
 
     node_id: int
     address: str
+
+    def __post_init__(self) -> None:
+        _check_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(self.address)
@@ -386,6 +439,11 @@ class AssignRequest(Message):
 
     node_id: int
     role: int | None = None
+
+    def __post_init__(self) -> None:
+        _check_uint64("node_id", self.node_id)
+        if self.role is not None:
+            _check_uint64("role", self.role)
 
     def encode_body(self) -> bytes:
         result = encode_uint64(self.node_id)
@@ -424,6 +482,9 @@ class RemoveRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.REMOVE
 
     node_id: int
+
+    def __post_init__(self) -> None:
+        _check_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id)
@@ -469,6 +530,9 @@ class ClusterRequest(Message):
 
     format: int = 1
 
+    def __post_init__(self) -> None:
+        _check_uint64("format", self.format)
+
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)
 
@@ -490,6 +554,9 @@ class TransferRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.TRANSFER
 
     target_node_id: int
+
+    def __post_init__(self) -> None:
+        _check_uint64("target_node_id", self.target_node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.target_node_id)
@@ -513,6 +580,9 @@ class DescribeRequest(Message):
 
     format: int = 0
 
+    def __post_init__(self) -> None:
+        _check_uint64("format", self.format)
+
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)
 
@@ -534,6 +604,9 @@ class WeightRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.WEIGHT
 
     weight: int
+
+    def __post_init__(self) -> None:
+        _check_uint64("weight", self.weight)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.weight)
