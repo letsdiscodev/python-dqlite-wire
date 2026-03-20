@@ -636,3 +636,11 @@ class TestValue:
         value, consumed = decode_value(b"\x00" * 8, ValueType.NULL)
         assert value is None
         assert consumed == 8
+
+    def test_decode_null_truncated(self) -> None:
+        with pytest.raises(DecodeError, match="8 bytes"):
+            decode_value(b"\x00" * 4, ValueType.NULL)
+
+    def test_decode_null_empty(self) -> None:
+        with pytest.raises(DecodeError, match="8 bytes"):
+            decode_value(b"", ValueType.NULL)

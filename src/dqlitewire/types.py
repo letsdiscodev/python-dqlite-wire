@@ -275,6 +275,8 @@ def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
     elif value_type == ValueType.BLOB:
         return decode_blob(data)
     elif value_type == ValueType.NULL:
+        if len(data) < 8:
+            raise DecodeError(f"Need 8 bytes for NULL value, got {len(data)}")
         return None, 8
     else:
         raise DecodeError(f"Unknown value type: {value_type}")
