@@ -126,6 +126,60 @@ class TestParamsTuple:
             encode_params_tuple(params, schema=0)
 
 
+class TestParamsTupleExternalCount:
+    """Tests for decode_params_tuple with externally provided count.
+
+    When count is externally provided, the data does NOT contain a count
+    field — type codes start at data[0]. The caller must pass buffer_offset
+    accounting for the count field that was consumed externally (1 byte for
+    V0, 4 bytes for V1) so that padding aligns correctly.
+    """
+
+    def test_decode_with_external_count_v0(self) -> None:
+        """External count should read types from data[0], not data[1]."""
+        params = [42, "hello"]
+        encoded = encode_params_tuple(params, schema=0)
+        # Strip the 1-byte count prefix — external count means no count in data.
+        # Pass buffer_offset=1 because the count byte was consumed externally.
+        data_without_count = encoded[1:]
+        decoded, consumed = decode_params_tuple(
+            data_without_count, count=2, schema=0, buffer_offset=1
+        )
+        assert decoded[0] == 42
+        assert decoded[1] == "hello"
+
+    def test_decode_with_external_count_v1(self) -> None:
+        """External count with V1 schema should skip 4-byte count prefix."""
+        params = [42, "hello"]
+        encoded = encode_params_tuple(params, schema=1)
+        # Strip the 4-byte count prefix.
+        # Pass buffer_offset=4 because the count field was consumed externally.
+        data_without_count = encoded[4:]
+        decoded, consumed = decode_params_tuple(
+            data_without_count, count=2, schema=1, buffer_offset=4
+        )
+        assert decoded[0] == 42
+        assert decoded[1] == "hello"
+
+    def test_decode_with_external_count_mixed_types(self) -> None:
+        """External count with mixed types should decode correctly."""
+        params = [42, 3.14, "text"]
+        encoded = encode_params_tuple(params, schema=0)
+        data_without_count = encoded[1:]
+        decoded, consumed = decode_params_tuple(
+            data_without_count, count=3, schema=0, buffer_offset=1
+        )
+        assert decoded[0] == 42
+        assert abs(decoded[1] - 3.14) < 1e-10
+        assert decoded[2] == "text"
+
+    def test_decode_with_external_count_zero(self) -> None:
+        """External count=0 should return empty list immediately."""
+        decoded, consumed = decode_params_tuple(b"\x00" * 8, count=0, schema=0)
+        assert decoded == []
+        assert consumed == 0
+
+
 class TestParamsTupleBufferOffset:
     def test_aligned_offset_matches_no_offset(self) -> None:
         """With word-aligned buffer_offset, padding is same as offset=0."""

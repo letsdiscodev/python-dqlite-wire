@@ -108,6 +108,7 @@ def decode_params_tuple(
         raise DecodeError(f"Not enough data for params tuple header: got {len(data)}")
 
     # Read count from data if not provided
+    count_from_data = count is None
     count_size: int
     if count is None:
         if schema == 1:
@@ -128,8 +129,10 @@ def decode_params_tuple(
         # Count was externally provided, no data consumed
         return [], 0
 
-    # Header: count field + type codes, padded to word boundary
-    count_size = 4 if schema == 1 else 1
+    # Header: count field (if read from data) + type codes, padded to word boundary.
+    # When count was externally provided, the data starts directly with type codes
+    # so count_size is 0.
+    count_size = (4 if schema == 1 else 1) if count_from_data else 0
     header_len = count_size + count
     padded_header_len = header_len + pad_to_word(buffer_offset + header_len)
 
