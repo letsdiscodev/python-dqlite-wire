@@ -45,9 +45,21 @@ class ReadBuffer:
         self._data = bytearray()
         self._pos = 0
         self._max_message_size = max_message_size
+        self._skip_remaining = 0
 
     def feed(self, data: bytes) -> None:
-        """Add received data to the buffer."""
+        """Add received data to the buffer.
+
+        If an oversized message is being skipped (after skip_message() returned
+        False), incoming bytes are silently discarded until the full oversized
+        message has been consumed.
+        """
+        if self._skip_remaining > 0:
+            discard = min(len(data), self._skip_remaining)
+            data = data[discard:]
+            self._skip_remaining -= discard
+            if not data:
+                return
         self._maybe_compact()
         unconsumed = len(self._data) - self._pos + len(data)
         if unconsumed > self._max_message_size:
@@ -110,11 +122,13 @@ class ReadBuffer:
 
         For normal-sized messages (within max_message_size), waits until the
         full message is available before skipping. For oversized messages that
-        exceed max_message_size, skips whatever bytes are available — this is
-        the recovery path for messages that has_message() rejects.
+        exceed max_message_size, discards available bytes and tracks the
+        remainder via ``_skip_remaining``; subsequent ``feed()`` calls will
+        silently discard the remaining oversized bytes.
 
         Returns True if a message was fully skipped, False if not enough data
-        for a header or if a normal-sized message is still incomplete.
+        for a header, a normal-sized message is still incomplete, or an
+        oversized message skip is still in progress (check ``is_skipping``).
         """
         available = len(self._data) - self._pos
         if available < HEADER_SIZE:
@@ -130,12 +144,14 @@ class ReadBuffer:
                 return False
             self._pos += total_size
         else:
-            # Oversized message (recovery path): skip whatever is available
-            # since we'll never buffer the full message anyway.
-            self._pos += min(total_size, available)
+            # Oversized message: discard what we have and track remaining
+            # bytes to be discarded in subsequent feed() calls.
+            skip_now = min(total_size, available)
+            self._pos += skip_now
+            self._skip_remaining = total_size - skip_now
 
         self._maybe_compact()
-        return True
+        return self._skip_remaining == 0
 
     def read_bytes(self, n: int) -> bytes | None:
         """Read exactly n bytes from the buffer.
@@ -161,7 +177,13 @@ class ReadBuffer:
         """Return number of bytes available to read."""
         return len(self._data) - self._pos
 
+    @property
+    def is_skipping(self) -> bool:
+        """True if still discarding bytes from an oversized message."""
+        return self._skip_remaining > 0
+
     def clear(self) -> None:
         """Clear the buffer."""
         self._data.clear()
         self._pos = 0
+        self._skip_remaining = 0
