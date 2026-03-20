@@ -13,6 +13,9 @@ from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.types import decode_value, encode_value, pad_to_word
 
+# Valid ValueType codes as integers, for fast membership testing in hot paths.
+_VALID_TYPE_CODES = frozenset(int(v) for v in ValueType)
+
 
 class RowMarker(Enum):
     """Row marker detected during header parsing."""
@@ -163,11 +166,10 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
     if not types:
         return b""
 
-    _valid_type_codes = frozenset(ValueType)
     for i, t in enumerate(types):
         if int(t) > 15:
             raise EncodeError(f"Value type {t} at index {i} exceeds 4-bit nibble range (max 15)")
-        if int(t) not in _valid_type_codes:
+        if int(t) not in _VALID_TYPE_CODES:
             raise EncodeError(f"Invalid type code {int(t)} at index {i}: not a valid ValueType")
 
     header = bytearray()
