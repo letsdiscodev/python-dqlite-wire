@@ -620,6 +620,44 @@ class TestValue:
         with pytest.raises(EncodeError, match="Unknown value type"):
             encode_value(42, 99)  # type: ignore[arg-type]
 
+    def test_encode_value_float_rejects_string(self) -> None:
+        with pytest.raises(EncodeError, match="FLOAT"):
+            encode_value("hello", ValueType.FLOAT)
+
+    def test_encode_value_float_rejects_bool(self) -> None:
+        with pytest.raises(EncodeError, match="FLOAT"):
+            encode_value(True, ValueType.FLOAT)
+
+    def test_encode_value_float_accepts_int(self) -> None:
+        encoded, vtype = encode_value(42, ValueType.FLOAT)
+        assert vtype == ValueType.FLOAT
+        decoded, _ = decode_value(encoded, ValueType.FLOAT)
+        assert decoded == 42.0
+
+    def test_encode_value_text_rejects_int(self) -> None:
+        with pytest.raises(EncodeError, match="TEXT"):
+            encode_value(42, ValueType.TEXT)
+
+    def test_encode_value_iso8601_rejects_int(self) -> None:
+        with pytest.raises(EncodeError, match="ISO8601"):
+            encode_value(42, ValueType.ISO8601)
+
+    def test_encode_value_blob_rejects_string(self) -> None:
+        with pytest.raises(EncodeError, match="BLOB"):
+            encode_value("hello", ValueType.BLOB)
+
+    def test_encode_value_blob_accepts_bytearray(self) -> None:
+        encoded, vtype = encode_value(bytearray(b"\x01\x02"), ValueType.BLOB)
+        assert vtype == ValueType.BLOB
+        decoded, _ = decode_value(encoded, ValueType.BLOB)
+        assert decoded == b"\x01\x02"
+
+    def test_encode_value_blob_accepts_memoryview(self) -> None:
+        encoded, vtype = encode_value(memoryview(b"\x03\x04"), ValueType.BLOB)
+        assert vtype == ValueType.BLOB
+        decoded, _ = decode_value(encoded, ValueType.BLOB)
+        assert decoded == b"\x03\x04"
+
     def test_decode_int64_short_data(self) -> None:
         with pytest.raises(DecodeError):
             decode_int64(b"\x00" * 7)

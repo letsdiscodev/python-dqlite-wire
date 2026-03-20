@@ -203,11 +203,17 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             raise EncodeError(f"Expected int for {value_type.name}, got {type(value).__name__}")
         return encode_int64(value), value_type
     elif value_type == ValueType.FLOAT:
-        return encode_double(value), value_type
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise EncodeError(f"Expected int or float for FLOAT, got {type(value).__name__}")
+        return encode_double(float(value)), value_type
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
+        if not isinstance(value, str):
+            raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
         return encode_text(value), value_type
     elif value_type == ValueType.BLOB:
-        return encode_blob(value), value_type
+        if not isinstance(value, (bytes, bytearray, memoryview)):
+            raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
+        return encode_blob(bytes(value)), value_type
     elif value_type == ValueType.NULL:
         return b"\x00" * 8, value_type
     else:
