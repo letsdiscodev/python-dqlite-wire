@@ -63,13 +63,13 @@ class TestMessageEncoder:
 
 class TestMessageDecoder:
     def test_decode_handshake(self) -> None:
-        decoder = MessageDecoder()
+        decoder = MessageDecoder(is_request=True)
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
         version = decoder.decode_handshake()
         assert version == PROTOCOL_VERSION
 
     def test_decode_handshake_partial(self) -> None:
-        decoder = MessageDecoder()
+        decoder = MessageDecoder(is_request=True)
         decoder.feed(b"\x01\x00\x00")
         version = decoder.decode_handshake()
         assert version is None
@@ -274,6 +274,41 @@ class TestHandshakeStateEnforcement:
         with pytest.raises(ProtocolError, match="[Hh]andshake"):
             decoder.decode_bytes(msg.encode())
 
+    def test_double_decode_handshake_raises(self) -> None:
+        """Calling decode_handshake() twice must raise ProtocolError.
+
+        A second call would consume 8 bytes of actual message data from the
+        buffer and interpret them as a version number, silently corrupting
+        the stream.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        handshake = PROTOCOL_VERSION.to_bytes(8, "little")
+        msg = LeaderRequest()
+        decoder.feed(handshake + msg.encode())
+
+        # First handshake succeeds
+        version = decoder.decode_handshake()
+        assert version == PROTOCOL_VERSION
+
+        # Second handshake must raise, not consume message bytes
+        with pytest.raises(ProtocolError, match="[Hh]andshake already completed"):
+            decoder.decode_handshake()
+
+        # The message should still be decodable (not consumed by second handshake)
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderRequest)
+
+    def test_decode_handshake_on_client_decoder_raises(self) -> None:
+        """Client-side decoder should reject decode_handshake() since _handshake_done=True."""
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
+        with pytest.raises(ProtocolError, match="[Hh]andshake already completed"):
+            decoder.decode_handshake()
+
     def test_response_decoder_decode_bytes_works_without_handshake(self) -> None:
         """decode_bytes() on response decoders should work without handshake."""
         decoder = MessageDecoder(is_request=False)
@@ -292,15 +327,11 @@ class TestHandshakeStateEnforcement:
         assert isinstance(decoded, LeaderResponse)
 
     def test_legacy_handshake_decodes_leader_response_as_legacy(self) -> None:
-        """After legacy handshake, LeaderResponse should use legacy format."""
-        from dqlitewire.types import encode_text
-
-        decoder = MessageDecoder(is_request=False)
-        # Feed legacy handshake + legacy LeaderResponse (address-only, no node_id)
-        handshake = PROTOCOL_VERSION_LEGACY.to_bytes(8, "little")
-        # Build a LeaderResponse with legacy body: just text address
+        """Legacy version should decode LeaderResponse in legacy format."""
+        from dqlitewire.codec import decode_message
         from dqlitewire.constants import ResponseType
         from dqlitewire.messages.base import Header
+        from dqlitewire.types import encode_text
 
         address = "192.168.1.1:9001"
         body = encode_text(address)
@@ -309,32 +340,27 @@ class TestHandshakeStateEnforcement:
             msg_type=ResponseType.LEADER,
             schema=0,
         )
-        decoder.feed(handshake + header.encode() + body)
-        version = decoder.decode_handshake()
-        assert version == PROTOCOL_VERSION_LEGACY
+        data = header.encode() + body
 
-        decoded = decoder.decode()
+        decoded = decode_message(data, is_request=False, version=PROTOCOL_VERSION_LEGACY)
         assert isinstance(decoded, LeaderResponse)
         assert decoded.node_id == 0
         assert decoded.address == address
 
     def test_modern_handshake_decodes_leader_response_as_modern(self) -> None:
-        """After modern handshake, LeaderResponse should use modern format."""
-        decoder = MessageDecoder(is_request=False)
-        handshake = PROTOCOL_VERSION.to_bytes(8, "little")
-        msg = LeaderResponse(node_id=42, address="node1:9001")
-        decoder.feed(handshake + msg.encode())
-        version = decoder.decode_handshake()
-        assert version == PROTOCOL_VERSION
+        """Modern version should decode LeaderResponse in modern format."""
+        from dqlitewire.codec import decode_message
 
-        decoded = decoder.decode()
+        msg = LeaderResponse(node_id=42, address="node1:9001")
+
+        decoded = decode_message(msg.encode(), is_request=False, version=PROTOCOL_VERSION)
         assert isinstance(decoded, LeaderResponse)
         assert decoded.node_id == 42
         assert decoded.address == "node1:9001"
 
     def test_decoder_version_property(self) -> None:
-        """Decoder should expose the protocol version after handshake."""
-        decoder = MessageDecoder(is_request=False)
+        """Request decoder should expose the protocol version after handshake."""
+        decoder = MessageDecoder(is_request=True)
         assert decoder.version is None
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
         decoder.decode_handshake()

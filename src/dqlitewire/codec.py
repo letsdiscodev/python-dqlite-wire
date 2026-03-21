@@ -221,8 +221,11 @@ class MessageDecoder:
 
         Returns the protocol version or None if not enough data.
         Must be called before decode() on request decoders.
-        Raises ProtocolError if the version is not recognized.
+        Raises ProtocolError if the version is not recognized or if
+        the handshake was already completed.
         """
+        if self._handshake_done:
+            raise ProtocolError("Handshake already completed")
         data = self._buffer.read_bytes(8)
         if data is None:
             return None
