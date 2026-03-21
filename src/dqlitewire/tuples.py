@@ -100,6 +100,8 @@ def decode_params_tuple(
     """
     # Go writes nothing for empty params
     if len(data) == 0:
+        if count is not None and count > 0:
+            raise DecodeError(f"Expected data for {count} parameters, but data is empty")
         return [], 0
 
     if len(data) < 8:

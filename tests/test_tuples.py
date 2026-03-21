@@ -396,6 +396,27 @@ class TestParamsTupleErrors:
         with pytest.raises(DecodeError, match="Not enough data"):
             decode_params_tuple(b"\x01\x02\x03")
 
+    def test_decode_empty_data_with_nonzero_count_raises(self) -> None:
+        """Empty data with count > 0 should raise DecodeError, not return []."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="Expected data for 5 parameters"):
+            decode_params_tuple(b"", count=5)
+
+    def test_decode_empty_data_with_count_none_returns_empty(self) -> None:
+        """Empty data with count=None is legitimate (Go writes nothing for empty params)."""
+        result, consumed = decode_params_tuple(b"", count=None)
+        assert result == []
+        assert consumed == 0
+
+    def test_decode_empty_data_with_count_zero_returns_empty(self) -> None:
+        """Empty data with count=0 is legitimate."""
+        result, consumed = decode_params_tuple(b"", count=0)
+        assert result == []
+        assert consumed == 0
+
     def test_decode_insufficient_data_for_types(self) -> None:
         """Data too short for declared type count should raise DecodeError."""
         import pytest
