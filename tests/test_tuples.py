@@ -494,6 +494,18 @@ class TestRowValues:
         assert decoded[1] == "hello"
         assert abs(decoded[2] - 3.14) < 0.0001
 
+    def test_encode_mismatched_lengths_raises_encode_error(self) -> None:
+        """Mismatched values/types lengths should raise EncodeError, not ValueError."""
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="does not match"):
+            encode_row_values([1, 2, 3], [ValueType.INTEGER, ValueType.INTEGER])
+
+        with pytest.raises(EncodeError, match="does not match"):
+            encode_row_values([1], [ValueType.INTEGER, ValueType.INTEGER])
+
     def test_roundtrip_with_null(self) -> None:
         values = [42, None, "test"]
         types = [ValueType.INTEGER, ValueType.NULL, ValueType.TEXT]

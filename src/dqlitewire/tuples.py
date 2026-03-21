@@ -231,8 +231,12 @@ def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] |
 
 def encode_row_values(values: Sequence[Any], types: Sequence[ValueType]) -> bytes:
     """Encode row values according to specified types."""
+    if len(values) != len(types):
+        raise EncodeError(
+            f"Row values count ({len(values)}) does not match types count ({len(types)})"
+        )
     result = bytearray()
-    for value, vtype in zip(values, types, strict=True):
+    for value, vtype in zip(values, types, strict=False):
         encoded, _ = encode_value(value, vtype)
         result.extend(encoded)
     return bytes(result)
