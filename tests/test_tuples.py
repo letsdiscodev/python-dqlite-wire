@@ -386,6 +386,47 @@ class TestParamsTupleInvalidType:
             decode_params_tuple(data)
 
 
+class TestParamsTupleSchemaValidation:
+    def test_encode_rejects_schema_2(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="Unsupported params tuple schema"):
+            encode_params_tuple([42], schema=2)
+
+    def test_encode_rejects_negative_schema(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="Unsupported params tuple schema"):
+            encode_params_tuple([42], schema=-1)
+
+    def test_decode_rejects_schema_2(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        data = encode_params_tuple([42], schema=0)
+        with pytest.raises(DecodeError, match="Unsupported params tuple schema"):
+            decode_params_tuple(data, schema=2)
+
+    def test_decode_rejects_negative_schema(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        data = encode_params_tuple([42], schema=0)
+        with pytest.raises(DecodeError, match="Unsupported params tuple schema"):
+            decode_params_tuple(data, schema=-1)
+
+    def test_encode_accepts_schema_0_and_1(self) -> None:
+        """Schema 0 and 1 should work normally."""
+        encode_params_tuple([42], schema=0)
+        encode_params_tuple([42], schema=1)
+
+
 class TestParamsTupleErrors:
     def test_decode_insufficient_data_for_header(self) -> None:
         """Data shorter than 8 bytes should raise DecodeError."""

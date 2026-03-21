@@ -37,6 +37,9 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
             message body. Used to compute padding from the absolute position,
             matching Go's putNamedValues which pads based on m.Offset.
     """
+    if schema not in (0, 1):
+        raise EncodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
+
     if not params:
         # Go writes nothing for empty params
         return b""
@@ -98,6 +101,9 @@ def decode_params_tuple(
         buffer_offset: Absolute byte offset where this tuple starts in the
             message body. Used for padding calculation matching Go's behavior.
     """
+    if schema not in (0, 1):
+        raise DecodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
+
     # Go writes nothing for empty params
     if len(data) == 0:
         if count is not None and count > 0:
