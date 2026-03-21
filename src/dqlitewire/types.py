@@ -215,7 +215,12 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
         return encode_blob(bytes(value)), value_type
     elif value_type == ValueType.NULL:
-        return b"\x00" * 8, value_type
+        # value is None is already handled at line 157-158 above, so reaching
+        # here means value is not None with explicit NULL type — always a bug.
+        raise EncodeError(
+            f"Cannot encode non-None value {value!r} as NULL. "
+            f"Pass value=None or use the appropriate ValueType."
+        )
     else:
         raise EncodeError(f"Unknown value type: {value_type}")
 

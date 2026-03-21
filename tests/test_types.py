@@ -682,3 +682,12 @@ class TestValue:
     def test_decode_null_empty(self) -> None:
         with pytest.raises(DecodeError, match="8 bytes"):
             decode_value(b"", ValueType.NULL)
+
+    def test_encode_value_null_type_with_non_none_raises(self) -> None:
+        """Explicit ValueType.NULL with a non-None value should raise EncodeError."""
+        with pytest.raises(EncodeError, match="Cannot encode non-None value"):
+            encode_value(42, ValueType.NULL)
+
+    def test_encode_value_null_type_with_string_raises(self) -> None:
+        with pytest.raises(EncodeError, match="Cannot encode non-None value"):
+            encode_value("hello", ValueType.NULL)
