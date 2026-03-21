@@ -127,17 +127,23 @@ class MessageEncoder:
 class MessageDecoder:
     """Decodes messages from wire protocol format."""
 
-    def __init__(self, is_request: bool = False) -> None:
+    def __init__(self, is_request: bool = False, version: int = PROTOCOL_VERSION) -> None:
         """Initialize decoder.
 
         Args:
             is_request: If True, decode as request messages.
                        If False (default), decode as response messages.
+            version: Protocol version to assume for client-side decoders.
+                    Defaults to PROTOCOL_VERSION (1). Use PROTOCOL_VERSION_LEGACY
+                    for pre-1.0 dqlite servers (affects LeaderResponse format).
+                    Ignored for request decoders (version comes from handshake).
         """
         self._buffer = ReadBuffer()
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
-        self._version: int | None = None
+        # For client-side decoders, version is set from the constructor parameter.
+        # For server-side decoders, version is set by decode_handshake().
+        self._version: int | None = version if not is_request else None
         # Request decoders (server-side) must receive the protocol version
         # handshake before decoding any messages. Response decoders (client-side)
         # don't receive an inbound handshake, so they skip this check.
@@ -253,9 +259,12 @@ def decode_message(
                  to decode legacy-format messages (e.g., LeaderResponse
                  without node_id).
     """
-    decoder = MessageDecoder(is_request=is_request)
-    decoder._handshake_done = True
-    decoder._version = version
+    decoder = MessageDecoder(is_request=is_request, version=version)
+    if is_request:
+        # Request decoders start with handshake_done=False; bypass for
+        # stateless single-message decoding.
+        decoder._handshake_done = True
+        decoder._version = version
     return decoder.decode_bytes(data)
 
 

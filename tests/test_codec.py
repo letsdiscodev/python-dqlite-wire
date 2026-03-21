@@ -358,13 +358,52 @@ class TestHandshakeStateEnforcement:
         assert decoded.node_id == 42
         assert decoded.address == "node1:9001"
 
-    def test_decoder_version_property(self) -> None:
-        """Request decoder should expose the protocol version after handshake."""
+    def test_decoder_version_property_request(self) -> None:
+        """Request decoder should expose version=None before handshake, version after."""
         decoder = MessageDecoder(is_request=True)
         assert decoder.version is None
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
         decoder.decode_handshake()
         assert decoder.version == PROTOCOL_VERSION
+
+    def test_client_decoder_with_version_parameter(self) -> None:
+        """Client-side decoder should accept version parameter for legacy support."""
+        from dqlitewire.constants import ResponseType
+        from dqlitewire.messages.base import Header
+        from dqlitewire.types import encode_text
+
+        address = "192.168.1.1:9001"
+        body = encode_text(address)
+        header = Header(
+            size_words=len(body) // 8,
+            msg_type=ResponseType.LEADER,
+            schema=0,
+        )
+        data = header.encode() + body
+
+        # With legacy version, should decode using legacy format
+        decoder = MessageDecoder(is_request=False, version=PROTOCOL_VERSION_LEGACY)
+        assert decoder.version == PROTOCOL_VERSION_LEGACY
+        decoder.feed(data)
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderResponse)
+        assert decoded.node_id == 0
+        assert decoded.address == address
+
+    def test_client_decoder_default_version_is_modern(self) -> None:
+        """Client-side decoder should default to modern protocol version."""
+        decoder = MessageDecoder(is_request=False)
+        assert decoder.version == PROTOCOL_VERSION
+
+    def test_client_decoder_modern_version_decodes_modern_leader(self) -> None:
+        """Client-side decoder with modern version should use modern format."""
+        decoder = MessageDecoder(is_request=False, version=PROTOCOL_VERSION)
+        msg = LeaderResponse(node_id=42, address="node1:9001")
+        decoder.feed(msg.encode())
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderResponse)
+        assert decoded.node_id == 42
+        assert decoded.address == "node1:9001"
 
 
 class TestConvenienceFunctions:
