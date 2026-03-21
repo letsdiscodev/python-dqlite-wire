@@ -5,7 +5,6 @@ Text is null-terminated UTF-8, padded to 8-byte boundary.
 """
 
 import datetime
-import math
 import struct
 from typing import Any
 
@@ -59,23 +58,23 @@ def decode_uint32(data: bytes) -> int:
 
 
 def encode_double(value: float) -> bytes:
-    """Encode a 64-bit floating point number (little-endian)."""
-    if math.isnan(value):
-        raise EncodeError("NaN is not supported by the dqlite wire protocol")
-    if math.isinf(value):
-        raise EncodeError("Infinity is not supported by the dqlite wire protocol")
+    """Encode a 64-bit floating point number (little-endian).
+
+    All IEEE 754 values are accepted, including NaN and infinity,
+    matching the Go reference implementation behavior.
+    """
     return struct.pack("<d", value)
 
 
 def decode_double(data: bytes) -> float:
-    """Decode a 64-bit floating point number (little-endian)."""
+    """Decode a 64-bit floating point number (little-endian).
+
+    All IEEE 754 values are accepted, including NaN and infinity,
+    matching the Go reference implementation behavior.
+    """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for double, got {len(data)}")
     result: float = struct.unpack("<d", data[:8])[0]
-    if math.isnan(result):
-        raise DecodeError("Received NaN double value, not supported by dqlite wire protocol")
-    if math.isinf(result):
-        raise DecodeError("Received infinity double value, not supported by dqlite wire protocol")
     return result
 
 

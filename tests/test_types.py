@@ -111,34 +111,35 @@ class TestDouble:
         for val in values:
             assert decode_double(encode_double(val)) == val
 
-    def test_decode_nan_rejected(self) -> None:
-        """Decoding NaN should raise DecodeError, matching encode_double's NaN rejection.
+    def test_nan_roundtrip(self) -> None:
+        """NaN should roundtrip through encode/decode, matching Go behavior.
 
-        The dqlite wire protocol does not support NaN. encode_double rejects it
-        with EncodeError, so decode_double should also reject NaN bytes received
-        from the wire rather than silently returning float('nan').
+        The Go reference implementation and C dqlite server pass NaN through
+        without checks. A wire protocol codec should faithfully transport all
+        IEEE 754 values.
         """
-        import struct
+        import math
 
-        nan_bytes = struct.pack("<d", float("nan"))
-        with pytest.raises(DecodeError, match="NaN"):
-            decode_double(nan_bytes)
+        encoded = encode_double(float("nan"))
+        assert len(encoded) == 8
+        result = decode_double(encoded)
+        assert math.isnan(result)
 
-    def test_decode_positive_infinity_rejected(self) -> None:
-        """Decoding +inf should raise DecodeError, matching encode_double's rejection."""
-        import struct
+    def test_positive_infinity_roundtrip(self) -> None:
+        """Positive infinity should roundtrip, matching Go behavior."""
+        import math
 
-        inf_bytes = struct.pack("<d", float("inf"))
-        with pytest.raises(DecodeError, match="[Ii]nfinity"):
-            decode_double(inf_bytes)
+        encoded = encode_double(float("inf"))
+        result = decode_double(encoded)
+        assert math.isinf(result) and result > 0
 
-    def test_decode_negative_infinity_rejected(self) -> None:
-        """Decoding -inf should raise DecodeError, matching encode_double's rejection."""
-        import struct
+    def test_negative_infinity_roundtrip(self) -> None:
+        """Negative infinity should roundtrip, matching Go behavior."""
+        import math
 
-        inf_bytes = struct.pack("<d", float("-inf"))
-        with pytest.raises(DecodeError, match="[Ii]nfinity"):
-            decode_double(inf_bytes)
+        encoded = encode_double(float("-inf"))
+        result = decode_double(encoded)
+        assert math.isinf(result) and result < 0
 
 
 class TestPadding:
@@ -491,24 +492,25 @@ class TestValue:
             decoded, _ = decode_value(encoded, ValueType.FLOAT)
             assert decoded == val
 
-    def test_nan_rejected(self) -> None:
-        """NaN should be rejected since SQLite and dqlite don't support it."""
-        with pytest.raises(EncodeError, match="NaN"):
-            encode_double(float("nan"))
+    def test_nan_accepted(self) -> None:
+        """NaN should be accepted, matching Go reference implementation."""
+        import math
 
-        with pytest.raises(EncodeError, match="NaN"):
-            encode_value(float("nan"))
+        encoded, vtype = encode_value(float("nan"))
+        assert vtype == ValueType.FLOAT
+        decoded, _ = decode_value(encoded, ValueType.FLOAT)
+        assert math.isnan(decoded)
 
-    def test_infinity_rejected(self) -> None:
-        """Infinity should be rejected to prevent NaN from server-side arithmetic."""
-        with pytest.raises(EncodeError, match="[Ii]nfinity"):
-            encode_double(float("inf"))
+    def test_infinity_accepted(self) -> None:
+        """Infinity should be accepted, matching Go reference implementation."""
+        import math
 
-        with pytest.raises(EncodeError, match="[Ii]nfinity"):
-            encode_double(float("-inf"))
-
-        with pytest.raises(EncodeError, match="[Ii]nfinity"):
-            encode_value(float("inf"))
+        for val in (float("inf"), float("-inf")):
+            encoded, vtype = encode_value(val)
+            assert vtype == ValueType.FLOAT
+            decoded, _ = decode_value(encoded, ValueType.FLOAT)
+            assert math.isinf(decoded)
+            assert (decoded > 0) == (val > 0)
 
     def test_integer_edge_cases(self) -> None:
         """Test integer edge cases."""
