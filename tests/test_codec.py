@@ -551,3 +551,50 @@ class TestRoundTrip:
         assert isinstance(decoded, StmtResponse)
         # With schema=0 in header, tail_offset should NOT be decoded
         assert decoded.tail_offset is None
+
+
+class TestDecoderSkipMessage:
+    """Test skip_message() and is_skipping on MessageDecoder."""
+
+    def test_skip_message_exists_on_decoder(self) -> None:
+        """MessageDecoder should expose skip_message() for oversized recovery."""
+        decoder = MessageDecoder(is_request=False)
+        assert hasattr(decoder, "skip_message")
+        assert hasattr(decoder, "is_skipping")
+
+    def test_skip_oversized_and_recover(self) -> None:
+        """After skipping an oversized message, normal messages should decode."""
+        import struct
+
+        from dqlitewire.exceptions import DecodeError
+
+        # Create a decoder with a small max_message_size
+        decoder = MessageDecoder(is_request=False)
+        decoder._buffer._max_message_size = 128
+
+        # Build an oversized message header (size_words=100 → 808 bytes total)
+        oversized_header = struct.pack("<IBBH", 100, 0, 0, 0)
+        # Build a normal message after it
+        normal_msg = FailureResponse(code=42, message="test").encode()
+
+        # Feed just the oversized header
+        decoder.feed(oversized_header)
+
+        # has_message() should raise for oversized
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            decoder.has_message()
+
+        # skip_message() should handle the oversized message
+        result = decoder.skip_message()
+        assert result is False  # haven't received full oversized body yet
+        assert decoder.is_skipping is True
+
+        # Feed oversized body + normal message
+        oversized_body = b"\x00" * 800
+        decoder.feed(oversized_body + normal_msg)
+
+        # Now should be able to decode the normal message
+        assert decoder.is_skipping is False
+        decoded = decoder.decode()
+        assert isinstance(decoded, FailureResponse)
+        assert decoded.code == 42

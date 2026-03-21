@@ -162,6 +162,22 @@ class MessageDecoder:
         """Check if a complete message is available."""
         return self._buffer.has_message()
 
+    def skip_message(self) -> bool:
+        """Skip the current message in the buffer.
+
+        Use this to recover after has_message() or decode() raises
+        DecodeError for an oversized message. For oversized messages,
+        returns False until the full message has been discarded
+        (check is_skipping). For normal-sized messages, waits until
+        the full message is available before skipping.
+        """
+        return self._buffer.skip_message()
+
+    @property
+    def is_skipping(self) -> bool:
+        """True if still discarding bytes from an oversized message."""
+        return self._buffer.is_skipping
+
     def decode(self) -> Message | None:
         """Decode the next message from the buffer.
 
