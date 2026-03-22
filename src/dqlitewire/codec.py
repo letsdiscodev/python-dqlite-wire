@@ -178,6 +178,36 @@ class MessageDecoder:
         """True if still discarding bytes from an oversized message."""
         return self._buffer.is_skipping
 
+    def decode_continuation(
+        self,
+        column_names: list[str],
+        column_count: int,
+        max_rows: int = RowsResponse.DEFAULT_MAX_ROWS,
+    ) -> RowsResponse | None:
+        """Decode a ROWS continuation message from the buffer.
+
+        After receiving a RowsResponse with has_more=True, the server sends
+        additional ROWS messages containing only row data (no column_count or
+        column_names prefix). Use this method instead of decode() for those
+        continuation messages.
+
+        Args:
+            column_names: Column names from the initial RowsResponse.
+            column_count: Number of columns from the initial RowsResponse.
+            max_rows: Maximum rows to decode per message.
+
+        Returns None if no complete message is available.
+        """
+        data = self._buffer.read_message()
+        if data is None:
+            return None
+
+        header = Header.decode(data[:HEADER_SIZE])
+        body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
+        return RowsResponse.decode_rows_continuation(
+            body, column_names, column_count, max_rows=max_rows
+        )
+
     def decode(self) -> Message | None:
         """Decode the next message from the buffer.
 

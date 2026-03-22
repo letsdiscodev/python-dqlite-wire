@@ -553,6 +553,68 @@ class TestRoundTrip:
         assert decoded.tail_offset is None
 
 
+class TestDecoderContinuation:
+    """Test decode_continuation() for multi-part ROWS responses."""
+
+    def test_decode_continuation_exists(self) -> None:
+        """MessageDecoder should have a decode_continuation method."""
+        decoder = MessageDecoder(is_request=False)
+        assert hasattr(decoder, "decode_continuation")
+
+    def test_decode_continuation_roundtrip(self) -> None:
+        """Multi-part ROWS: initial decode() + continuation decode_continuation()."""
+        from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER, ValueType.TEXT]
+
+        # Build initial ROWS message with PART marker
+        body1 = encode_uint64(2)  # column_count
+        body1 += encode_text("id") + encode_text("name")
+        body1 += encode_row_header(types)
+        body1 += encode_row_values([1, "alice"], types)
+        body1 += encode_uint64(ROW_PART_MARKER)
+        header1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
+        msg1_bytes = header1.encode() + body1
+
+        # Build continuation ROWS message with DONE marker
+        body2 = encode_row_header(types)
+        body2 += encode_row_values([2, "bob"], types)
+        body2 += encode_uint64(ROW_DONE_MARKER)
+        header2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
+        msg2_bytes = header2.encode() + body2
+
+        # Feed both messages
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(msg1_bytes + msg2_bytes)
+
+        # Decode initial response
+        initial = decoder.decode()
+        assert isinstance(initial, RowsResponse)
+        assert initial.has_more is True
+        assert len(initial.rows) == 1
+        assert initial.rows[0] == [1, "alice"]
+
+        # Decode continuation
+        continuation = decoder.decode_continuation(
+            column_names=initial.column_names,
+            column_count=len(initial.column_names),
+        )
+        assert isinstance(continuation, RowsResponse)
+        assert continuation.has_more is False
+        assert len(continuation.rows) == 1
+        assert continuation.rows[0] == [2, "bob"]
+
+    def test_decode_continuation_returns_none_when_no_data(self) -> None:
+        """decode_continuation should return None when no message is available."""
+        decoder = MessageDecoder(is_request=False)
+        result = decoder.decode_continuation(column_names=["x"], column_count=1)
+        assert result is None
+
+
 class TestDecoderSkipMessage:
     """Test skip_message() and is_skipping on MessageDecoder."""
 
