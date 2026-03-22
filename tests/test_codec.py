@@ -804,6 +804,36 @@ class TestDecoderContinuation:
         result = decoder.decode_continuation(column_names=["x"], column_count=1)
         assert result is None
 
+    def test_decode_continuation_raises_on_failure_response(self) -> None:
+        """decode_continuation should surface server error, not a confusing DecodeError."""
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.responses import FailureResponse
+
+        failure = FailureResponse(code=266, message="disk I/O error")
+        failure_bytes = failure.encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(failure_bytes)
+
+        with pytest.raises(ProtocolError, match="disk I/O error") as exc_info:
+            decoder.decode_continuation(column_names=["id"], column_count=1)
+        # Must be a ProtocolError, NOT a DecodeError (which would mean the
+        # failure body was misinterpreted as row data).
+        assert type(exc_info.value) is ProtocolError
+
+    def test_decode_continuation_raises_on_unexpected_type(self) -> None:
+        """decode_continuation should raise ProtocolError for non-ROWS, non-FAILURE type."""
+        from dqlitewire.exceptions import ProtocolError
+
+        result = ResultResponse(last_insert_id=0, rows_affected=0)
+        result_bytes = result.encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(result_bytes)
+
+        with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
+            decoder.decode_continuation(column_names=["id"], column_count=1)
+
 
 class TestDecoderSkipMessage:
     """Test skip_message() and is_skipping on MessageDecoder."""

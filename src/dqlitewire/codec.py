@@ -204,6 +204,17 @@ class MessageDecoder:
 
         header = Header.decode(data[:HEADER_SIZE])
         body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
+
+        if header.msg_type == ResponseType.FAILURE:
+            failure = FailureResponse.decode_body(body, schema=header.schema)
+            raise ProtocolError(
+                f"Server error during ROWS continuation: [{failure.code}] {failure.message}"
+            )
+        if header.msg_type != ResponseType.ROWS:
+            raise ProtocolError(
+                f"Expected ROWS continuation (type {ResponseType.ROWS}), got type {header.msg_type}"
+            )
+
         return RowsResponse.decode_rows_continuation(
             body, column_names, column_count, max_rows=max_rows
         )
