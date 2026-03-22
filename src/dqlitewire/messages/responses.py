@@ -378,6 +378,8 @@ class RowsResponse(Message):
         method to decode those continuation messages, passing the column_names
         and column_count from the initial response.
         """
+        if column_count > _MAX_COLUMN_COUNT:
+            raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
         if len(column_names) != column_count:
             raise DecodeError(
                 f"column_names length ({len(column_names)}) does not match "

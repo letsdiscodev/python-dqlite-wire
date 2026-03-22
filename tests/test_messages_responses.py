@@ -533,6 +533,21 @@ class TestRowsResponse:
                 column_count=2,
             )
 
+    def test_decode_rows_continuation_rejects_excessive_column_count(self) -> None:
+        """decode_rows_continuation should reject column_count exceeding _MAX_COLUMN_COUNT."""
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        body = b"\xff" * 8  # DONE marker
+        excessive = 20_000
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            RowsResponse.decode_rows_continuation(
+                body,
+                column_names=["c"] * excessive,
+                column_count=excessive,
+            )
+
 
 class TestEmptyResponse:
     def test_encode(self) -> None:
