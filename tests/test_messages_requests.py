@@ -126,6 +126,16 @@ class TestPrepareRequest:
         header = Header.decode(encoded[:HEADER_SIZE])
         assert header.schema == 0
 
+    def test_rejects_invalid_schema(self) -> None:
+        """PrepareRequest should reject schema values other than 0 or 1."""
+        import pytest
+
+        with pytest.raises(ValueError, match="schema must be 0 or 1"):
+            PrepareRequest(db_id=1, sql="SELECT 1", schema=2)
+
+        with pytest.raises(ValueError, match="schema must be 0 or 1"):
+            PrepareRequest(db_id=1, sql="SELECT 1", schema=-1)
+
 
 class TestExecRequest:
     def test_schema_v0_for_small_params(self) -> None:

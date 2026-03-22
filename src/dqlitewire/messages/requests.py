@@ -144,6 +144,8 @@ class PrepareRequest(Message):
 
     def __post_init__(self) -> None:
         _check_uint64("db_id", self.db_id)
+        if self.schema not in (0, 1):
+            raise ValueError(f"schema must be 0 or 1, got {self.schema}")
 
     def _get_schema(self) -> int:
         return self.schema
