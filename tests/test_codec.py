@@ -13,12 +13,15 @@ from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages import (
     ClientRequest,
     DbResponse,
+    EmptyResponse,
     FailureResponse,
+    HeartbeatRequest,
     LeaderRequest,
     LeaderResponse,
     OpenRequest,
     PrepareRequest,
     ResultResponse,
+    ServersResponse,
     StmtResponse,
     WelcomeResponse,
 )
@@ -536,6 +539,193 @@ class TestRoundTrip:
         data = header.encode() + b"\x00" * 8  # Only 8 bytes, not 16
         with pytest.raises(DecodeError, match="[Bb]ody.*short"):
             decode_message(data, is_request=True)
+
+    def test_heartbeat_request(self) -> None:
+        original = HeartbeatRequest(timestamp=1710000000)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, HeartbeatRequest)
+        assert decoded.timestamp == 1710000000
+
+    def test_finalize_request(self) -> None:
+        from dqlitewire.messages.requests import FinalizeRequest
+
+        original = FinalizeRequest(db_id=1, stmt_id=42)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, FinalizeRequest)
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 42
+
+    def test_interrupt_request(self) -> None:
+        from dqlitewire.messages.requests import InterruptRequest
+
+        original = InterruptRequest(db_id=7)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, InterruptRequest)
+        assert decoded.db_id == 7
+
+    def test_connect_request(self) -> None:
+        from dqlitewire.messages.requests import ConnectRequest
+
+        original = ConnectRequest(node_id=5, address="10.0.0.1:9001")
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ConnectRequest)
+        assert decoded.node_id == 5
+        assert decoded.address == "10.0.0.1:9001"
+
+    def test_add_request(self) -> None:
+        from dqlitewire.messages.requests import AddRequest
+
+        original = AddRequest(node_id=3, address="node3:9001")
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, AddRequest)
+        assert decoded.node_id == 3
+
+    def test_assign_request(self) -> None:
+        from dqlitewire.messages.requests import AssignRequest
+
+        original = AssignRequest(node_id=1, role=2)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, AssignRequest)
+        assert decoded.node_id == 1
+        assert decoded.role == 2
+
+    def test_remove_request(self) -> None:
+        from dqlitewire.messages.requests import RemoveRequest
+
+        original = RemoveRequest(node_id=99)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, RemoveRequest)
+        assert decoded.node_id == 99
+
+    def test_dump_request(self) -> None:
+        from dqlitewire.messages.requests import DumpRequest
+
+        original = DumpRequest(name="mydb")
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, DumpRequest)
+        assert decoded.name == "mydb"
+
+    def test_cluster_request(self) -> None:
+        from dqlitewire.messages.requests import ClusterRequest
+
+        original = ClusterRequest(format=1)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ClusterRequest)
+        assert decoded.format == 1
+
+    def test_transfer_request(self) -> None:
+        from dqlitewire.messages.requests import TransferRequest
+
+        original = TransferRequest(target_node_id=42)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, TransferRequest)
+        assert decoded.target_node_id == 42
+
+    def test_describe_request(self) -> None:
+        from dqlitewire.messages.requests import DescribeRequest
+
+        original = DescribeRequest(format=0)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, DescribeRequest)
+        assert decoded.format == 0
+
+    def test_weight_request(self) -> None:
+        from dqlitewire.messages.requests import WeightRequest
+
+        original = WeightRequest(weight=100)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, WeightRequest)
+        assert decoded.weight == 100
+
+    def test_welcome_response(self) -> None:
+        original = WelcomeResponse(heartbeat_timeout=15000)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, WelcomeResponse)
+        assert decoded.heartbeat_timeout == 15000
+
+    def test_stmt_response(self) -> None:
+        original = StmtResponse(db_id=1, stmt_id=2, num_params=3)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, StmtResponse)
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 2
+        assert decoded.num_params == 3
+        assert decoded.tail_offset is None
+
+    def test_empty_response(self) -> None:
+        original = EmptyResponse()
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, EmptyResponse)
+
+    def test_servers_response(self) -> None:
+        from dqlitewire.messages.responses import NodeInfo
+
+        original = ServersResponse(nodes=[NodeInfo(1, "n1:9001", 0), NodeInfo(2, "n2:9001", 1)])
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, ServersResponse)
+        assert len(decoded.nodes) == 2
+        assert decoded.nodes[0].node_id == 1
+        assert decoded.nodes[1].address == "n2:9001"
+
+    def test_metadata_response(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        original = MetadataResponse(failure_domain=1, weight=50)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, MetadataResponse)
+        assert decoded.failure_domain == 1
+        assert decoded.weight == 50
+
+    def test_files_response(self) -> None:
+        from dqlitewire.messages.responses import FilesResponse
+
+        original = FilesResponse(files={"db.sqlite": b"\x00" * 512})
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, FilesResponse)
+        assert decoded.files["db.sqlite"] == b"\x00" * 512
+
+    def test_255_params_uses_v0_schema(self) -> None:
+        """Exactly 255 params should use V0 (schema=0), not V1."""
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.requests import ExecRequest
+
+        msg = ExecRequest(db_id=0, stmt_id=0, params=list(range(255)))
+        assert msg._get_schema() == 0
+
+        encoded = encode_message(msg)
+        header = Header.decode(encoded[:8])
+        assert header.schema == 0
+
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ExecRequest)
+        assert len(decoded.params) == 255
+        assert decoded.params == list(range(255))
+
+    def test_max_uint64_roundtrip(self) -> None:
+        """Max uint64 values should survive full codec roundtrip."""
+        original = ClientRequest(client_id=2**64 - 1)
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=True)
+        assert isinstance(decoded, ClientRequest)
+        assert decoded.client_id == 2**64 - 1
 
     def test_stmt_response_v0_with_trailing_data_not_detected_as_v1(self) -> None:
         """StmtResponse V0 with trailing bytes must not be misdetected as V1."""

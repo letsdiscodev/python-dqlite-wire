@@ -125,6 +125,18 @@ class TestParamsTuple:
         with pytest.raises(EncodeError, match="255"):
             encode_params_tuple(params, schema=0)
 
+    def test_v0_255_params_boundary(self) -> None:
+        """Exactly 255 params is the V0 maximum — count byte should be 0xFF."""
+        params = list(range(255))
+        encoded = encode_params_tuple(params, schema=0)
+        assert encoded[0] == 255  # count byte = 0xFF (max uint8)
+
+        # Roundtrip
+        decoded, consumed = decode_params_tuple(encoded, schema=0)
+        assert len(decoded) == 255
+        assert decoded == params
+        assert consumed == len(encoded)
+
 
 class TestParamsTupleExternalCount:
     """Tests for decode_params_tuple with externally provided count.
