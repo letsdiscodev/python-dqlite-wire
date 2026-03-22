@@ -589,9 +589,10 @@ class TestDecoderSkipMessage:
         assert result is False  # haven't received full oversized body yet
         assert decoder.is_skipping is True
 
-        # Feed oversized body + normal message
-        oversized_body = b"\x00" * 800
-        decoder.feed(oversized_body + normal_msg)
+        # Feed enough bytes to complete the capped skip + normal message.
+        # _skip_remaining is capped to max_message_size (128), header was 8,
+        # so _skip_remaining = 128 - 8 = 120 bytes.
+        decoder.feed(b"\x00" * decoder._buffer._skip_remaining + normal_msg)
 
         # Now should be able to decode the normal message
         assert decoder.is_skipping is False

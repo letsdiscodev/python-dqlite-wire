@@ -146,9 +146,13 @@ class ReadBuffer:
         else:
             # Oversized message: discard what we have and track remaining
             # bytes to be discarded in subsequent feed() calls.
-            skip_now = min(total_size, available)
+            # Cap to max_message_size to prevent amplification attacks where
+            # an 8-byte header claiming a ~32 GiB body would cause that much
+            # legitimate data to be silently discarded.
+            effective_total = min(total_size, self._max_message_size)
+            skip_now = min(effective_total, available)
             self._pos += skip_now
-            self._skip_remaining = total_size - skip_now
+            self._skip_remaining = effective_total - skip_now
 
         self._maybe_compact()
         return self._skip_remaining == 0

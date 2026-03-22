@@ -158,7 +158,12 @@ class TestReadBuffer:
             buf.has_message()
 
     def test_skip_message_recovers_from_oversized(self) -> None:
-        """After skipping an oversized message, stream should not be corrupted."""
+        """After skipping an oversized message, stream should not be corrupted.
+
+        skip_message caps _skip_remaining to max_message_size to prevent
+        amplification attacks. The test feeds at most max_message_size bytes
+        of oversized body, then verifies the next message decodes correctly.
+        """
         import struct
 
         import pytest
@@ -168,32 +173,37 @@ class TestReadBuffer:
         buf = ReadBuffer(max_message_size=1024)
         # Header claiming a huge body: size_words=1000 (8000 bytes > 1024 limit)
         oversized_header = struct.pack("<IBBH", 1000, 0, 0, 0)
-        # Build oversized body + valid message after it
-        oversized_body = b"\xab" * (1000 * 8)
         valid_msg = LeaderResponse(node_id=1, address="node1:9001")
         valid_encoded = valid_msg.encode()
 
-        # Feed header + first chunk of oversized body
-        buf.feed(oversized_header + oversized_body[:500])
+        # Feed header + first chunk
+        buf.feed(oversized_header + b"\xab" * 500)
 
         # has_message should raise for oversized
         with pytest.raises(DecodeError, match="exceeds maximum"):
             buf.has_message()
 
-        # skip_message should return False — partial skip, not done yet
+        # skip_message should return False — partial skip
         assert buf.skip_message() is False
 
-        # Feed the rest of the oversized body + the valid message
-        buf.feed(oversized_body[500:] + valid_encoded)
+        # Feed enough bytes to complete the capped skip + valid message.
+        # _skip_remaining is capped to max_message_size (1024), and skip_message
+        # already consumed the 508 bytes in the buffer (8 header + 500 body),
+        # so _skip_remaining = 1024 - 508 = 516 bytes.
+        buf.feed(b"\xab" * 516 + valid_encoded)
 
-        # The oversized bytes should be discarded; valid message should be readable
+        # The capped oversized bytes should be discarded; valid message readable
         assert buf.has_message()
         data = buf.read_message()
         assert data is not None
         assert data == valid_encoded
 
     def test_skip_oversized_across_multiple_feeds(self) -> None:
-        """Oversized message bytes should be discarded across multiple feed() calls."""
+        """Oversized message bytes should be discarded across multiple feed() calls.
+
+        skip_message caps _skip_remaining to max_message_size, so only that
+        many bytes are discarded (not the full claimed body size).
+        """
         import struct
 
         import pytest
@@ -203,7 +213,6 @@ class TestReadBuffer:
         buf = ReadBuffer(max_message_size=64)
         # 200 words = 1600 bytes body, well over 64-byte limit
         oversized_header = struct.pack("<IBBH", 200, 0, 0, 0)
-        oversized_body = b"\xcc" * (200 * 8)
         valid_msg = LeaderRequest()
         valid_encoded = valid_msg.encode()
 
@@ -213,11 +222,13 @@ class TestReadBuffer:
             buf.has_message()
         assert buf.skip_message() is False
 
-        # Feed body in chunks
-        body = oversized_body
+        # Feed capped body in chunks (max_message_size=64, header was 8 bytes,
+        # so _skip_remaining = 64 - 8 = 56 bytes)
+        remaining = buf._skip_remaining
+        body = b"\xcc" * remaining
         while body:
-            chunk = body[:50]
-            body = body[50:]
+            chunk = body[:20]
+            body = body[20:]
             buf.feed(chunk)
 
         # Now feed the valid message
@@ -247,8 +258,9 @@ class TestReadBuffer:
         assert buf.skip_message() is False
         assert buf.is_skipping is True
 
-        # Feed remaining bytes to complete the skip
-        buf.feed(b"\x00" * (200 * 8))
+        # Feed enough bytes to complete the capped skip
+        # (max_message_size=64, header was 8, so _skip_remaining = 64 - 8 = 56)
+        buf.feed(b"\x00" * buf._skip_remaining)
         assert buf.is_skipping is False
 
     def test_clear_resets_skip_state(self) -> None:
@@ -351,6 +363,25 @@ class TestReadBuffer:
         assert buf.skip_message() is False
         # Buffer position should not have changed
         assert buf.available() == 24  # 8 header + 16 partial body
+
+    def test_skip_message_caps_remaining_to_max_message_size(self) -> None:
+        """skip_message should not set _skip_remaining beyond max_message_size.
+
+        A malicious header with size_words=0xFFFFFFFF claims a ~32 GiB body.
+        Without capping, _skip_remaining would be ~32 GiB, causing all
+        subsequent feed() calls to silently discard data for an extremely
+        long time (8-byte header → 32 GiB data loss amplification).
+        """
+        import struct
+
+        buf = ReadBuffer(max_message_size=1024)
+        # Craft header claiming ~32 GiB body
+        header = struct.pack("<IBBH", 0xFFFFFFFF, 0, 0, 0)
+        buf.feed(header)
+
+        buf.skip_message()
+        # _skip_remaining should be capped to max_message_size, not ~32 GiB
+        assert buf._skip_remaining <= buf._max_message_size
 
     def test_feed_compacts_consumed_data(self) -> None:
         """feed() should compact consumed data before extending the buffer.
