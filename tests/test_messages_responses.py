@@ -570,6 +570,124 @@ class TestRowsResponse:
             )
 
 
+class TestRowsResponseValueTypes:
+    """Full RowsResponse round-trips with BOOLEAN, UNIXTIME, ISO8601, and BLOB."""
+
+    def test_boolean_column(self) -> None:
+        """BOOLEAN (code 11) uses all 4 nibble bits — catches truncation bugs."""
+        resp = RowsResponse(
+            column_names=["flag"],
+            column_types=[ValueType.BOOLEAN],
+            rows=[[True], [False]],
+        )
+        data = resp.encode()
+        decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
+        assert decoded.rows == [[True], [False]]
+        assert decoded.column_types == [ValueType.BOOLEAN]
+
+    def test_unixtime_column(self) -> None:
+        """UNIXTIME (code 9) round-trips as raw int, not datetime."""
+        resp = RowsResponse(
+            column_names=["created_at"],
+            column_types=[ValueType.UNIXTIME],
+            row_types=[[ValueType.UNIXTIME], [ValueType.UNIXTIME]],
+            rows=[[1700000000], [0]],
+        )
+        data = resp.encode()
+        decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
+        assert decoded.rows == [[1700000000], [0]]
+        assert decoded.column_types == [ValueType.UNIXTIME]
+
+    def test_iso8601_column(self) -> None:
+        """ISO8601 values go through _parse_iso8601 on decode."""
+        from datetime import UTC, datetime
+
+        dt = datetime(2024, 6, 15, 10, 30, 0, tzinfo=UTC)
+        resp = RowsResponse(
+            column_names=["ts"],
+            column_types=[ValueType.ISO8601],
+            rows=[[dt]],
+        )
+        data = resp.encode()
+        decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
+        assert decoded.rows[0][0] == dt
+
+    def test_blob_column(self) -> None:
+        """BLOB has variable-length encoding with padding in row context."""
+        resp = RowsResponse(
+            column_names=["data"],
+            column_types=[ValueType.BLOB],
+            rows=[[b"\xde\xad\xbe\xef"], [b""]],
+        )
+        data = resp.encode()
+        decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
+        assert decoded.rows == [[b"\xde\xad\xbe\xef"], [b""]]
+
+    def test_mixed_all_types(self) -> None:
+        """Every value type in a single row exercises full encoding path."""
+        from datetime import UTC, datetime
+
+        dt = datetime(2024, 1, 1, tzinfo=UTC)
+        resp = RowsResponse(
+            column_names=["i", "f", "t", "b", "n", "ut", "iso", "bo"],
+            column_types=[
+                ValueType.INTEGER,
+                ValueType.FLOAT,
+                ValueType.TEXT,
+                ValueType.BLOB,
+                ValueType.NULL,
+                ValueType.UNIXTIME,
+                ValueType.ISO8601,
+                ValueType.BOOLEAN,
+            ],
+            row_types=[
+                [
+                    ValueType.INTEGER,
+                    ValueType.FLOAT,
+                    ValueType.TEXT,
+                    ValueType.BLOB,
+                    ValueType.NULL,
+                    ValueType.UNIXTIME,
+                    ValueType.ISO8601,
+                    ValueType.BOOLEAN,
+                ]
+            ],
+            rows=[
+                [42, 3.14, "hello", b"\x00\x01", None, 1700000000, dt, True],
+            ],
+        )
+        data = resp.encode()
+        decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
+        row = decoded.rows[0]
+        assert row[0] == 42
+        assert row[1] == 3.14
+        assert row[2] == "hello"
+        assert row[3] == b"\x00\x01"
+        assert row[4] is None
+        assert row[5] == 1700000000
+        assert row[6] == dt
+        assert row[7] is True
+
+    def test_blob_multiple_sizes(self) -> None:
+        """Multiple BLOB rows with different sizes verify padding/offset interplay."""
+        resp = RowsResponse(
+            column_names=["data"],
+            column_types=[ValueType.BLOB],
+            rows=[
+                [b""],  # empty
+                [b"x"],  # 1 byte, needs 7 pad
+                [b"12345678"],  # exactly 8 bytes, no pad
+                [b"123456789"],  # 9 bytes, needs 7 pad
+            ],
+        )
+        data = resp.encode()
+        decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
+        assert decoded.rows[0] == [b""]
+        assert decoded.rows[1] == [b"x"]
+        assert decoded.rows[2] == [b"12345678"]
+        assert decoded.rows[3] == [b"123456789"]
+
+
 class TestEmptyResponse:
     def test_encode(self) -> None:
         msg = EmptyResponse()

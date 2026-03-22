@@ -147,6 +147,24 @@ def decode_blob(data: bytes) -> tuple[bytes, int]:
     return data[8 : 8 + length], total_size
 
 
+def _format_datetime_iso8601(value: datetime.datetime) -> str:
+    """Format a datetime to ISO 8601 string matching Go's time format."""
+    formatted = value.strftime("%Y-%m-%d %H:%M:%S")
+    if value.microsecond:
+        formatted += f".{value.microsecond:06d}".rstrip("0")
+    utcoffset = value.utcoffset()
+    if utcoffset is not None:
+        total_seconds = int(utcoffset.total_seconds())
+        sign = "+" if total_seconds >= 0 else "-"
+        hours, remainder = divmod(abs(total_seconds), 3600)
+        minutes = remainder // 60
+        formatted += f"{sign}{hours:02d}:{minutes:02d}"
+    else:
+        # Naive datetime: assume UTC to match Go's always-offset format
+        formatted += "+00:00"
+    return formatted
+
+
 def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes, ValueType]:
     """Encode a Python value to wire format.
 
@@ -165,21 +183,7 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             value_type = ValueType.FLOAT
         elif isinstance(value, datetime.datetime):
             value_type = ValueType.ISO8601
-            # Format to match Go's time format: "2006-01-02 15:04:05.999999999-07:00"
-            formatted = value.strftime("%Y-%m-%d %H:%M:%S")
-            if value.microsecond:
-                formatted += f".{value.microsecond:06d}".rstrip("0")
-            utcoffset = value.utcoffset()
-            if utcoffset is not None:
-                total_seconds = int(utcoffset.total_seconds())
-                sign = "+" if total_seconds >= 0 else "-"
-                hours, remainder = divmod(abs(total_seconds), 3600)
-                minutes = remainder // 60
-                formatted += f"{sign}{hours:02d}:{minutes:02d}"
-            else:
-                # Naive datetime: assume UTC to match Go's always-offset format
-                formatted += "+00:00"
-            value = formatted
+            value = _format_datetime_iso8601(value)
         elif isinstance(value, datetime.date):
             # Must come after datetime.datetime check (datetime is a subclass of date)
             value_type = ValueType.ISO8601
@@ -206,6 +210,13 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             raise EncodeError(f"Expected int or float for FLOAT, got {type(value).__name__}")
         return encode_double(float(value)), value_type
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
+        # ISO8601 accepts datetime objects and converts them to string.
+        # This is needed when encode_row_values passes a datetime with
+        # explicit ISO8601 type (the auto-inference path converts earlier).
+        if value_type == ValueType.ISO8601 and isinstance(value, datetime.datetime):
+            value = _format_datetime_iso8601(value)
+        elif value_type == ValueType.ISO8601 and isinstance(value, datetime.date):
+            value = value.isoformat()
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
         return encode_text(value), value_type
