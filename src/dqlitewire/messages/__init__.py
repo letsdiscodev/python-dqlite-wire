@@ -30,6 +30,7 @@ from dqlitewire.messages.responses import (
     FilesResponse,
     LeaderResponse,
     MetadataResponse,
+    NodeInfo,
     ResultResponse,
     RowsResponse,
     ServersResponse,
@@ -74,4 +75,5 @@ __all__ = [
     "FilesResponse",
     "ServersResponse",
     "MetadataResponse",
+    "NodeInfo",
 ]

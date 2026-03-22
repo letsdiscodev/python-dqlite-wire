@@ -117,3 +117,17 @@ class TestRequestTypeValues:
         should include it.
         """
         assert RequestType.CONNECT == 11
+
+
+class TestPublicExports:
+    """Verify important types are importable from public API paths."""
+
+    def test_nodeinfo_importable_from_messages(self) -> None:
+        """NodeInfo should be importable from dqlitewire.messages."""
+        from dqlitewire.messages import NodeInfo
+
+        assert NodeInfo is not None
+        # Verify it's the same class used by ServersResponse
+        from dqlitewire.messages.responses import NodeInfo as DirectNodeInfo
+
+        assert NodeInfo is DirectNodeInfo
