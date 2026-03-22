@@ -513,3 +513,23 @@ class TestRequestFieldValidation:
         ClientRequest(client_id=2**64 - 1)
         HeartbeatRequest(timestamp=0)
         OpenRequest(name="test.db", flags=0, vfs="")
+
+    def test_bool_rejected_for_uint32_db_id(self) -> None:
+        """Bool must not be silently accepted as a uint32 field."""
+        import pytest
+
+        with pytest.raises(TypeError, match="db_id must be int"):
+            ExecRequest(db_id=True, stmt_id=0)
+
+    def test_bool_rejected_for_uint32_stmt_id(self) -> None:
+        import pytest
+
+        with pytest.raises(TypeError, match="stmt_id must be int"):
+            ExecRequest(db_id=0, stmt_id=False)
+
+    def test_bool_rejected_for_uint64_client_id(self) -> None:
+        """Bool must not be silently accepted as a uint64 field."""
+        import pytest
+
+        with pytest.raises(TypeError, match="client_id must be int"):
+            ClientRequest(client_id=True)

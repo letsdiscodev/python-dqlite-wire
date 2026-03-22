@@ -272,6 +272,17 @@ class TestBlob:
             decoded, _ = decode_blob(encode_blob(blob))
             assert decoded == blob
 
+    def test_decode_blob_too_short_for_length(self) -> None:
+        """decode_blob with < 8 bytes should raise DecodeError."""
+        with pytest.raises(DecodeError, match="Not enough data for blob length"):
+            decode_blob(b"\x00" * 7)
+
+    def test_decode_blob_truncated_data(self) -> None:
+        """decode_blob with valid length prefix but insufficient data."""
+        data = encode_uint64(100) + b"\x00" * 10  # claims 100 bytes, only has 10
+        with pytest.raises(DecodeError, match="Not enough data for blob"):
+            decode_blob(data)
+
 
 class TestValue:
     def test_encode_integer(self) -> None:
@@ -708,3 +719,21 @@ class TestValue:
     def test_encode_value_null_type_with_string_raises(self) -> None:
         with pytest.raises(EncodeError, match="Cannot encode non-None value"):
             encode_value("hello", ValueType.NULL)
+
+    def test_parse_iso8601_rejects_garbage(self) -> None:
+        """Unparseable ISO 8601 string should raise DecodeError."""
+        from dqlitewire.types import _parse_iso8601
+
+        with pytest.raises(DecodeError, match="Cannot parse ISO 8601 datetime"):
+            _parse_iso8601("not-a-date")
+
+    def test_encode_value_bool_as_explicit_integer(self) -> None:
+        """Bool with explicit ValueType.INTEGER should coerce to int."""
+        encoded, vtype = encode_value(True, ValueType.INTEGER)
+        assert vtype == ValueType.INTEGER
+        assert decode_int64(encoded) == 1
+
+    def test_encode_value_false_as_explicit_integer(self) -> None:
+        encoded, vtype = encode_value(False, ValueType.INTEGER)
+        assert vtype == ValueType.INTEGER
+        assert decode_int64(encoded) == 0

@@ -392,6 +392,27 @@ class TestRowsResponse:
         ):
             RowsResponse.decode_body(body)
 
+    def test_decode_rows_continuation_rejects_non_list_row_header(self) -> None:
+        """Same guard as decode_body but for the continuation path."""
+        from unittest.mock import patch
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_uint64
+
+        # Build valid continuation body (rows only, no column header)
+        body = encode_row_header([ValueType.INTEGER])
+        body += encode_row_values([42], [ValueType.INTEGER])
+        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
+
+        with (
+            patch("dqlitewire.messages.responses.decode_row_header", return_value=("bad", 8)),
+            pytest.raises(DecodeError, match="Expected column types list"),
+        ):
+            RowsResponse.decode_rows_continuation(body, column_names=["id"], column_count=1)
+
     def test_truncated_body_without_marker_raises(self) -> None:
         """Body exhausted without DONE/PART marker must raise DecodeError."""
         import pytest
