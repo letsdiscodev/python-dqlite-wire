@@ -423,41 +423,56 @@ class TestValue:
         assert decoded == datetime.datetime(2024, 1, 15, 10, 30, 45, tzinfo=datetime.UTC)
 
     def test_encode_decode_unixtime(self) -> None:
-        """Test Unix timestamp decodes to datetime, matching Go's time.Unix."""
-        import datetime
-
+        """UNIXTIME should decode to raw int, matching Go's getInt64()."""
         timestamp = 1705312245
         encoded, vtype = encode_value(timestamp, ValueType.UNIXTIME)
         assert vtype == ValueType.UNIXTIME
         decoded, _ = decode_value(encoded, ValueType.UNIXTIME)
-        assert isinstance(decoded, datetime.datetime)
-        expected = datetime.datetime(2024, 1, 15, 9, 50, 45, tzinfo=datetime.UTC)
-        assert decoded == expected
+        assert isinstance(decoded, int)
+        assert decoded == timestamp
 
     def test_encode_decode_unixtime_zero(self) -> None:
-        """Unix timestamp 0 should decode to epoch."""
-        import datetime
-
+        """Unix timestamp 0 should decode to integer 0."""
         encoded, _ = encode_value(0, ValueType.UNIXTIME)
         decoded, _ = decode_value(encoded, ValueType.UNIXTIME)
-        assert isinstance(decoded, datetime.datetime)
-        assert decoded == datetime.datetime(1970, 1, 1, tzinfo=datetime.UTC)
+        assert isinstance(decoded, int)
+        assert decoded == 0
 
     def test_encode_decode_unixtime_negative(self) -> None:
-        """Negative Unix timestamps (before epoch) should decode."""
-        import datetime
-
+        """Negative Unix timestamps should decode to negative int."""
         encoded, _ = encode_value(-86400, ValueType.UNIXTIME)
         decoded, _ = decode_value(encoded, ValueType.UNIXTIME)
-        assert isinstance(decoded, datetime.datetime)
-        assert decoded == datetime.datetime(1969, 12, 31, tzinfo=datetime.UTC)
+        assert isinstance(decoded, int)
+        assert decoded == -86400
 
-    def test_unixtime_extreme_values_raise_decode_error(self) -> None:
-        """Extreme UNIXTIME values outside datetime range should raise DecodeError, not OSError."""
+    def test_unixtime_extreme_values_roundtrip(self) -> None:
+        """Extreme UNIXTIME values should roundtrip as raw ints (no datetime conversion)."""
         for timestamp in [2**63 - 1, -(2**63)]:
             data = encode_int64(timestamp)
-            with pytest.raises(DecodeError, match="outside the representable datetime range"):
-                decode_value(data, ValueType.UNIXTIME)
+            decoded, consumed = decode_value(data, ValueType.UNIXTIME)
+            assert isinstance(decoded, int)
+            assert decoded == timestamp
+            assert consumed == 8
+
+    def test_unixtime_roundtrip_preserves_type(self) -> None:
+        """UNIXTIME encode→decode should return an int, matching Go's getInt64().
+
+        Previously, decode returned a datetime.datetime, which when re-encoded
+        would auto-infer ISO8601 — changing the value type and wire format.
+        """
+        timestamp = 1710000000
+        encoded, vtype = encode_value(timestamp, ValueType.UNIXTIME)
+        assert vtype == ValueType.UNIXTIME
+
+        decoded, consumed = decode_value(encoded, ValueType.UNIXTIME)
+        assert consumed == 8
+        assert isinstance(decoded, int)
+        assert decoded == timestamp
+
+        # Re-encoding with explicit UNIXTIME should produce identical bytes
+        re_encoded, re_vtype = encode_value(decoded, ValueType.UNIXTIME)
+        assert re_vtype == ValueType.UNIXTIME
+        assert re_encoded == encoded
 
     def test_encode_datetime_with_explicit_unixtime_raises_encode_error(self) -> None:
         """Passing a datetime with ValueType.UNIXTIME should raise EncodeError, not TypeError."""
