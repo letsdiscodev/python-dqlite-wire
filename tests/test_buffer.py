@@ -168,6 +168,109 @@ class TestReadBuffer:
         with pytest.raises(DecodeError, match="exceeds maximum"):
             buf.read_message()
 
+    def test_peek_header_validates_size(self) -> None:
+        """peek_header() must reject oversized headers, matching has_message().
+
+        peek_header() is a sibling inspection API; returning a raw unvalidated
+        size_words lets callers accidentally trust an attacker-controlled value
+        (e.g. preallocate based on it). Fail loudly and consistently.
+        """
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        # size_words=1000 -> 8000-byte body > 1024 limit
+        header = struct.pack("<IBBH", 1000, 0, 0, 0)
+        buf.feed(header)
+
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.peek_header()
+
+    def test_peek_header_on_valid_header(self) -> None:
+        """peek_header() returns the parsed tuple for a valid header and
+        does not advance _pos.
+        """
+        import struct
+
+        buf = ReadBuffer(max_message_size=1024)
+        # size_words=1 -> 8-byte body, type=5, schema=0, within limit
+        header = struct.pack("<IBBH", 1, 5, 0, 0)
+        buf.feed(header)
+        result = buf.peek_header()
+        assert result == (1, 5, 0)
+        # Non-consuming — a second peek returns the same tuple.
+        assert buf.peek_header() == (1, 5, 0)
+
+    def test_peek_header_partial_returns_none(self) -> None:
+        """With fewer than HEADER_SIZE bytes buffered, peek_header() returns None."""
+        buf = ReadBuffer()
+        buf.feed(b"\x00\x00")  # only 2 bytes
+        assert buf.peek_header() is None
+
+    def test_peek_header_does_not_advance_pos(self) -> None:
+        """peek_header() must leave the buffer position untouched."""
+        import struct
+
+        buf = ReadBuffer(max_message_size=1024)
+        buf.feed(struct.pack("<IBBH", 1, 5, 0, 0))
+        assert buf.available() == 8
+        buf.peek_header()
+        assert buf.available() == 8
+        buf.peek_header()
+        assert buf.available() == 8
+
+    def test_peek_header_at_exact_size_boundary(self) -> None:
+        """A header whose total_size equals max_message_size must be accepted;
+        one byte over must raise. Locks in the off-by-one boundary.
+        """
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # max_message_size = 16 means HEADER_SIZE (8) + 1 word (8) is the
+        # exact boundary. size_words=1 -> total_size=16 -> ok.
+        buf_ok = ReadBuffer(max_message_size=16)
+        buf_ok.feed(struct.pack("<IBBH", 1, 0, 0, 0))
+        assert buf_ok.peek_header() == (1, 0, 0)
+
+        # size_words=2 -> total_size=24 -> over the limit by 8.
+        buf_over = ReadBuffer(max_message_size=16)
+        buf_over.feed(struct.pack("<IBBH", 2, 0, 0, 0))
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf_over.peek_header()
+
+    def test_peek_header_and_has_message_disagree_on_oversized(self) -> None:
+        """Pinning test for the deliberate asymmetry between the two
+        inspection methods on the same buffer.
+
+        has_message() is total (returns True for oversized so the consume
+        call surfaces the error). peek_header() raises immediately because
+        its return value is an attacker-controlled integer that callers
+        might use for allocation. This test locks in the contract so a
+        future refactor that "fixes the inconsistency" by making one
+        match the other has to confront the trade-off explicitly.
+        """
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        buf.feed(struct.pack("<IBBH", 1000, 0, 0, 0))  # 8000 > 1024
+
+        # Predicate: total, returns True.
+        assert buf.has_message() is True
+
+        # Inspection-with-payload: raises.
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.peek_header()
+
     def test_rejects_oversized_message(self) -> None:
         """Oversized messages surface at read_message(), not has_message()."""
         import struct

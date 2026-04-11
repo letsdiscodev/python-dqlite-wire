@@ -123,7 +123,20 @@ class ReadBuffer:
     def peek_header(self) -> tuple[int, int, int] | None:
         """Peek at the message header without consuming it.
 
-        Returns (size_in_words, message_type, schema_version) or None if not enough data.
+        Returns (size_in_words, message_type, schema_version) or None if not
+        enough data. Raises ``DecodeError`` if the header claims a total
+        message size larger than ``max_message_size``.
+
+        Note the deliberate asymmetry with ``has_message()``: that predicate
+        is total (returns ``True`` for oversized so the documented
+        ``while has_message(): decode()`` loop proceeds to the consume call,
+        which then raises). ``peek_header()`` instead raises immediately
+        because its return value is an attacker-controlled integer that a
+        caller might use directly for allocation, timeout, or routing
+        decisions — silently returning an unbounded value would defeat the
+        ``max_message_size`` guard the caller is presumably relying on. The
+        error message and exception type match ``read_message()`` so the
+        consume-side recovery path (``skip_message()``) applies the same way.
         """
         available = len(self._data) - self._pos
 
@@ -131,6 +144,12 @@ class ReadBuffer:
             return None
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
+        total_size = HEADER_SIZE + (size_words * WORD_SIZE)
+        if total_size > self._max_message_size:
+            raise DecodeError(
+                f"Message size {total_size} bytes exceeds maximum {self._max_message_size}"
+            )
+
         msg_type = self._data[self._pos + 4]
         schema_version = self._data[self._pos + 5]
 
