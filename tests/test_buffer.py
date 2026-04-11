@@ -41,6 +41,51 @@ class TestWriteBuffer:
         assert len(buf) == 0
         assert buf.getvalue() == b""
 
+    def test_write_padded_no_interleaved_tearing_under_contention(self) -> None:
+        """Regression for issue 034.
+
+        ``write_padded`` used to do two separate ``bytearray.extend`` calls
+        (one for the payload, one for the NUL padding). Under concurrent
+        access a thread switch between the two calls could land another
+        thread's payload bytes inside the first thread's padding window,
+        producing a torn word like ``b'BBBBBAAA'`` instead of a clean
+        ``b'AAAAA\\x00\\x00\\x00'`` or ``b'BBBBB\\x00\\x00\\x00'``.
+
+        The fix is to build the padded bytes locally and emit a single
+        extend, so no thread can interleave between the payload and its
+        padding. This test drives the race at a tight switch interval and
+        asserts every output word is one of the two expected shapes.
+        """
+        import sys
+        import threading
+
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(0.0000001)
+        try:
+            buf = WriteBuffer()
+
+            def worker(payload: bytes) -> None:
+                for _ in range(5000):
+                    buf.write_padded(payload)
+
+            t1 = threading.Thread(target=worker, args=(b"A" * 5,))
+            t2 = threading.Thread(target=worker, args=(b"B" * 5,))
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+
+            out = buf.getvalue()
+            assert len(out) == 2 * 5000 * 8
+            for i in range(0, len(out), 8):
+                word = out[i : i + 8]
+                assert word in (
+                    b"AAAAA\x00\x00\x00",
+                    b"BBBBB\x00\x00\x00",
+                ), f"torn word at offset {i}: {bytes(word)!r}"
+        finally:
+            sys.setswitchinterval(old_interval)
+
 
 class TestReadBuffer:
     def test_empty(self) -> None:

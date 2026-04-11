@@ -15,11 +15,20 @@ class WriteBuffer:
         self._data.extend(data)
 
     def write_padded(self, data: bytes) -> None:
-        """Append data with padding to word boundary."""
-        self._data.extend(data)
+        """Append data with padding to word boundary.
+
+        The padded bytes are built locally and emitted via a single
+        ``bytearray.extend`` so that under accidental concurrent misuse
+        (see issue 021 for the single-owner contract) two threads'
+        payloads and padding cannot interleave. This still does not make
+        ``WriteBuffer`` thread-safe in any strong sense, but it removes
+        the torn payload/pad split that used to be visible to callers.
+        """
         remainder = len(data) % WORD_SIZE
         if remainder:
-            self._data.extend(b"\x00" * (WORD_SIZE - remainder))
+            self._data.extend(data + b"\x00" * (WORD_SIZE - remainder))
+        else:
+            self._data.extend(data)
 
     def getvalue(self) -> bytes:
         """Get buffer contents."""
