@@ -161,6 +161,13 @@ class ReadBuffer:
 
         # Read size from header (first 4 bytes = size in words)
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
+        # Torn-read sanity (issue 051): if the slice was widened by
+        # a concurrent realloc, report "something to consume" so the
+        # caller's while-loop proceeds to read_message(), which then
+        # poisons. has_message() itself is a total predicate and
+        # must not raise.
+        if size_words > 0xFFFFFFFF:
+            return True
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
@@ -196,6 +203,23 @@ class ReadBuffer:
             return None
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
+        # Sanity check for torn reads (issue 051). The wire size
+        # field is exactly 4 bytes (uint32 little-endian), so any
+        # value > 0xFFFFFFFF cannot come from a well-formed header
+        # — it can only come from a ``bytearray`` slice that
+        # observed torn ``ob_size``/``ob_start`` during a concurrent
+        # realloc on a free-threaded build, returning more than 4
+        # bytes. Distinguish this from legitimate oversized messages
+        # so the non-poisoning ``DecodeError`` recovery contract
+        # still applies to real wire-oversized messages while torn
+        # reads poison the buffer.
+        if size_words > 0xFFFFFFFF:
+            err = DecodeError(
+                f"torn header read: size_words={size_words:#x} (>32 bits, "
+                "indicates concurrent misuse on a free-threaded build)"
+            )
+            self.poison(err)
+            raise err
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
         if total_size > self._max_message_size:
             # Format size in hex: under concurrent misuse (see issue 033)
@@ -225,6 +249,23 @@ class ReadBuffer:
             return None
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
+        # Sanity check for torn reads (issue 051). The wire size
+        # field is exactly 4 bytes (uint32 little-endian), so any
+        # value > 0xFFFFFFFF cannot come from a well-formed header
+        # — it can only come from a ``bytearray`` slice that
+        # observed torn ``ob_size``/``ob_start`` during a concurrent
+        # realloc on a free-threaded build, returning more than 4
+        # bytes. Distinguish this from legitimate oversized messages
+        # so the non-poisoning ``DecodeError`` recovery contract
+        # still applies to real wire-oversized messages while torn
+        # reads poison the buffer.
+        if size_words > 0xFFFFFFFF:
+            err = DecodeError(
+                f"torn header read: size_words={size_words:#x} (>32 bits, "
+                "indicates concurrent misuse on a free-threaded build)"
+            )
+            self.poison(err)
+            raise err
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
@@ -266,6 +307,23 @@ class ReadBuffer:
             return False
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
+        # Sanity check for torn reads (issue 051). The wire size
+        # field is exactly 4 bytes (uint32 little-endian), so any
+        # value > 0xFFFFFFFF cannot come from a well-formed header
+        # — it can only come from a ``bytearray`` slice that
+        # observed torn ``ob_size``/``ob_start`` during a concurrent
+        # realloc on a free-threaded build, returning more than 4
+        # bytes. Distinguish this from legitimate oversized messages
+        # so the non-poisoning ``DecodeError`` recovery contract
+        # still applies to real wire-oversized messages while torn
+        # reads poison the buffer.
+        if size_words > 0xFFFFFFFF:
+            err = DecodeError(
+                f"torn header read: size_words={size_words:#x} (>32 bits, "
+                "indicates concurrent misuse on a free-threaded build)"
+            )
+            self.poison(err)
+            raise err
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size <= self._max_message_size:

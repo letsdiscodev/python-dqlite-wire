@@ -323,3 +323,109 @@ class TestFeedSignalSafety:
         assert not buf.is_poisoned
         assert buf.available() == 10
         assert buf.read_bytes(10) == b"helloworld"
+
+
+class _TornSizeBytearray(bytearray):
+    """Simulates a free-threaded torn bytearray read.
+
+    On free-threaded CPython (3.13t), ``bytearray.__getitem__`` can
+    observe ``ob_size``/``ob_start`` inconsistently during a
+    concurrent realloc/extend from another thread, producing a slice
+    wider than the caller asked for. Under the GIL this is
+    structurally impossible, so we synthesize the observable symptom
+    by subclassing bytearray and widening only the 4-byte header
+    size-field slice. All other slices (body reads, etc.) pass
+    through unchanged.
+
+    The widened slice is 9 bytes: the original 4 plus 5 extra
+    ``\\xff`` bytes. ``int.from_bytes(..., "little")`` on that
+    produces a value whose low 32 bits match the wire size field
+    but whose total is > ``0xFFFFFFFF``, which is the structurally
+    impossible condition that issue 051's sanity check is meant to
+    detect.
+    """
+
+    def __getitem__(self, key: Any) -> Any:
+        result = super().__getitem__(key)
+        if isinstance(key, slice):
+            start, stop, _ = key.indices(len(self))
+            if stop - start == 4:
+                return bytes(result) + b"\xff\xff\xff\xff\xff"
+        return result
+
+
+class TestTornHeaderSizeSanityCheck:
+    """Regression tests for issue 051.
+
+    On free-threaded CPython, concurrent misuse of a ``ReadBuffer``
+    can cause the 4-byte header-size slice to observably return more
+    than 4 bytes (torn read during a realloc). The resulting
+    ``int.from_bytes`` value is a Python bigint wider than 32 bits —
+    structurally impossible for a wire-legal ``size_words`` field
+    (which is uint32 little-endian). The package already knew about
+    this (issue 033 added hex formatting to avoid the
+    bigint-to-decimal cap), but the torn-read case was routed
+    through the non-poisoning ``DecodeError`` path meant for
+    legitimate oversized server messages, leaving the caller free to
+    call ``skip_message()`` on a buffer whose offset is unknowable.
+
+    The fix: any ``size_words > 0xFFFFFFFF`` is a torn-read indicator,
+    not a legitimate oversized message. Poison the buffer and raise a
+    diagnostic ``DecodeError`` identifying the torn read.
+
+    These tests use a ``bytearray`` subclass to synthesize the torn
+    slice on GIL builds. On a real free-threaded build the symptom
+    arises organically from concurrent access.
+    """
+
+    def _buf_with_torn_header(self) -> ReadBuffer:
+        buf = ReadBuffer()
+        # Put a wire-legal size_words=1 in the header plus 8 bytes of
+        # body. The _TornSizeBytearray will widen the 4-byte slice to
+        # 9 bytes on read, producing a size_words > 32 bits.
+        buf._data = _TornSizeBytearray(b"\x01\x00\x00\x00" + b"\x00" * 12)
+        return buf
+
+    def test_read_message_poisons_on_torn_header(self) -> None:
+        buf = self._buf_with_torn_header()
+        with pytest.raises(DecodeError, match="torn"):
+            buf.read_message()
+        assert buf.is_poisoned, (
+            "torn header read must poison the buffer so subsequent "
+            "callers fail fast rather than calling skip_message() on "
+            "an unknowable offset"
+        )
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.read_message()
+
+    def test_peek_header_poisons_on_torn_header(self) -> None:
+        buf = self._buf_with_torn_header()
+        with pytest.raises(DecodeError, match="torn"):
+            buf.peek_header()
+        assert buf.is_poisoned
+
+    def test_skip_message_poisons_on_torn_header(self) -> None:
+        buf = self._buf_with_torn_header()
+        with pytest.raises(DecodeError, match="torn"):
+            buf.skip_message()
+        assert buf.is_poisoned
+
+    def test_wire_legal_max_size_still_routes_through_oversized_path(self) -> None:
+        """Counter-test: a legitimate ``size_words = 0xFFFFFFFF`` (a
+        pathological but structurally-valid value) must NOT trip the
+        torn-read sanity check — it must route through the existing
+        non-poisoning ``DecodeError`` path so ``skip_message`` can
+        recover. The check is strictly ``> 0xFFFFFFFF``.
+        """
+        buf = ReadBuffer()
+        # A real, non-torn 4-byte size field at its maximum value.
+        buf._data = bytearray(b"\xff\xff\xff\xff" + b"\x00" * 4)
+        with pytest.raises(DecodeError) as ei:
+            buf.read_message()
+        assert "torn" not in str(ei.value), (
+            "wire-legal size_words=0xFFFFFFFF must not be misdiagnosed as torn"
+        )
+        assert not buf.is_poisoned, (
+            "oversized-but-wire-legal DecodeError must remain non-poisoning "
+            "to preserve the skip_message() recovery contract"
+        )
