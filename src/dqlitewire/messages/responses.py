@@ -219,6 +219,31 @@ class RowsResponse(Message):
     rows: list[list[Any]] = field(default_factory=list)
     has_more: bool = False
 
+    def __post_init__(self) -> None:
+        # Defensive copies (issue 042). Three sources of aliasing
+        # motivate this:
+        #
+        # 1. ``decode_body`` / ``decode_rows_continuation`` store
+        #    ``column_types = types`` where ``types`` is also stored
+        #    as ``all_row_types[0]``, so without a copy
+        #    ``self.column_types is self.row_types[0]`` and mutating
+        #    one silently rewrites the other.
+        #
+        # 2. ``MessageDecoder.decode_continuation`` and
+        #    ``decode_rows_continuation`` pass the caller's
+        #    ``column_names`` list by reference into every
+        #    continuation response; any mutation on one response
+        #    propagates to every sibling.
+        #
+        # 3. User code constructing ``RowsResponse`` directly with a
+        #    list they intend to keep mutating elsewhere.
+        #
+        # Copying here catches all three sites uniformly and survives
+        # future construction sites. The cost is two list allocations
+        # per response — negligible compared to the row payload.
+        self.column_names = list(self.column_names)
+        self.column_types = list(self.column_types)
+
     def _get_row_types(self, row_idx: int, row: list[Any]) -> list[ValueType]:
         """Get types for a row: from row_types, column_types, or inferred."""
         if self.row_types and row_idx < len(self.row_types):

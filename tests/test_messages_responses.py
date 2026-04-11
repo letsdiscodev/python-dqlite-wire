@@ -150,6 +150,88 @@ class TestResultResponse:
         assert decoded.rows_affected == 0
 
 
+class TestRowsResponseAliasing:
+    """Regression tests for issue 042.
+
+    ``RowsResponse`` used to store caller-supplied ``column_names`` and
+    ``column_types`` lists by reference, creating two kinds of silent
+    aliasing:
+
+    1. ``column_types`` was stored as ``all_row_types[0]`` inside
+       ``decode_body`` / ``decode_rows_continuation`` via
+       ``if not column_types: column_types = types``. The returned
+       object then had ``r.column_types is r.row_types[0]``, so
+       mutating one list silently rewrote the other.
+    2. ``column_names`` was passed through ``decode_rows_continuation``
+       unchanged and attached directly to every continuation
+       ``RowsResponse``. Callers who mutated ``msg.column_names`` on
+       one continuation silently mutated every sibling continuation
+       AND the original response.
+
+    The fix copies both lists on construction via ``__post_init__``.
+    """
+
+    def test_column_types_is_not_aliased_to_row_types_first(self) -> None:
+        """After decoding, ``column_types`` must be a distinct list
+        object from ``row_types[0]`` so mutation of one does not
+        propagate to the other.
+        """
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[[1, "alice"], [2, "bob"]],
+            has_more=False,
+        )
+        encoded = msg.encode()
+        decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+
+        assert decoded.row_types  # sanity: rows were decoded with types
+        assert decoded.column_types is not decoded.row_types[0], (
+            "column_types must not share identity with row_types[0]"
+        )
+
+        # Prove independence by mutation.
+        decoded.column_types[0] = ValueType.NULL
+        assert decoded.row_types[0][0] != ValueType.NULL
+
+    def test_column_names_defensive_copy_on_construct(self) -> None:
+        """A caller who supplies ``column_names`` to RowsResponse and
+        later mutates the source list must not see the change
+        reflected in the returned object.
+        """
+        names_in = ["a", "b", "c"]
+        msg = RowsResponse(
+            column_names=names_in,
+            column_types=[ValueType.INTEGER, ValueType.TEXT, ValueType.BLOB],
+            row_types=[],
+            rows=[],
+            has_more=False,
+        )
+
+        names_in.append("d")
+
+        assert msg.column_names == ["a", "b", "c"], (
+            "RowsResponse.column_names must not alias the caller's list"
+        )
+
+    def test_column_types_defensive_copy_on_construct(self) -> None:
+        """Same for column_types passed into the constructor."""
+        types_in = [ValueType.INTEGER, ValueType.TEXT]
+        msg = RowsResponse(
+            column_names=["a", "b"],
+            column_types=types_in,
+            row_types=[],
+            rows=[],
+            has_more=False,
+        )
+
+        types_in[0] = ValueType.BLOB
+
+        assert msg.column_types[0] == ValueType.INTEGER, (
+            "RowsResponse.column_types must not alias the caller's list"
+        )
+
+
 class TestRowsResponse:
     def test_empty_result(self) -> None:
         msg = RowsResponse(
