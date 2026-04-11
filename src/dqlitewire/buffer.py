@@ -284,10 +284,43 @@ class ReadBuffer:
         return bytes(self._data[self._pos : self._pos + n])
 
     def _maybe_compact(self) -> None:
-        """Compact buffer if we've consumed a lot."""
-        if self._pos > 4096:
-            self._data = self._data[self._pos :]
+        """Compact buffer if we've consumed a lot.
+
+        Signal-safety note (issue 037): this method mutates two
+        attributes — ``_data`` and ``_pos`` — which compile to two
+        ``STORE_ATTR`` bytecodes. CPython checks for pending signals
+        at bytecode line transitions, so a ``KeyboardInterrupt`` (or
+        any ``PyErr_SetAsyncExc`` delivery) landing between the two
+        stores used to leave the buffer with a freshly compacted
+        ``_data`` but a stale ``_pos`` still pointing at the old
+        offset. ``available()`` would return a negative number, reads
+        would silently return nonsense, and no poison fired because
+        no exception originated inside the buffer — the interrupt was
+        purely external. A single-owner caller pressing Ctrl-C during
+        a busy decode loop would end up with silent message dropout.
+
+        We cannot make the two stores atomic at the Python level, but
+        we can catch ``BaseException`` and poison so that the next
+        caller fails fast with ``ProtocolError`` instead of reading
+        from an inconsistent offset.
+        """
+        if self._pos <= 4096:
+            return
+        try:
+            new_data = self._data[self._pos :]
+            self._data = new_data
             self._pos = 0
+        except BaseException as e:
+            # Any torn state here is unrecoverable — the next caller
+            # MUST see poison, not a silently inconsistent buffer.
+            # ``poison()`` is first-error-wins and its body is a
+            # single ``STORE_ATTR`` so cannot itself be split.
+            if self._poisoned is None:
+                if isinstance(e, Exception):
+                    self._poisoned = e
+                else:
+                    self._poisoned = RuntimeError(f"buffer compact interrupted: {type(e).__name__}")
+            raise
 
     def available(self) -> int:
         """Return number of bytes available to read."""
