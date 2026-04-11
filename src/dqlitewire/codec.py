@@ -285,8 +285,10 @@ class MessageDecoder:
     def decode_bytes(self, data: bytes) -> Message:
         """Decode a message from bytes.
 
+        Raises ProtocolError if the decoder is poisoned.
         Raises ProtocolError if called on a request decoder before decode_handshake().
         """
+        self._buffer._check_poisoned()
         if not self._handshake_done:
             raise ProtocolError(
                 "Protocol handshake not yet received. "

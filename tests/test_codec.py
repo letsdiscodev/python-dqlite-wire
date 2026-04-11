@@ -1141,6 +1141,37 @@ class TestDecoderPoisonedState:
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.decode()
 
+    def test_decode_bytes_honors_poison(self) -> None:
+        """Regression for issue 039.
+
+        ``MessageDecoder.decode_bytes`` is a public method that parses a
+        single caller-supplied bytes object. ``decode()`` goes through a
+        poison gate before calling ``decode_bytes``, but a user who
+        catches ``ProtocolError`` from ``decode()`` and tries to
+        "resume" by feeding the raw bytes to ``decode_bytes`` directly
+        bypasses the poison contract entirely. Any public entry point
+        that consumes bytes and runs parser code must refuse to run on
+        a poisoned decoder; ``decode_bytes`` was the last gap.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._buffer.poison(DecodeError("original cause"))
+
+        # Build a well-formed message that would otherwise decode fine.
+        msg = LeaderResponse(node_id=1, address="x:1").encode()
+        with pytest.raises(ProtocolError, match="poisoned") as ei:
+            decoder.decode_bytes(msg)
+        assert isinstance(ei.value.__cause__, DecodeError)
+
+        # decode_message() helper creates a fresh decoder on every call,
+        # so it must still work even though the dispatch name overlaps.
+        from dqlitewire.codec import decode_message
+
+        fresh = decode_message(msg, is_request=False)
+        assert isinstance(fresh, LeaderResponse)
+        assert fresh.node_id == 1
+
     def test_poison_is_first_error_wins(self) -> None:
         """ReadBuffer.poison() must NOT overwrite an existing poison error.
         First error wins so the original __cause__ remains visible.
