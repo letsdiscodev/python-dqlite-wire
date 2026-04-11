@@ -67,7 +67,14 @@ class ReadBuffer:
         self._data.extend(data)
 
     def has_message(self) -> bool:
-        """Check if a complete message is available."""
+        """Check if a complete message is available.
+
+        This predicate is total: it never raises. An oversized header
+        (claiming a body larger than ``max_message_size``) is reported as
+        ``True`` so that the caller's ``while decoder.has_message(): ...``
+        loop proceeds to the consume call, where the error actually surfaces.
+        The raise lives in ``read_message()`` / ``skip_message()``, not here.
+        """
         available = len(self._data) - self._pos
 
         if available < HEADER_SIZE:
@@ -78,9 +85,8 @@ class ReadBuffer:
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
-            raise DecodeError(
-                f"Message size {total_size} bytes exceeds maximum {self._max_message_size}"
-            )
+            # Report "something to consume" — the consume call will raise.
+            return True
 
         return available >= total_size
 
@@ -104,12 +110,23 @@ class ReadBuffer:
         """Read a complete message from the buffer.
 
         Returns the message data (including header) or None if not enough data.
+        Raises ``DecodeError`` if the next buffered header claims a message
+        larger than ``max_message_size``. Use ``skip_message()`` to recover.
         """
-        if not self.has_message():
+        available = len(self._data) - self._pos
+        if available < HEADER_SIZE:
             return None
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
+
+        if total_size > self._max_message_size:
+            raise DecodeError(
+                f"Message size {total_size} bytes exceeds maximum {self._max_message_size}"
+            )
+
+        if available < total_size:
+            return None
 
         message = bytes(self._data[self._pos : self._pos + total_size])
         self._pos += total_size

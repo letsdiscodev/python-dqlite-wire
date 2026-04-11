@@ -142,8 +142,13 @@ class TestReadBuffer:
         buf.clear()
         assert buf.available() == 0
 
-    def test_rejects_oversized_message(self) -> None:
-        """Messages exceeding max size should raise DecodeError."""
+    def test_has_message_is_total_on_oversized(self) -> None:
+        """has_message() must not raise — oversized headers surface at consume time.
+
+        Callers using the documented `while decoder.has_message(): decode()` pattern
+        must not have to wrap the check itself in try/except. The raise belongs at
+        read_message() / skip_message() / decode(), not at the predicate.
+        """
         import struct
 
         import pytest
@@ -154,8 +159,31 @@ class TestReadBuffer:
         # Header claiming a huge body: size_words=1000 (8000 bytes > 1024 limit)
         header = struct.pack("<IBBH", 1000, 0, 0, 0)
         buf.feed(header)
+
+        # The predicate is total: it returns True to signal "something is there
+        # to consume" and never raises.
+        assert buf.has_message() is True
+
+        # The raise happens at consume time.
         with pytest.raises(DecodeError, match="exceeds maximum"):
-            buf.has_message()
+            buf.read_message()
+
+    def test_rejects_oversized_message(self) -> None:
+        """Oversized messages surface at read_message(), not has_message()."""
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=1024)
+        # Header claiming a huge body: size_words=1000 (8000 bytes > 1024 limit)
+        header = struct.pack("<IBBH", 1000, 0, 0, 0)
+        buf.feed(header)
+        # has_message() is non-raising; consume-side surfaces the error.
+        assert buf.has_message() is True
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.read_message()
 
     def test_skip_message_recovers_from_oversized(self) -> None:
         """After skipping an oversized message, stream should not be corrupted.
@@ -179,9 +207,10 @@ class TestReadBuffer:
         # Feed header + first chunk
         buf.feed(oversized_header + b"\xab" * 500)
 
-        # has_message should raise for oversized
+        # has_message() is total; the raise happens on the consume call.
+        assert buf.has_message() is True
         with pytest.raises(DecodeError, match="exceeds maximum"):
-            buf.has_message()
+            buf.read_message()
 
         # skip_message should return False — partial skip
         assert buf.skip_message() is False
@@ -218,8 +247,9 @@ class TestReadBuffer:
 
         # Feed just the header
         buf.feed(oversized_header)
+        assert buf.has_message() is True
         with pytest.raises(DecodeError, match="exceeds maximum"):
-            buf.has_message()
+            buf.read_message()
         assert buf.skip_message() is False
 
         # Feed capped body in chunks (max_message_size=64, header was 8 bytes,
@@ -251,8 +281,9 @@ class TestReadBuffer:
         # Feed an oversized header (200 words = 1600 bytes > 64 limit)
         header = struct.pack("<IBBH", 200, 0, 0, 0)
         buf.feed(header)
+        assert buf.has_message() is True
         with pytest.raises(DecodeError):
-            buf.has_message()
+            buf.read_message()
 
         # Partial skip — is_skipping should be True
         assert buf.skip_message() is False
@@ -274,8 +305,9 @@ class TestReadBuffer:
         buf = ReadBuffer(max_message_size=64)
         header = struct.pack("<IBBH", 200, 0, 0, 0)
         buf.feed(header)
+        assert buf.has_message() is True
         with pytest.raises(DecodeError):
-            buf.has_message()
+            buf.read_message()
         buf.skip_message()
         assert buf.is_skipping is True
 

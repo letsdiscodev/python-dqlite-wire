@@ -862,9 +862,10 @@ class TestDecoderSkipMessage:
         # Feed just the oversized header
         decoder.feed(oversized_header)
 
-        # has_message() should raise for oversized
+        # has_message() is total; the raise surfaces from decode() / read_message().
+        assert decoder.has_message() is True
         with pytest.raises(DecodeError, match="exceeds maximum"):
-            decoder.has_message()
+            decoder.decode()
 
         # skip_message() should handle the oversized message
         result = decoder.skip_message()
