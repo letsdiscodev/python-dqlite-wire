@@ -245,11 +245,18 @@ class RowsResponse(Message):
         self.column_types = list(self.column_types)
 
     def _get_row_types(self, row_idx: int, row: list[Any]) -> list[ValueType]:
-        """Get types for a row: from row_types, column_types, or inferred."""
+        """Get types for a row: from row_types, column_types, or inferred.
+
+        The ``column_types`` fallback returns a fresh copy rather than
+        ``self.column_types`` itself, so that a caller who mutates the
+        return value cannot silently rewrite the message's private
+        copy. This preserves the aliasing invariant that
+        ``__post_init__`` establishes (issue 042, issue 052).
+        """
         if self.row_types and row_idx < len(self.row_types):
             return self.row_types[row_idx]
         if self.column_types:
-            return self.column_types
+            return list(self.column_types)
         # Infer from values
         from dqlitewire.types import encode_value
 

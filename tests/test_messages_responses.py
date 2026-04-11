@@ -231,6 +231,42 @@ class TestRowsResponseAliasing:
             "RowsResponse.column_types must not alias the caller's list"
         )
 
+    def test_get_row_types_does_not_alias_column_types(self) -> None:
+        """Regression for issue 052.
+
+        ``__post_init__`` defensively copies ``column_types`` so that
+        mutation of a caller-supplied or decoder-supplied list cannot
+        rewrite the ``RowsResponse``'s private copy. ``_get_row_types``
+        used to return ``self.column_types`` by reference on the
+        "no per-row types" fallback path, which silently punched a
+        hole in that invariant: a caller who captured the return
+        value and mutated it would mutate the message's private
+        list.
+
+        This test asserts that the returned list is a distinct object
+        from ``self.column_types`` and that mutating the return value
+        does not affect the message.
+        """
+        msg = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            row_types=[],
+            rows=[[1]],
+            has_more=False,
+        )
+
+        row_types = msg._get_row_types(0, [1])
+
+        assert row_types is not msg.column_types, (
+            "_get_row_types must return a fresh list, not alias column_types"
+        )
+
+        row_types.append(ValueType.BLOB)
+        assert msg.column_types == [ValueType.INTEGER], (
+            "mutating the _get_row_types return value must not affect "
+            "msg.column_types (issue 042 invariant)"
+        )
+
 
 class TestRowsResponse:
     def test_empty_result(self) -> None:
