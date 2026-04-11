@@ -154,6 +154,28 @@ class MessageDecoder:
         """Protocol version from handshake, or None if not yet received."""
         return self._version
 
+    @property
+    def is_poisoned(self) -> bool:
+        """True if the decoder has hit an unrecoverable mid-stream error.
+
+        Once poisoned, every ``decode*`` method raises ``ProtocolError`` until
+        ``reset()`` is called. This protects callers from silently continuing
+        to decode from an unknown offset after a parse failure desynchronized
+        the stream.
+        """
+        return self._buffer.is_poisoned
+
+    def reset(self) -> None:
+        """Reset decoder state to a fresh, un-poisoned condition.
+
+        Clears the read buffer and, for server-side decoders, returns the
+        handshake state to "not yet received". Use this after a reconnect.
+        """
+        self._buffer.reset()
+        if self._is_request:
+            self._handshake_done = False
+            self._version = None
+
     def feed(self, data: bytes) -> None:
         """Feed data to the decoder."""
         self._buffer.feed(data)
@@ -198,42 +220,67 @@ class MessageDecoder:
 
         Returns None if no complete message is available.
         """
+        self._buffer._check_poisoned()
         data = self._buffer.read_message()
         if data is None:
             return None
 
-        header = Header.decode(data[:HEADER_SIZE])
-        body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
+        # Bytes have been consumed — ANY parse failure here leaves the
+        # buffer at an unknown offset and must poison the decoder. Catch
+        # broadly: `decode_body` implementations can raise struct.error,
+        # ValueError, UnicodeDecodeError, IndexError, etc., and all of
+        # them mean the stream is desynchronized.
+        try:
+            header = Header.decode(data[:HEADER_SIZE])
+            body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
 
-        if header.msg_type == ResponseType.FAILURE:
-            failure = FailureResponse.decode_body(body, schema=header.schema)
-            raise ProtocolError(
-                f"Server error during ROWS continuation: [{failure.code}] {failure.message}"
-            )
-        if header.msg_type != ResponseType.ROWS:
-            raise ProtocolError(
-                f"Expected ROWS continuation (type {ResponseType.ROWS}), got type {header.msg_type}"
-            )
+            if header.msg_type == ResponseType.FAILURE:
+                failure = FailureResponse.decode_body(body, schema=header.schema)
+                raise ProtocolError(
+                    f"Server error during ROWS continuation: [{failure.code}] {failure.message}"
+                )
+            if header.msg_type != ResponseType.ROWS:
+                raise ProtocolError(
+                    f"Expected ROWS continuation (type {ResponseType.ROWS}), "
+                    f"got type {header.msg_type}"
+                )
 
-        return RowsResponse.decode_rows_continuation(
-            body, column_names, column_count, max_rows=max_rows
-        )
+            return RowsResponse.decode_rows_continuation(
+                body, column_names, column_count, max_rows=max_rows
+            )
+        except Exception as e:
+            self._buffer.poison(e)
+            raise
 
     def decode(self) -> Message | None:
         """Decode the next message from the buffer.
 
         Returns None if no complete message is available.
         Raises ProtocolError if called on a request decoder before decode_handshake().
+        Raises ProtocolError if the decoder is poisoned.
         """
+        self._buffer._check_poisoned()
         if not self._handshake_done:
             raise ProtocolError(
                 "Protocol handshake not yet received. Call decode_handshake() before decode()."
             )
+        # read_message may raise DecodeError for an oversized header. That
+        # error is recoverable via skip_message() — the bytes have not been
+        # consumed — so we deliberately do NOT poison on it.
         data = self._buffer.read_message()
         if data is None:
             return None
 
-        return self.decode_bytes(data)
+        # Bytes have been consumed. ANY parse failure now leaves the
+        # buffer at an unknown offset; poison so subsequent calls fail
+        # fast. Catch broadly: `decode_body` implementations can raise
+        # struct.error, ValueError, UnicodeDecodeError, IndexError, etc.,
+        # and all of them mean the stream is desynchronized.
+        try:
+            return self.decode_bytes(data)
+        except Exception as e:
+            self._buffer.poison(e)
+            raise
 
     def decode_bytes(self, data: bytes) -> Message:
         """Decode a message from bytes.

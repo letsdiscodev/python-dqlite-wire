@@ -1,7 +1,7 @@
 """Buffer utilities for streaming protocol data."""
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, ProtocolError
 
 
 class WriteBuffer:
@@ -46,6 +46,36 @@ class ReadBuffer:
         self._pos = 0
         self._max_message_size = max_message_size
         self._skip_remaining = 0
+        self._poisoned: Exception | None = None
+
+    @property
+    def is_poisoned(self) -> bool:
+        """True if a mid-stream error has marked this buffer unrecoverable."""
+        return self._poisoned is not None
+
+    def poison(self, error: Exception) -> None:
+        """Mark the buffer as unrecoverable.
+
+        Call this when a decode error means the stream offset is no longer
+        trustworthy (parsing consumed bytes but failed afterwards). Once
+        poisoned, every public method raises ``ProtocolError`` until
+        ``reset()`` is called.
+        """
+        if self._poisoned is None:
+            self._poisoned = error
+
+    def reset(self) -> None:
+        """Clear buffer state and un-poison. Use after a reconnect."""
+        self._data.clear()
+        self._pos = 0
+        self._skip_remaining = 0
+        self._poisoned = None
+
+    def _check_poisoned(self) -> None:
+        if self._poisoned is not None:
+            raise ProtocolError(
+                "buffer is poisoned; call reset() and reconnect"
+            ) from self._poisoned
 
     def feed(self, data: bytes) -> None:
         """Add received data to the buffer.

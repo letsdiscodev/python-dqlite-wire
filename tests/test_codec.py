@@ -882,3 +882,185 @@ class TestDecoderSkipMessage:
         decoded = decoder.decode()
         assert isinstance(decoded, FailureResponse)
         assert decoded.code == 42
+
+
+class TestDecoderPoisonedState:
+    """Once the decoder has produced a mid-stream error from already-consumed
+    bytes, subsequent operations must fail fast with a poisoned-state error —
+    the buffer's _pos is in an unknown position and silently continuing would
+    corrupt downstream reads. A reset() method returns the decoder to a clean
+    state after a reconnect.
+    """
+
+    def test_decode_poisons_on_unknown_message_type(self) -> None:
+        """An unknown message type surfaces via decode(), which must poison
+        the decoder so retries fail loudly.
+        """
+        import struct
+
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        # Valid framing, but an unregistered message type (0xFE).
+        header = struct.pack("<IBBH", 0, 0xFE, 0, 0)
+        decoder.feed(header)
+
+        assert decoder.is_poisoned is False
+        with pytest.raises(DecodeError):
+            decoder.decode()
+        assert decoder.is_poisoned is True
+
+        # Subsequent operations fail fast with a ProtocolError from poisoning.
+        # decode() must raise regardless of what is in the buffer.
+        decoder.feed(struct.pack("<IBBH", 0, 0xFE, 0, 0))
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.decode()
+
+    def test_reset_unpoisons_decoder(self) -> None:
+        """reset() clears buffer state and the poison flag so the decoder
+        can be reused after a reconnect.
+        """
+        import struct
+
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        header = struct.pack("<IBBH", 0, 0xFE, 0, 0)
+        decoder.feed(header)
+        with pytest.raises(DecodeError):
+            decoder.decode()
+        assert decoder.is_poisoned is True
+
+        decoder.reset()
+        assert decoder.is_poisoned is False
+
+        # Fresh valid message should decode cleanly.
+        leader = LeaderResponse(node_id=1, address="host:1234").encode()
+        decoder.feed(leader)
+        result = decoder.decode()
+        assert isinstance(result, LeaderResponse)
+        assert result.node_id == 1
+
+        # Sanity: a fresh poison error references a ProtocolError ancestor too.
+        decoder.feed(struct.pack("<IBBH", 0, 0xFE, 0, 0))
+        with pytest.raises(ProtocolError):
+            decoder.decode()
+
+    def test_oversized_header_does_not_poison(self) -> None:
+        """An oversized-header error from the buffer framing layer is
+        recoverable via skip_message(); it must NOT poison because the
+        bytes have not yet been consumed from the buffer.
+        """
+        import struct
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._buffer._max_message_size = 128
+        oversized = struct.pack("<IBBH", 100, 0, 0, 0)  # 808-byte body > 128
+        decoder.feed(oversized)
+
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            decoder.decode()
+        # NOT poisoned — skip_message() is the documented recovery path.
+        assert decoder.is_poisoned is False
+
+        # Recovery via skip_message should still work.
+        decoder.skip_message()
+        decoder.feed(b"\x00" * decoder._buffer._skip_remaining)
+        assert decoder.is_poisoned is False
+
+        # And a fresh message decodes afterwards.
+        normal = FailureResponse(code=1, message="ok").encode()
+        decoder.feed(normal)
+        assert isinstance(decoder.decode(), FailureResponse)
+
+    def test_poison_catches_non_protocol_exceptions(self) -> None:
+        """Any exception from decode_bytes — not just DecodeError/ProtocolError —
+        must poison the decoder. A `decode_body` implementation could raise
+        struct.error, ValueError, UnicodeDecodeError, IndexError, etc., and
+        all of them mean the bytes have been consumed and the offset is now
+        unknown. Catching only the protocol exception types would let other
+        failures leak through with the buffer in a desynchronized state.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        # Build a real message and feed it.
+        msg = LeaderResponse(node_id=1, address="x:1").encode()
+        decoder.feed(msg)
+
+        # Monkey-patch decode_bytes to raise a non-protocol exception, simulating
+        # a bug or unexpected input in a real decode_body implementation.
+        sentinel = ValueError("simulated body parse failure")
+
+        def boom(_data: bytes) -> object:
+            raise sentinel
+
+        decoder.decode_bytes = boom  # type: ignore[method-assign]
+
+        with pytest.raises(ValueError, match="simulated body parse failure"):
+            decoder.decode()
+        assert decoder.is_poisoned is True
+
+        # Subsequent decode() must raise poisoned, even though decode_bytes
+        # is monkey-patched. Restore the real decode_bytes first to make
+        # sure the poison check fires before any decode_bytes call.
+        del decoder.decode_bytes  # type: ignore[attr-defined]
+        decoder.feed(msg)
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.decode()
+
+    def test_decode_continuation_poisons_on_wrong_type(self) -> None:
+        """decode_continuation() must poison the decoder when the next
+        message is not a ROWS continuation. The bytes have been consumed
+        from the buffer; subsequent operations cannot trust the offset.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        # Feed a non-ROWS message where decode_continuation expects ROWS.
+        # An EmptyResponse is type 127, body is empty.
+        empty = EmptyResponse().encode()
+        decoder.feed(empty)
+
+        with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
+            decoder.decode_continuation(column_names=["x"], column_count=1)
+        assert decoder.is_poisoned is True
+
+        # Subsequent decode() also fails poisoned.
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.decode()
+
+    def test_poison_is_first_error_wins(self) -> None:
+        """ReadBuffer.poison() must NOT overwrite an existing poison error.
+        First error wins so the original __cause__ remains visible.
+        """
+        from dqlitewire.buffer import ReadBuffer
+
+        buf = ReadBuffer()
+        first = DecodeError("first failure")
+        second = DecodeError("second failure")
+        buf.poison(first)
+        buf.poison(second)
+        assert buf._poisoned is first
+
+    def test_request_decoder_reset_clears_handshake_state(self) -> None:
+        """For a server-side (request) decoder, reset() must also un-do the
+        handshake so a reconnect requires a fresh handshake. Otherwise the
+        decoder would silently accept message bytes as a continuation of
+        the dead session.
+        """
+        decoder = MessageDecoder(is_request=True)
+        # Complete a handshake.
+        decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
+        decoder.decode_handshake()
+        assert decoder._handshake_done is True
+        assert decoder.version == PROTOCOL_VERSION
+
+        decoder.reset()
+        assert decoder._handshake_done is False
+        assert decoder.version is None
+        # And the decoder must refuse decode() until a fresh handshake.
+        from dqlitewire.exceptions import ProtocolError
+
+        with pytest.raises(ProtocolError, match="[Hh]andshake"):
+            decoder.decode()
