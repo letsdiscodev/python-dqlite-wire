@@ -282,7 +282,14 @@ class ReadBuffer:
         return self._skip_remaining > 0
 
     def clear(self) -> None:
-        """Clear the buffer."""
-        self._data.clear()
-        self._pos = 0
-        self._skip_remaining = 0
+        """Clear buffer state and un-poison.
+
+        Equivalent to ``reset()``. Kept as a convenience alias because
+        ``clear()`` predates the poison concept (issue 026) and was
+        briefly inconsistent with ``reset()`` — it used to leave the
+        ``_poisoned`` flag intact, which meant a caller who reached
+        for ``clear()`` as a recovery primitive got a half-fresh
+        buffer that still raised ``ProtocolError`` on the next
+        operation (issue 040).
+        """
+        self.reset()

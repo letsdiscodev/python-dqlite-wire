@@ -187,6 +187,35 @@ class TestReadBuffer:
         buf.clear()
         assert buf.available() == 0
 
+    def test_clear_also_unpoisons(self) -> None:
+        """Regression for issue 040.
+
+        ``ReadBuffer`` has two very similar methods: ``clear()`` and
+        ``reset()``. ``reset()`` was introduced by issue 026 as the
+        recovery primitive for the poison flag. ``clear()`` predates
+        the poison concept and was never updated — it still resets
+        ``_data``/``_pos``/``_skip_remaining`` but leaves
+        ``_poisoned`` intact. A caller who reaches for ``clear()``
+        expecting it to be "the simpler recovery method" gets a
+        half-fresh buffer that still raises ``ProtocolError`` on the
+        next operation. The asymmetry is invisible at the API level
+        (one-line docstrings, similar names), so the only safe
+        behaviour is for both methods to unpoison.
+        """
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer()
+        buf.feed(b"\x00" * 16)
+        buf.poison(DecodeError("boom"))
+        assert buf.is_poisoned
+
+        buf.clear()
+
+        assert not buf.is_poisoned
+        # And the buffer must be usable after the clear+reconnect.
+        buf.feed(b"\x01\x00\x00\x00\x00\x00\x00\x00")
+        assert buf.available() == 8
+
     def test_has_message_is_total_on_oversized(self) -> None:
         """has_message() must not raise — oversized headers surface at consume time.
 
