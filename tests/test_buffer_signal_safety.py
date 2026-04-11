@@ -212,3 +212,114 @@ def test_decode_error_is_still_recoverable_without_poison() -> None:
     buf.feed(b"\x00" * 16)
     assert not buf.is_poisoned
     _ = DecodeError  # referenced for completeness
+
+
+class TestFeedSignalSafety:
+    """Regression tests for issue 048.
+
+    ``ReadBuffer.feed`` used to mutate state (``_skip_remaining``,
+    ``_data``) without any try/except wrapper. A BaseException leaking
+    out of any intermediate step — most notably between
+    ``_maybe_compact()`` returning and ``self._data.extend(data)``,
+    where CPython's RESUME opcode IS a real async-exception delivery
+    point — would leave the buffer in a silently inconsistent state:
+    fed bytes dropped from the caller's stack frame, compact having
+    run but extend having not. ``is_poisoned`` would remain ``False``
+    and the next ``feed()`` call would silently append to a buffer
+    with a gap.
+
+    The fix wraps the mutation block in ``try/except BaseException``
+    analogous to ``_maybe_compact``'s own fix from issue 037, while
+    leaving the oversized-``DecodeError`` size check OUTSIDE the try
+    block so the non-poisoning "recoverable via drain/reset" contract
+    is preserved.
+    """
+
+    def test_torn_feed_extend_leaves_buffer_poisoned(self) -> None:
+        """A BaseException raised between ``_maybe_compact`` and
+        ``_data.extend`` must poison the buffer so the next operation
+        fails fast instead of silently returning partial data.
+        """
+        buf = ReadBuffer()
+        # Give the buffer enough prior data that _maybe_compact is a
+        # no-op (we want the hazard to be specifically the extend
+        # step, not any torn compact). _pos below 4096 → compact
+        # returns early.
+        buf.feed(b"\x00" * 32)
+        buf.read_bytes(8)
+        assert buf._pos == 8
+
+        # Inject the async exception on the extend line. The tracer
+        # runs the line event before bytecode on that line executes,
+        # so extend never runs — exactly the shape that a real RESUME
+        # after _maybe_compact() returns can produce.
+        tracer = _raise_on_source_match("feed", "self._data.extend(data)")
+
+        sys.settrace(tracer)
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                buf.feed(b"NEW-DATA")
+        finally:
+            sys.settrace(None)
+
+        # The fed bytes are lost (they only lived in the caller's
+        # frame). The buffer MUST be poisoned so the next operation
+        # raises ProtocolError rather than continuing on a torn
+        # state.
+        assert buf.is_poisoned, "feed() must poison when a BaseException escapes its mutation block"
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.read_message()
+
+    def test_torn_feed_poison_cause_is_recorded(self) -> None:
+        """The poison cause must be a real exception that surfaces in
+        the ProtocolError ``__cause__`` chain, matching the
+        well-formed-poison contract from issue 037.
+        """
+        buf = ReadBuffer()
+        buf.feed(b"\x00" * 32)
+        buf.read_bytes(8)
+
+        sentinel = RuntimeError("injected torn extend")
+        tracer = _raise_on_source_match("feed", "self._data.extend(data)", exc=sentinel)
+
+        sys.settrace(tracer)
+        try:
+            with contextlib.suppress(RuntimeError):
+                buf.feed(b"NEW-DATA")
+        finally:
+            sys.settrace(None)
+
+        assert buf.is_poisoned
+        with pytest.raises(ProtocolError) as ei:
+            buf._check_poisoned()
+        cause = ei.value.__cause__
+        assert cause is sentinel or (
+            isinstance(cause, Exception) and "injected torn extend" in str(cause)
+        )
+
+    def test_feed_decode_error_is_still_non_poisoning(self) -> None:
+        """Counter-test: the oversized-buffer ``DecodeError`` guard
+        must remain non-poisoning, because its caller-recovery contract
+        is "drain or reset and continue". The poison wrapper must not
+        capture this specific error.
+        """
+        buf = ReadBuffer(max_message_size=16)
+        with pytest.raises(DecodeError):
+            buf.feed(b"A" * 32)
+        assert not buf.is_poisoned, (
+            "oversized-buffer DecodeError must NOT poison the buffer; "
+            "it is deliberately recoverable via reset()/clear()"
+        )
+        # And after reset the buffer is usable again.
+        buf.reset()
+        buf.feed(b"A" * 8)
+        assert buf.available() == 8
+
+    def test_happy_path_feed_still_works(self) -> None:
+        """Sanity: without any interrupt, feed behaves normally."""
+        buf = ReadBuffer()
+        buf.feed(b"hello")
+        buf.feed(b"world")
+        assert not buf.is_poisoned
+        assert buf.available() == 10
+        assert buf.read_bytes(10) == b"helloworld"

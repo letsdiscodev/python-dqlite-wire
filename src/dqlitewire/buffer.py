@@ -95,19 +95,55 @@ class ReadBuffer:
 
         Raises ``ProtocolError`` if the buffer is poisoned — callers must
         ``reset()`` (or ``clear()``) before feeding further data.
+        Raises ``DecodeError`` (non-poisoning, recoverable via
+        ``reset()``/``clear()``) if the resulting buffer size would
+        exceed ``max_message_size``.
+
+        Signal-safety note (issue 048): the mutation block below is
+        wrapped in ``try/except BaseException`` so that any async
+        exception leaking out — most notably between the
+        ``_maybe_compact()`` return and the subsequent
+        ``_data.extend(data)``, a reachable RESUME delivery point in
+        3.11+ — poisons the buffer. The ``DecodeError`` size check
+        is deliberately kept OUTSIDE the try block so that the
+        documented "recoverable oversized-buffer" contract is
+        preserved.
         """
         self._check_poisoned()
+        # Size check BEFORE any mutation: the DecodeError raised here
+        # must NOT poison the buffer, because its caller-recovery
+        # contract is "drain or reset() and continue". The check
+        # accounts for the would-be skip-discard so that a buffer
+        # in skip mode can legitimately accept incoming bytes whose
+        # post-discard remainder fits within max_message_size.
         if self._skip_remaining > 0:
-            discard = min(len(data), self._skip_remaining)
-            data = data[discard:]
-            self._skip_remaining -= discard
-            if not data:
-                return
-        self._maybe_compact()
-        unconsumed = len(self._data) - self._pos + len(data)
-        if unconsumed > self._max_message_size:
-            raise DecodeError(f"Buffer size {unconsumed} exceeds maximum {self._max_message_size}")
-        self._data.extend(data)
+            effective_len = max(0, len(data) - self._skip_remaining)
+        else:
+            effective_len = len(data)
+        projected = len(self._data) - self._pos + effective_len
+        if projected > self._max_message_size:
+            raise DecodeError(f"Buffer size {projected} exceeds maximum {self._max_message_size}")
+        try:
+            if self._skip_remaining > 0:
+                discard = min(len(data), self._skip_remaining)
+                data = data[discard:]
+                self._skip_remaining -= discard
+                if not data:
+                    return
+            self._maybe_compact()
+            self._data.extend(data)
+        except BaseException as e:
+            # Any torn state here is unrecoverable — subsequent
+            # callers MUST see poison rather than silently reading
+            # from a buffer with a gap. ``poison()`` is first-error-
+            # wins, so if ``_maybe_compact`` already poisoned with
+            # its own cause, that original cause is preserved.
+            if self._poisoned is None:
+                if isinstance(e, Exception):
+                    self._poisoned = e
+                else:
+                    self._poisoned = RuntimeError(f"feed interrupted: {type(e).__name__}")
+            raise
 
     def has_message(self) -> bool:
         """Check if a complete message is available.
