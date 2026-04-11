@@ -225,11 +225,14 @@ class MessageDecoder:
         if data is None:
             return None
 
-        # Bytes have been consumed — ANY parse failure here leaves the
-        # buffer at an unknown offset and must poison the decoder. Catch
-        # broadly: `decode_body` implementations can raise struct.error,
-        # ValueError, UnicodeDecodeError, IndexError, etc., and all of
-        # them mean the stream is desynchronized.
+        # Bytes have been consumed — ANY failure here leaves the
+        # buffer at an unknown offset and must poison the decoder.
+        # Catch BaseException so that signal-delivered KeyboardInterrupt
+        # (issue 045) and unexpected BaseException subclasses also
+        # poison before propagating. `decode_body` implementations can
+        # raise struct.error, ValueError, UnicodeDecodeError,
+        # IndexError, etc., and all of them mean the stream is
+        # desynchronized.
         try:
             header = Header.decode(data[:HEADER_SIZE])
             body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
@@ -248,8 +251,15 @@ class MessageDecoder:
             return RowsResponse.decode_rows_continuation(
                 body, column_names, column_count, max_rows=max_rows
             )
-        except Exception as e:
-            self._buffer.poison(e)
+        except BaseException as e:
+            # poison() stores Exception | None; wrap non-Exception
+            # BaseException subclasses so the poison cause is still a
+            # real Exception we can inspect.
+            self._buffer.poison(
+                e
+                if isinstance(e, Exception)
+                else RuntimeError(f"decode_continuation interrupted: {type(e).__name__}")
+            )
             raise
 
     def decode(self) -> Message | None:
@@ -271,15 +281,24 @@ class MessageDecoder:
         if data is None:
             return None
 
-        # Bytes have been consumed. ANY parse failure now leaves the
-        # buffer at an unknown offset; poison so subsequent calls fail
-        # fast. Catch broadly: `decode_body` implementations can raise
-        # struct.error, ValueError, UnicodeDecodeError, IndexError, etc.,
-        # and all of them mean the stream is desynchronized.
+        # Bytes have been consumed. ANY failure now leaves the buffer
+        # at an unknown offset; poison so subsequent calls fail fast.
+        # Catch BaseException so that signal-delivered
+        # KeyboardInterrupt (issue 045) also poisons before
+        # propagating. `decode_body` implementations can raise
+        # struct.error, ValueError, UnicodeDecodeError, IndexError,
+        # etc., and all of them mean the stream is desynchronized.
         try:
             return self.decode_bytes(data)
-        except Exception as e:
-            self._buffer.poison(e)
+        except BaseException as e:
+            # poison() stores Exception | None; wrap non-Exception
+            # BaseException subclasses so the poison cause is still a
+            # real Exception we can inspect.
+            self._buffer.poison(
+                e
+                if isinstance(e, Exception)
+                else RuntimeError(f"decode interrupted: {type(e).__name__}")
+            )
             raise
 
     def decode_bytes(self, data: bytes) -> Message:
