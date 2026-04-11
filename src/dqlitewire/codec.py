@@ -358,6 +358,19 @@ class MessageDecoder:
         On an unsupported version, the 8 handshake bytes are left in the
         buffer untouched so that a retry is deterministic (same bytes, same
         error) rather than silently consuming the next 8 bytes of real data.
+
+        Signal-safety (issue 041): the commit order is
+        ``_version``/``_handshake_done`` FIRST, then ``read_bytes(8)``.
+        If an async exception (``KeyboardInterrupt``) lands between the
+        state commit and the buffer consume, the except block reverts
+        ``_handshake_done`` and ``_version`` so the buffer is still
+        coherent: the 8 handshake bytes are still there and a retry
+        repeats the peek/validate/commit cycle. This replaces the
+        previous "consume then commit" order, which allowed a signal
+        to leave the bytes consumed but the state not yet marked —
+        retry would then re-peek 8 bytes of real message data as a
+        handshake and almost always raise a misleading "Unsupported
+        protocol version" error.
         """
         if self._handshake_done:
             raise ProtocolError("Handshake already completed")
@@ -370,10 +383,17 @@ class MessageDecoder:
         version = int.from_bytes(peek, "little")
         if version not in _SUPPORTED_VERSIONS:
             raise ProtocolError(f"Unsupported protocol version: {version:#x}")
-        # Valid — commit by advancing past the handshake bytes.
-        self._buffer.read_bytes(8)
+        # Commit state BEFORE consuming bytes. If the consume is
+        # interrupted by an async exception, revert so the peek/commit
+        # pair becomes atomic from the caller's perspective.
         self._version = version
         self._handshake_done = True
+        try:
+            self._buffer.read_bytes(8)
+        except BaseException:
+            self._handshake_done = False
+            self._version = None
+            raise
         return version
 
 
