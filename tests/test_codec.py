@@ -1015,8 +1015,11 @@ class TestDecoderPoisonedState:
         assert decoder.is_poisoned is True
 
         # Subsequent operations fail fast with a ProtocolError from poisoning.
-        # decode() must raise regardless of what is in the buffer.
-        decoder.feed(struct.pack("<IBBH", 0, 0xFE, 0, 0))
+        # Per issue 038, every mutating/consuming entry point on the buffer
+        # and decoder — including feed() — refuses to run on a poisoned
+        # buffer. Recovery requires reset().
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.feed(struct.pack("<IBBH", 0, 0xFE, 0, 0))
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.decode()
 
@@ -1108,8 +1111,12 @@ class TestDecoderPoisonedState:
         # Subsequent decode() must raise poisoned, even though decode_bytes
         # is monkey-patched. Restore the real decode_bytes first to make
         # sure the poison check fires before any decode_bytes call.
+        # Per issue 038, feed() on a poisoned buffer also raises, so we
+        # cannot push more bytes through without a reset — the poison
+        # check fires directly on decode().
         del decoder.decode_bytes  # type: ignore[attr-defined]
-        decoder.feed(msg)
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.feed(msg)
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.decode()
 

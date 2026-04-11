@@ -216,6 +216,57 @@ class TestReadBuffer:
         buf.feed(b"\x01\x00\x00\x00\x00\x00\x00\x00")
         assert buf.available() == 8
 
+    def test_public_api_honors_poison(self) -> None:
+        """Regression for issue 038.
+
+        Issue 026 introduced the poison flag so that once a decode
+        error has desynchronized the stream, subsequent operations
+        fail fast with ``ProtocolError`` instead of silently reading
+        from an unknown offset. The check was wired into
+        ``MessageDecoder.decode`` / ``decode_continuation`` but NOT
+        into ``ReadBuffer``'s own public API. A caller holding a raw
+        ``ReadBuffer`` (exported from ``dqlitewire`` since
+        ``__init__.py``) could keep calling ``feed()``, ``read_message()``,
+        etc., after a poison was set and re-desynchronize the stream
+        silently.
+
+        Every mutating/consuming public method on ``ReadBuffer`` must
+        raise ``ProtocolError`` when poisoned. Pure observers
+        (``has_message``, ``available``, ``is_poisoned``, ``is_skipping``)
+        and recovery primitives (``clear``, ``reset``, ``poison``)
+        must remain callable.
+        """
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError, ProtocolError
+
+        buf = ReadBuffer()
+        buf.poison(DecodeError("original cause"))
+
+        cases: list[tuple[str, object]] = [
+            ("feed", lambda: buf.feed(b"x" * 8)),
+            ("read_message", lambda: buf.read_message()),
+            ("skip_message", lambda: buf.skip_message()),
+            ("read_bytes", lambda: buf.read_bytes(4)),
+            ("peek_bytes", lambda: buf.peek_bytes(4)),
+            ("peek_header", lambda: buf.peek_header()),
+        ]
+        for name, call in cases:
+            with pytest.raises(ProtocolError, match="poisoned") as ei:
+                call()  # type: ignore[operator]
+            assert isinstance(ei.value.__cause__, DecodeError), name
+
+        # Observers must remain callable on a poisoned buffer.
+        _ = buf.available()
+        _ = buf.has_message()
+        _ = buf.is_poisoned
+        _ = buf.is_skipping
+
+        # Recovery path must still work: reset() unpoisons.
+        buf.reset()
+        assert not buf.is_poisoned
+        buf.feed(b"\x00" * 8)
+
     def test_has_message_is_total_on_oversized(self) -> None:
         """has_message() must not raise — oversized headers surface at consume time.
 

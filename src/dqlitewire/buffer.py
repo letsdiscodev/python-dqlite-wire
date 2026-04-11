@@ -92,7 +92,11 @@ class ReadBuffer:
         If an oversized message is being skipped (after skip_message() returned
         False), incoming bytes are silently discarded until the full oversized
         message has been consumed.
+
+        Raises ``ProtocolError`` if the buffer is poisoned — callers must
+        ``reset()`` (or ``clear()``) before feeding further data.
         """
+        self._check_poisoned()
         if self._skip_remaining > 0:
             discard = min(len(data), self._skip_remaining)
             data = data[discard:]
@@ -146,7 +150,10 @@ class ReadBuffer:
         ``max_message_size`` guard the caller is presumably relying on. The
         error message and exception type match ``read_message()`` so the
         consume-side recovery path (``skip_message()``) applies the same way.
+
+        Raises ``ProtocolError`` if the buffer is poisoned.
         """
+        self._check_poisoned()
         available = len(self._data) - self._pos
 
         if available < HEADER_SIZE:
@@ -174,7 +181,9 @@ class ReadBuffer:
         Returns the message data (including header) or None if not enough data.
         Raises ``DecodeError`` if the next buffered header claims a message
         larger than ``max_message_size``. Use ``skip_message()`` to recover.
+        Raises ``ProtocolError`` if the buffer is poisoned.
         """
+        self._check_poisoned()
         available = len(self._data) - self._pos
         if available < HEADER_SIZE:
             return None
@@ -212,7 +221,10 @@ class ReadBuffer:
         Returns True if a message was fully skipped, False if not enough data
         for a header, a normal-sized message is still incomplete, or an
         oversized message skip is still in progress (check ``is_skipping``).
+
+        Raises ``ProtocolError`` if the buffer is poisoned.
         """
+        self._check_poisoned()
         available = len(self._data) - self._pos
         if available < HEADER_SIZE:
             return False
@@ -244,7 +256,9 @@ class ReadBuffer:
         """Read exactly n bytes from the buffer.
 
         Returns None if not enough data available.
+        Raises ``ProtocolError`` if the buffer is poisoned.
         """
+        self._check_poisoned()
         available = len(self._data) - self._pos
         if available < n:
             return None
@@ -260,7 +274,10 @@ class ReadBuffer:
         Returns None if fewer than n bytes are available. Symmetric with
         ``read_bytes(n)`` but non-consuming — use this when you need to
         validate the bytes before deciding whether to consume them.
+
+        Raises ``ProtocolError`` if the buffer is poisoned.
         """
+        self._check_poisoned()
         available = len(self._data) - self._pos
         if available < n:
             return None
