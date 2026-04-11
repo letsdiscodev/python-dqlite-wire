@@ -5,7 +5,16 @@ from dqlitewire.exceptions import DecodeError, ProtocolError
 
 
 class WriteBuffer:
-    """Buffer for building wire protocol messages."""
+    """Buffer for building wire protocol messages.
+
+    Thread-safety: NOT thread-safe. A single ``WriteBuffer``
+    instance must be owned by one thread (or one asyncio
+    coroutine) at a time. The single-owner contract matches Go's
+    ``driver.Conn`` layer in go-dqlite; see issue 021 for the full
+    analysis. ``write_padded`` guards against the specific
+    torn-payload/pad interleave described in issue 034, but that is
+    a narrow defense, not a general thread-safety guarantee.
+    """
 
     def __init__(self) -> None:
         self._data = bytearray()
@@ -46,6 +55,33 @@ class ReadBuffer:
     """Buffer for reading wire protocol messages from a stream.
 
     Handles partial reads and message framing.
+
+    Thread-safety: NOT thread-safe. A single ``ReadBuffer`` instance
+    must be owned by one thread (or one asyncio coroutine) at a
+    time. The single-owner contract matches Go's ``driver.Conn``
+    layer in go-dqlite; see issue 021 for the full analysis.
+
+    Concurrent misuse from multiple threads produces **silent data
+    corruption**, not exceptions. Specifically:
+
+    - Two readers can each observe the same ``_pos`` and slice the
+      same message bytes, returning the same message twice while
+      silently skipping the next one (lost update on ``_pos +=``).
+    - Readers can observe torn ``_pos``/``_data`` snapshots across
+      a concurrent ``_maybe_compact()`` call, producing garbage
+      bytes that decode to plausible-looking (but wrong) messages.
+
+    The ``poison()`` mechanism does NOT and CANNOT detect this
+    class of failure. Poison is designed to catch single-owner
+    torn state from interrupted signal delivery (see issues 037,
+    041, 045). It cannot observe lost-update races or torn reads
+    that produce valid-looking output. See issue 050 for
+    reproduction details.
+
+    If you need concurrent access to a single wire stream, wrap
+    every call site in an ``asyncio.Lock`` (for coroutines) or
+    ``threading.Lock`` (for threads) at the layer that owns the
+    socket and decoder.
     """
 
     DEFAULT_MAX_MESSAGE_SIZE = 64 * 1024 * 1024  # 64 MiB

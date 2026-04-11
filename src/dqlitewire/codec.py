@@ -100,7 +100,16 @@ _SUPPORTED_VERSIONS = {PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY}
 
 
 class MessageEncoder:
-    """Encodes messages to wire protocol format."""
+    """Encodes messages to wire protocol format.
+
+    Thread-safety: NOT thread-safe. A single ``MessageEncoder``
+    instance must be owned by one thread (or one asyncio coroutine)
+    at a time. The encoder is effectively stateless after
+    construction (it only caches a protocol ``_version``), but the
+    single-owner contract matches the rest of the package — see
+    issue 021 and the class docstring on ``MessageDecoder`` /
+    ``ReadBuffer``.
+    """
 
     def __init__(self, version: int = PROTOCOL_VERSION) -> None:
         """Initialize encoder.
@@ -125,7 +134,30 @@ class MessageEncoder:
 
 
 class MessageDecoder:
-    """Decodes messages from wire protocol format."""
+    """Decodes messages from wire protocol format.
+
+    Thread-safety: NOT thread-safe. A single ``MessageDecoder``
+    instance must be owned by one thread (or one asyncio coroutine)
+    at a time. The single-owner contract matches Go's
+    ``driver.Conn`` layer in go-dqlite; see issue 021 for the full
+    analysis.
+
+    Concurrent misuse from multiple threads produces **silent data
+    corruption**, not exceptions. The underlying ``ReadBuffer``
+    suffers from lost-update races on ``_pos`` and torn
+    ``_data``/``_pos`` snapshots across ``_maybe_compact()``
+    calls; these produce valid-looking byte slices that decode
+    cleanly to wrong (or duplicated) messages. Fuzz testing
+    (issue 050) confirms this reliably on every trial.
+
+    The ``is_poisoned`` flag does NOT detect concurrent misuse.
+    Poison is designed to catch single-owner torn state from
+    interrupted signal delivery (see issues 037, 041, 045). It
+    cannot observe lost-update races or torn reads that produce
+    valid-looking output. If you need concurrent access, wrap every
+    call site in an ``asyncio.Lock`` or ``threading.Lock`` at the
+    layer that owns the socket.
+    """
 
     def __init__(self, is_request: bool = False, version: int = PROTOCOL_VERSION) -> None:
         """Initialize decoder.
