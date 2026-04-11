@@ -218,6 +218,18 @@ class ReadBuffer:
         self._maybe_compact()
         return data
 
+    def peek_bytes(self, n: int) -> bytes | None:
+        """Return the next n bytes without advancing the read position.
+
+        Returns None if fewer than n bytes are available. Symmetric with
+        ``read_bytes(n)`` but non-consuming — use this when you need to
+        validate the bytes before deciding whether to consume them.
+        """
+        available = len(self._data) - self._pos
+        if available < n:
+            return None
+        return bytes(self._data[self._pos : self._pos + n])
+
     def _maybe_compact(self) -> None:
         """Compact buffer if we've consumed a lot."""
         if self._pos > 4096:

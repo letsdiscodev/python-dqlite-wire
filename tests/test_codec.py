@@ -221,6 +221,110 @@ class TestHandshakeStateEnforcement:
         with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
             decoder.decode_handshake()
 
+    def test_decode_handshake_failure_does_not_consume_bytes(self) -> None:
+        """On an unsupported version, decode_handshake() must NOT consume the
+        handshake bytes.
+
+        Previously the method read 8 bytes BEFORE validating the version, so
+        a failed handshake left the buffer advanced by 8 with ``_handshake_done``
+        still False. A retry consumed the next 8 bytes as a "version", which
+        was almost always the header of a real message — silently desynchronizing
+        the stream. Peek-before-consume means the bytes stay in the buffer and
+        a retry is deterministic: same bytes, same error.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        bogus = b"\x42" * 8
+        decoder.feed(bogus)
+
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+
+        # The 8 handshake bytes must still be in the buffer.
+        assert decoder._buffer.available() == 8
+        assert not decoder._handshake_done
+
+        # A retry on the same bytes gets the same error, deterministically.
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+        assert decoder._buffer.available() == 8
+
+    def test_decode_handshake_partial_data_leaves_bytes_intact(self) -> None:
+        """With fewer than 8 bytes buffered, decode_handshake() returns None
+        and leaves the partial data untouched so a subsequent feed() can
+        complete the handshake.
+        """
+        decoder = MessageDecoder(is_request=True)
+        version_bytes = PROTOCOL_VERSION_LEGACY.to_bytes(8, "little")
+        decoder.feed(version_bytes[:4])
+        assert decoder.decode_handshake() is None
+        assert decoder._buffer.available() == 4
+
+        decoder.feed(version_bytes[4:])
+        assert decoder.decode_handshake() == PROTOCOL_VERSION_LEGACY
+
+    def test_decode_handshake_failure_preserves_following_bytes(self) -> None:
+        """Direct reproducer of the original bug: a buffer containing a bogus
+        version followed by a real valid version. The pre-fix code consumed
+        both 8-byte chunks across two retries; the fix must consume neither
+        on the first failure.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        bogus = b"\x42" * 8
+        valid = PROTOCOL_VERSION_LEGACY.to_bytes(8, "little")
+        decoder.feed(bogus + valid)
+
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+        # All 16 bytes still in the buffer — neither chunk has been consumed.
+        assert decoder._buffer.available() == 16
+
+        # Even after a retry, the valid bytes behind are untouched.
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+        assert decoder._buffer.available() == 16
+
+    def test_decode_handshake_recoverable_via_reset(self) -> None:
+        """After a handshake failure, reset() clears the buffer and the
+        decoder accepts a fresh handshake on a reconnect.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=True)
+        decoder.feed(b"\x42" * 8)
+        with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
+            decoder.decode_handshake()
+
+        decoder.reset()
+        assert decoder._buffer.available() == 0
+        assert not decoder._handshake_done
+
+        # Fresh valid handshake works.
+        decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
+        assert decoder.decode_handshake() == PROTOCOL_VERSION
+        assert decoder._handshake_done
+
+    def test_peek_bytes_does_not_advance_position(self) -> None:
+        """Sanity: ReadBuffer.peek_bytes() must return the requested bytes
+        without advancing _pos. This is the primitive decode_handshake()
+        depends on.
+        """
+        from dqlitewire.buffer import ReadBuffer
+
+        buf = ReadBuffer()
+        buf.feed(b"abcdefghij")
+        assert buf.peek_bytes(4) == b"abcd"
+        assert buf.available() == 10
+        # Repeated peeks return the same bytes.
+        assert buf.peek_bytes(4) == b"abcd"
+        assert buf.available() == 10
+        # Asking for more than available returns None.
+        assert buf.peek_bytes(20) is None
+        assert buf.available() == 10
+
     def test_decode_handshake_rejects_zero_version(self) -> None:
         """Version 0 is not a valid protocol version."""
         from dqlitewire.exceptions import ProtocolError

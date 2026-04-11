@@ -333,15 +333,24 @@ class MessageDecoder:
         Must be called before decode() on request decoders.
         Raises ProtocolError if the version is not recognized or if
         the handshake was already completed.
+
+        On an unsupported version, the 8 handshake bytes are left in the
+        buffer untouched so that a retry is deterministic (same bytes, same
+        error) rather than silently consuming the next 8 bytes of real data.
         """
         if self._handshake_done:
             raise ProtocolError("Handshake already completed")
-        data = self._buffer.read_bytes(8)
-        if data is None:
+        # Peek first so we only commit on a valid version. An invalid version
+        # leaves the bytes in place — a retry is deterministic rather than
+        # silently advancing into real message data.
+        peek = self._buffer.peek_bytes(8)
+        if peek is None:
             return None
-        version = int.from_bytes(data, "little")
+        version = int.from_bytes(peek, "little")
         if version not in _SUPPORTED_VERSIONS:
             raise ProtocolError(f"Unsupported protocol version: {version:#x}")
+        # Valid — commit by advancing past the handshake bytes.
+        self._buffer.read_bytes(8)
         self._version = version
         self._handshake_done = True
         return version
