@@ -146,8 +146,12 @@ class ReadBuffer:
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
         if total_size > self._max_message_size:
+            # Format size in hex: under concurrent misuse (see issue 033)
+            # `total_size` can be a torn bigint whose decimal form exceeds
+            # CPython's 4300-digit int-to-str limit, which would make this
+            # f-string itself raise ValueError. Hex formatting has no cap.
             raise DecodeError(
-                f"Message size {total_size} bytes exceeds maximum {self._max_message_size}"
+                f"Message size {total_size:#x} bytes exceeds maximum {self._max_message_size}"
             )
 
         msg_type = self._data[self._pos + 4]
@@ -170,8 +174,12 @@ class ReadBuffer:
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
+            # Format size in hex: under concurrent misuse (see issue 033)
+            # `total_size` can be a torn bigint whose decimal form exceeds
+            # CPython's 4300-digit int-to-str limit, which would make this
+            # f-string itself raise ValueError. Hex formatting has no cap.
             raise DecodeError(
-                f"Message size {total_size} bytes exceeds maximum {self._max_message_size}"
+                f"Message size {total_size:#x} bytes exceeds maximum {self._max_message_size}"
             )
 
         if available < total_size:
