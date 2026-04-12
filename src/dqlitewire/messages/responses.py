@@ -4,8 +4,11 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from dqlitewire.constants import (
+    ROW_DONE_BYTE,
     ROW_DONE_MARKER,
+    ROW_PART_BYTE,
     ROW_PART_MARKER,
+    WORD_SIZE,
     ResponseType,
     ValueType,
 )
@@ -317,8 +320,6 @@ class RowsResponse(Message):
         # Zero-column results cannot have row data (each row would be zero
         # bytes), so skip the row loop and consume the end marker directly.
         if column_count == 0:
-            from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, WORD_SIZE
-
             if offset + WORD_SIZE > len(data):
                 raise DecodeError(
                     "RowsResponse body exhausted without end marker (zero-column result)"
