@@ -226,25 +226,18 @@ class RowsResponse(Message):
     has_more: bool = False
 
     def __post_init__(self) -> None:
-        # Defensive copies (issue 042). Three sources of aliasing
+        # Defensive copies (issue 042). Two sources of aliasing
         # motivate this:
         #
-        # 1. ``decode_body`` / ``decode_rows_continuation`` store
-        #    ``column_types = types`` where ``types`` is also stored
-        #    as ``all_row_types[0]``, so without a copy
-        #    ``self.column_types is self.row_types[0]`` and mutating
-        #    one silently rewrites the other.
+        # 1. ``decode_body`` stores ``column_types = types`` where
+        #    ``types`` is also stored as ``all_row_types[0]``, so
+        #    without a copy ``self.column_types is self.row_types[0]``
+        #    and mutating one silently rewrites the other.
         #
-        # 2. ``MessageDecoder.decode_continuation`` and
-        #    ``decode_rows_continuation`` pass the caller's
-        #    ``column_names`` list by reference into every
-        #    continuation response; any mutation on one response
-        #    propagates to every sibling.
-        #
-        # 3. User code constructing ``RowsResponse`` directly with a
+        # 2. User code constructing ``RowsResponse`` directly with a
         #    list they intend to keep mutating elsewhere.
         #
-        # Copying here catches all three sites uniformly and survives
+        # Copying here catches both sites uniformly and survives
         # future construction sites. The cost is two list allocations
         # per response — negligible compared to the row payload.
         self.column_names = list(self.column_names)
@@ -393,105 +386,6 @@ class RowsResponse(Message):
 
         raise DecodeError(
             f"RowsResponse body exhausted without end marker "
-            f"(decoded {len(rows)} rows, consumed {offset} of {len(data)} bytes)"
-        )
-
-    @classmethod
-    def decode_rows_continuation(
-        cls,
-        data: bytes,
-        column_names: list[str],
-        column_count: int,
-        max_rows: int = DEFAULT_MAX_ROWS,
-    ) -> "RowsResponse":
-        """Decode a continuation message (rows without column header prefix).
-
-        After receiving a RowsResponse with has_more=True (PART marker), the
-        server sends additional ROWS messages that contain only row data and a
-        trailing marker — no column_count or column_names prefix. Use this
-        method to decode those continuation messages, passing the column_names
-        and column_count from the initial response.
-        """
-        if column_count > _MAX_COLUMN_COUNT:
-            raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
-        if len(column_names) != column_count:
-            raise DecodeError(
-                f"column_names length ({len(column_names)}) does not match "
-                f"column_count ({column_count})"
-            )
-        offset = 0
-        rows: list[list[Any]] = []
-        all_row_types: list[list[ValueType]] = []
-        column_types: list[ValueType] = []
-
-        if column_count == 0:
-            from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, WORD_SIZE
-
-            if offset + WORD_SIZE > len(data):
-                raise DecodeError(
-                    "RowsResponse continuation exhausted without end marker (zero-column result)"
-                )
-            marker_byte = data[offset]
-            if marker_byte == ROW_DONE_BYTE:
-                has_more = False
-            elif marker_byte == ROW_PART_BYTE:
-                has_more = True
-            else:
-                raise DecodeError(
-                    f"Expected DONE or PART marker for zero-column result, got 0x{marker_byte:02x}"
-                )
-            return cls(
-                column_names=column_names,
-                column_types=[],
-                row_types=[],
-                rows=[],
-                has_more=has_more,
-            )
-
-        while offset < len(data):
-            prev_offset = offset
-
-            result, consumed = decode_row_header(data[offset:], column_count)
-            offset += consumed
-
-            if result is RowMarker.DONE:
-                return cls(
-                    column_names,
-                    column_types=column_types,
-                    row_types=all_row_types,
-                    rows=rows,
-                    has_more=False,
-                )
-            if result is RowMarker.PART:
-                return cls(
-                    column_names,
-                    column_types=column_types,
-                    row_types=all_row_types,
-                    rows=rows,
-                    has_more=True,
-                )
-
-            types = result
-            if not isinstance(types, list):
-                raise DecodeError(f"Expected column types list, got {type(types).__name__}")
-            all_row_types.append(types)
-            if not column_types:
-                column_types = types
-
-            values, consumed = decode_row_values(data[offset:], types)
-            rows.append(values)
-            offset += consumed
-
-            if len(rows) >= max_rows:
-                raise DecodeError(f"Row count {len(rows)} exceeds maximum {max_rows}")
-
-            if offset == prev_offset:
-                raise DecodeError(
-                    "No progress in row decoding (possible zero-column result with malformed data)"
-                )
-
-        raise DecodeError(
-            f"RowsResponse continuation exhausted without end marker "
             f"(decoded {len(rows)} rows, consumed {offset} of {len(data)} bytes)"
         )
 

@@ -154,19 +154,12 @@ class TestRowsResponseAliasing:
     """Regression tests for issue 042.
 
     ``RowsResponse`` used to store caller-supplied ``column_names`` and
-    ``column_types`` lists by reference, creating two kinds of silent
-    aliasing:
+    ``column_types`` lists by reference, creating silent aliasing:
 
-    1. ``column_types`` was stored as ``all_row_types[0]`` inside
-       ``decode_body`` / ``decode_rows_continuation`` via
-       ``if not column_types: column_types = types``. The returned
-       object then had ``r.column_types is r.row_types[0]``, so
-       mutating one list silently rewrote the other.
-    2. ``column_names`` was passed through ``decode_rows_continuation``
-       unchanged and attached directly to every continuation
-       ``RowsResponse``. Callers who mutated ``msg.column_names`` on
-       one continuation silently mutated every sibling continuation
-       AND the original response.
+    ``column_types`` was stored as ``all_row_types[0]`` inside
+    ``decode_body`` via ``if not column_types: column_types = types``.
+    The returned object then had ``r.column_types is r.row_types[0]``,
+    so mutating one list silently rewrote the other.
 
     The fix copies both lists on construction via ``__post_init__``.
     """
@@ -461,60 +454,6 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="end marker"):
             RowsResponse.decode_body(data)
 
-    def test_zero_columns_continuation_missing_marker_raises(self) -> None:
-        """Zero-column continuation with no end marker should raise DecodeError."""
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-
-        # Empty data for a zero-column continuation
-        with pytest.raises(DecodeError, match="end marker"):
-            RowsResponse.decode_rows_continuation(
-                data=b"",
-                column_names=[],
-                column_count=0,
-            )
-
-    def test_decode_rows_continuation(self) -> None:
-        """Continuation messages (after PART marker) have rows but no column header."""
-        from dqlitewire.tuples import encode_row_header, encode_row_values
-        from dqlitewire.types import encode_uint64
-
-        column_names = ["id", "name"]
-        types = [ValueType.INTEGER, ValueType.TEXT]
-        # Build a continuation body: rows + DONE marker (no column_count/names prefix)
-        body = b""
-        body += encode_row_header(types)
-        body += encode_row_values([3, "Charlie"], types)
-        body += encode_row_header(types)
-        body += encode_row_values([4, "Diana"], types)
-        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE marker
-
-        decoded = RowsResponse.decode_rows_continuation(body, column_names, len(column_names))
-        assert decoded.column_names == ["id", "name"]
-        assert len(decoded.rows) == 2
-        assert decoded.rows[0] == [3, "Charlie"]
-        assert decoded.rows[1] == [4, "Diana"]
-        assert decoded.has_more is False
-
-    def test_decode_rows_continuation_truncated_raises(self) -> None:
-        """Truncated continuation (no marker) must raise DecodeError, not silently return."""
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-        from dqlitewire.tuples import encode_row_header, encode_row_values
-
-        column_names = ["id", "name"]
-        types = [ValueType.INTEGER, ValueType.TEXT]
-        # Build continuation body with row data but NO end marker
-        body = b""
-        body += encode_row_header(types)
-        body += encode_row_values([3, "Charlie"], types)
-        # No DONE or PART marker at end!
-
-        with pytest.raises(DecodeError, match="end marker"):
-            RowsResponse.decode_rows_continuation(body, column_names, len(column_names))
-
     def test_decode_body_rejects_non_list_row_header(self) -> None:
         """decode_body must raise DecodeError if decode_row_header returns unexpected type."""
         from unittest.mock import patch
@@ -538,27 +477,6 @@ class TestRowsResponse:
             pytest.raises(DecodeError, match="Expected column types list"),
         ):
             RowsResponse.decode_body(body)
-
-    def test_decode_rows_continuation_rejects_non_list_row_header(self) -> None:
-        """Same guard as decode_body but for the continuation path."""
-        from unittest.mock import patch
-
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-        from dqlitewire.tuples import encode_row_header, encode_row_values
-        from dqlitewire.types import encode_uint64
-
-        # Build valid continuation body (rows only, no column header)
-        body = encode_row_header([ValueType.INTEGER])
-        body += encode_row_values([42], [ValueType.INTEGER])
-        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
-
-        with (
-            patch("dqlitewire.messages.responses.decode_row_header", return_value=("bad", 8)),
-            pytest.raises(DecodeError, match="Expected column types list"),
-        ):
-            RowsResponse.decode_rows_continuation(body, column_names=["id"], column_count=1)
 
     def test_truncated_body_without_marker_raises(self) -> None:
         """Body exhausted without DONE/PART marker must raise DecodeError."""
@@ -626,29 +544,6 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="Row count.*exceeds maximum"):
             RowsResponse.decode_body(body, max_rows=3)
 
-    def test_max_rows_limit_decode_rows_continuation(self) -> None:
-        """decode_rows_continuation should reject messages exceeding the max_rows limit."""
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-        from dqlitewire.tuples import encode_row_header, encode_row_values
-        from dqlitewire.types import encode_uint64
-
-        types = [ValueType.INTEGER]
-        body = b""
-        for i in range(5):
-            body += encode_row_header(types)
-            body += encode_row_values([i], types)
-        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
-
-        # Should succeed with default limit
-        decoded = RowsResponse.decode_rows_continuation(body, ["x"], 1)
-        assert len(decoded.rows) == 5
-
-        # Should fail with max_rows=2
-        with pytest.raises(DecodeError, match="Row count.*exceeds maximum"):
-            RowsResponse.decode_rows_continuation(body, ["x"], 1, max_rows=2)
-
     def test_max_rows_exact_boundary_rejects_at_limit(self) -> None:
         """max_rows=3 with exactly 3 rows should raise DecodeError.
 
@@ -679,42 +574,6 @@ class TestRowsResponse:
         # One fewer than max_rows should succeed
         decoded = RowsResponse.decode_body(build_body(2), max_rows=3)
         assert len(decoded.rows) == 2
-
-    def test_continuation_column_count_mismatch_raises(self) -> None:
-        """decode_rows_continuation should reject mismatched column_names/column_count."""
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-        from dqlitewire.tuples import encode_row_header, encode_row_values
-        from dqlitewire.types import encode_uint64
-
-        types = [ValueType.INTEGER, ValueType.TEXT]
-        body = encode_row_header(types)
-        body += encode_row_values([1, "hello"], types)
-        body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
-
-        # column_names has 3 elements but column_count is 2 — mismatch
-        with pytest.raises(DecodeError, match="column_names.*does not match.*column_count"):
-            RowsResponse.decode_rows_continuation(
-                body,
-                column_names=["a", "b", "c"],
-                column_count=2,
-            )
-
-    def test_decode_rows_continuation_rejects_excessive_column_count(self) -> None:
-        """decode_rows_continuation should reject column_count exceeding _MAX_COLUMN_COUNT."""
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-
-        body = b"\xff" * 8  # DONE marker
-        excessive = 20_000
-        with pytest.raises(DecodeError, match="exceeds maximum"):
-            RowsResponse.decode_rows_continuation(
-                body,
-                column_names=["c"] * excessive,
-                column_count=excessive,
-            )
 
 
 class TestRowsResponseValueTypes:

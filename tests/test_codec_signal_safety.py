@@ -2,7 +2,7 @@
 
 ``MessageDecoder.decode()`` and ``decode_continuation()`` both consume
 bytes from the buffer via ``read_message()`` and then parse them via
-``decode_bytes`` / ``RowsResponse.decode_rows_continuation``. The
+``decode_bytes`` / ``RowsResponse.decode_body``. The
 parse step is wrapped in ``try/except Exception`` so that a
 ``DecodeError``/``ValueError``/``struct.error`` from the parser
 poisons the buffer before propagating.
