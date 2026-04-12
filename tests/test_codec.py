@@ -158,16 +158,10 @@ class TestMessageDecoder:
         with pytest.raises(DecodeError):
             Header.decode(b"")
 
-    def test_header_decode_wraps_struct_error(self) -> None:
-        """Header.decode should wrap struct.error in DecodeError for consistency.
-
-        Header.encode wraps struct.error in EncodeError. Header.decode should
-        do the same with DecodeError, even though the length check makes
-        struct.error unlikely in practice.
-        """
+    def test_header_roundtrip_minimal(self) -> None:
+        """Minimal header with msg_type=0 and schema=0 roundtrips."""
         from dqlitewire.messages.base import Header
 
-        # Valid length but still exercises the try/except path
         header = Header(size_words=1, msg_type=0, schema=0)
         data = header.encode()
         decoded = Header.decode(data)
