@@ -244,27 +244,21 @@ class MessageDecoder:
         """True if still discarding bytes from an oversized message."""
         return self._buffer.is_skipping
 
-    def decode_continuation(
-        self,
-        column_names: list[str],
-        column_count: int,
-        max_rows: int = RowsResponse.DEFAULT_MAX_ROWS,
-    ) -> RowsResponse | None:
+    def decode_continuation(self) -> RowsResponse | None:
         """Decode a ROWS continuation message from the buffer.
 
-        After receiving a RowsResponse with has_more=True, the server sends
-        additional ROWS messages containing only row data (no column_count or
-        column_names prefix). Use this method instead of decode() for those
-        continuation messages.
-
-        Args:
-            column_names: Column names from the initial RowsResponse.
-            column_count: Number of columns from the initial RowsResponse.
-            max_rows: Maximum rows to decode per message.
+        After receiving a RowsResponse with has_more=True, call this
+        method to decode each subsequent ROWS frame. The C dqlite server
+        sends continuation frames with the same body layout as the
+        initial frame (column_count + column_names + rows + marker),
+        so this method uses ``RowsResponse.decode_body`` — the same
+        decoder used for the initial frame.
 
         Returns None if no complete message is available.
         Raises ProtocolError if no continuation is in progress
         (use ``decode()`` for the initial message).
+        Raises ProtocolError if the server sends a FailureResponse
+        instead of a ROWS continuation (e.g., mid-stream I/O error).
         """
         self._buffer._check_poisoned()
         if not self._continuation_expected:
@@ -276,14 +270,6 @@ class MessageDecoder:
         if data is None:
             return None
 
-        # Bytes have been consumed — ANY failure here leaves the
-        # buffer at an unknown offset and must poison the decoder.
-        # Catch BaseException so that signal-delivered KeyboardInterrupt
-        # (issue 045) and unexpected BaseException subclasses also
-        # poison before propagating. `decode_body` implementations can
-        # raise struct.error, ValueError, UnicodeDecodeError,
-        # IndexError, etc., and all of them mean the stream is
-        # desynchronized.
         try:
             header = Header.decode(data[:HEADER_SIZE])
             body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
@@ -299,16 +285,11 @@ class MessageDecoder:
                     f"got type {header.msg_type}"
                 )
 
-            result = RowsResponse.decode_rows_continuation(
-                body, column_names, column_count, max_rows=max_rows
-            )
+            result = RowsResponse.decode_body(body, schema=header.schema)
             if not result.has_more:
                 self._continuation_expected = False
             return result
         except BaseException as e:
-            # poison() stores Exception | None; wrap non-Exception
-            # BaseException subclasses so the poison cause is still a
-            # real Exception we can inspect.
             self._buffer.poison(
                 e
                 if isinstance(e, Exception)

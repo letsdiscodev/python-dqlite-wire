@@ -875,7 +875,10 @@ class TestDecoderContinuation:
         msg1_bytes = header1.encode() + body1
 
         # Build continuation ROWS message with DONE marker
-        body2 = encode_row_header(types)
+        # (C server always includes column_count + column_names)
+        body2 = encode_uint64(2)
+        body2 += encode_text("id") + encode_text("name")
+        body2 += encode_row_header(types)
         body2 += encode_row_values([2, "bob"], types)
         body2 += encode_uint64(ROW_DONE_MARKER)
         header2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
@@ -893,20 +896,59 @@ class TestDecoderContinuation:
         assert initial.rows[0] == [1, "alice"]
 
         # Decode continuation
-        continuation = decoder.decode_continuation(
-            column_names=initial.column_names,
-            column_count=len(initial.column_names),
-        )
+        continuation = decoder.decode_continuation()
         assert isinstance(continuation, RowsResponse)
         assert continuation.has_more is False
         assert len(continuation.rows) == 1
         assert continuation.rows[0] == [2, "bob"]
 
+    def test_decode_continuation_with_column_header(self) -> None:
+        """Continuation frames from the C server include column_count +
+        column_names (same layout as the initial frame). Verify that
+        decode_continuation handles this correctly.
+        """
+        from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER, ValueType.TEXT]
+
+        # Initial ROWS message (PART marker)
+        body1 = encode_uint64(2)
+        body1 += encode_text("id") + encode_text("name")
+        body1 += encode_row_header(types)
+        body1 += encode_row_values([1, "alice"], types)
+        body1 += encode_uint64(ROW_PART_MARKER)
+        h1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
+
+        # Continuation WITH column header (matching C server output)
+        body2 = encode_uint64(2)
+        body2 += encode_text("id") + encode_text("name")
+        body2 += encode_row_header(types)
+        body2 += encode_row_values([2, "bob"], types)
+        body2 += encode_uint64(ROW_DONE_MARKER)
+        h2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(h1.encode() + body1 + h2.encode() + body2)
+
+        initial = decoder.decode()
+        assert isinstance(initial, RowsResponse)
+        assert initial.has_more is True
+        assert initial.rows[0] == [1, "alice"]
+
+        cont = decoder.decode_continuation()
+        assert isinstance(cont, RowsResponse)
+        assert cont.has_more is False
+        assert cont.rows[0] == [2, "bob"]
+
     def test_decode_continuation_returns_none_when_no_data(self) -> None:
         """decode_continuation should return None when no message is available."""
         decoder = MessageDecoder(is_request=False)
         decoder._continuation_expected = True
-        result = decoder.decode_continuation(column_names=["x"], column_count=1)
+        result = decoder.decode_continuation()
         assert result is None
 
     def test_decode_continuation_raises_on_failure_response(self) -> None:
@@ -922,7 +964,7 @@ class TestDecoderContinuation:
         decoder.feed(failure_bytes)
 
         with pytest.raises(ProtocolError, match="disk I/O error") as exc_info:
-            decoder.decode_continuation(column_names=["id"], column_count=1)
+            decoder.decode_continuation()
         # Must be a ProtocolError, NOT a DecodeError (which would mean the
         # failure body was misinterpreted as row data).
         assert type(exc_info.value) is ProtocolError
@@ -939,7 +981,7 @@ class TestDecoderContinuation:
         decoder.feed(result_bytes)
 
         with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
-            decoder.decode_continuation(column_names=["id"], column_count=1)
+            decoder.decode_continuation()
 
 
 class TestDecoderContinuationExpected:
@@ -1007,8 +1049,10 @@ class TestDecoderContinuationExpected:
         body1 += encode_uint64(ROW_PART_MARKER)
         h1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
 
-        # Continuation frame (has_more=False)
-        body2 = encode_row_header(types)
+        # Continuation frame (has_more=False) — includes column header
+        body2 = encode_uint64(1)
+        body2 += encode_text("id")
+        body2 += encode_row_header(types)
         body2 += encode_row_values([2], types)
         body2 += encode_uint64(ROW_DONE_MARKER)
         h2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
@@ -1024,10 +1068,7 @@ class TestDecoderContinuationExpected:
         assert isinstance(initial, RowsResponse) and initial.has_more
 
         # decode continuation
-        cont = decoder.decode_continuation(
-            column_names=initial.column_names,
-            column_count=len(initial.column_names),
-        )
+        cont = decoder.decode_continuation()
         assert isinstance(cont, RowsResponse) and not cont.has_more
 
         # Now decode() should work again
@@ -1107,7 +1148,7 @@ class TestContinuationFlagCompleteness:
         decoder.feed(result.encode())
 
         with pytest.raises(ProtocolError, match="no ROWS continuation"):
-            decoder.decode_continuation(column_names=["x"], column_count=1)
+            decoder.decode_continuation()
 
         # The message must NOT have been consumed
         assert decoder.has_message(), (
@@ -1339,7 +1380,7 @@ class TestDecoderPoisonedState:
         decoder.feed(empty)
 
         with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
-            decoder.decode_continuation(column_names=["x"], column_count=1)
+            decoder.decode_continuation()
         assert decoder.is_poisoned is True
 
         # Subsequent decode() also fails poisoned.

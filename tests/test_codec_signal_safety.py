@@ -126,8 +126,6 @@ class TestDecodeSignalSafety:
         """Same hazard as decode(): decode_continuation() also needs
         BaseException handling.
         """
-        from dqlitewire.messages.responses import RowsResponse
-
         # Build a minimal ROWS continuation body. We don't actually
         # reach the parser — the tracer injects the interrupt before
         # any real parsing runs — so the frame just needs to carry
@@ -137,6 +135,7 @@ class TestDecodeSignalSafety:
         frame = header + body
 
         dec = MessageDecoder(is_request=False)
+        dec._continuation_expected = True
         dec.feed(frame + frame)
 
         # Inject inside decode_continuation itself (the wrapper
@@ -146,11 +145,7 @@ class TestDecodeSignalSafety:
         sys.settrace(tracer)
         try:
             with contextlib.suppress(KeyboardInterrupt):
-                dec.decode_continuation(
-                    column_names=["a"],
-                    column_count=1,
-                    max_rows=RowsResponse.DEFAULT_MAX_ROWS,
-                )
+                dec.decode_continuation()
         finally:
             sys.settrace(None)
 
@@ -162,10 +157,7 @@ class TestDecodeSignalSafety:
         # still at a valid offset.
         if dec.is_poisoned:
             with pytest.raises(ProtocolError, match="poisoned"):
-                dec.decode_continuation(
-                    column_names=["a"],
-                    column_count=1,
-                )
+                dec.decode_continuation()
         else:
             # Buffer offset must still be sensible.
             assert dec._buffer.available() >= 0
