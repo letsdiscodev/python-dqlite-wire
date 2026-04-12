@@ -3,15 +3,29 @@
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from dqlitewire.constants import ResponseType, ValueType
+from dqlitewire.constants import (
+    ROW_DONE_MARKER,
+    ROW_PART_MARKER,
+    ResponseType,
+    ValueType,
+)
 from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Message
-from dqlitewire.tuples import RowMarker, decode_row_header, decode_row_values
+from dqlitewire.tuples import (
+    RowMarker,
+    decode_row_header,
+    decode_row_values,
+    encode_row_header,
+    encode_row_values,
+)
 from dqlitewire.types import (
     decode_text,
+    decode_uint32,
     decode_uint64,
     encode_text,
+    encode_uint32,
     encode_uint64,
+    encode_value,
 )
 
 # Defense-in-depth upper bounds for count fields in response messages.
@@ -114,14 +128,10 @@ class DbResponse(Message):
     db_id: int
 
     def encode_body(self) -> bytes:
-        from dqlitewire.types import encode_uint32
-
         return encode_uint32(self.db_id) + encode_uint32(0)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DbResponse":
-        from dqlitewire.types import decode_uint32
-
         db_id = decode_uint32(data)
         return cls(db_id)
 
@@ -150,8 +160,6 @@ class StmtResponse(Message):
         return 1 if self.tail_offset is not None else 0
 
     def encode_body(self) -> bytes:
-        from dqlitewire.types import encode_uint32
-
         result = (
             encode_uint32(self.db_id) + encode_uint32(self.stmt_id) + encode_uint64(self.num_params)
         )
@@ -161,8 +169,6 @@ class StmtResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
-        from dqlitewire.types import decode_uint32
-
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
@@ -258,14 +264,10 @@ class RowsResponse(Message):
         if self.column_types:
             return list(self.column_types)
         # Infer from values
-        from dqlitewire.types import encode_value
 
         return [encode_value(v)[1] for v in row]
 
     def encode_body(self) -> bytes:
-        from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER
-        from dqlitewire.tuples import encode_row_header, encode_row_values
-
         result = encode_uint64(len(self.column_names))
 
         # Column names

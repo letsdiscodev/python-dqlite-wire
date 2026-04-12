@@ -16,7 +16,7 @@ class Header:
     Format (8 bytes):
     - size: uint32 - Size of message body in words (8-byte units)
     - type: uint8 - Message type code
-    - schema: uint8 - Schema version (currently always 0)
+    - schema: uint8 - Schema version (0 or 1; V1 extends param tuples and StmtResponse)
     - reserved: uint16 - Reserved (always 0)
     """
 

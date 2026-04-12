@@ -3,6 +3,8 @@
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, ProtocolError
 
+_COMPACT_THRESHOLD = 4096
+
 
 class WriteBuffer:
     """Buffer for building wire protocol messages.
@@ -122,6 +124,22 @@ class ReadBuffer:
                 "buffer is poisoned; call reset() and reconnect"
             ) from self._poisoned
 
+    def _check_torn_size(self, size_words: int) -> None:
+        """Poison and raise if size_words is structurally impossible.
+
+        The wire size field is 4 bytes (uint32 LE), so any value
+        > 0xFFFFFFFF indicates a torn read from a concurrent realloc
+        on a free-threaded build. Distinguish from legitimate oversized
+        messages so the non-poisoning DecodeError contract is preserved.
+        """
+        if size_words > 0xFFFFFFFF:
+            err = DecodeError(
+                f"torn header read: size_words={size_words:#x} (>32 bits, "
+                "indicates concurrent misuse on a free-threaded build)"
+            )
+            self.poison(err)
+            raise err
+
     def feed(self, data: bytes) -> None:
         """Add received data to the buffer.
 
@@ -239,23 +257,7 @@ class ReadBuffer:
             return None
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
-        # Sanity check for torn reads (issue 051). The wire size
-        # field is exactly 4 bytes (uint32 little-endian), so any
-        # value > 0xFFFFFFFF cannot come from a well-formed header
-        # — it can only come from a ``bytearray`` slice that
-        # observed torn ``ob_size``/``ob_start`` during a concurrent
-        # realloc on a free-threaded build, returning more than 4
-        # bytes. Distinguish this from legitimate oversized messages
-        # so the non-poisoning ``DecodeError`` recovery contract
-        # still applies to real wire-oversized messages while torn
-        # reads poison the buffer.
-        if size_words > 0xFFFFFFFF:
-            err = DecodeError(
-                f"torn header read: size_words={size_words:#x} (>32 bits, "
-                "indicates concurrent misuse on a free-threaded build)"
-            )
-            self.poison(err)
-            raise err
+        self._check_torn_size(size_words)
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
         if total_size > self._max_message_size:
             # Format size in hex: under concurrent misuse (see issue 033)
@@ -285,23 +287,7 @@ class ReadBuffer:
             return None
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
-        # Sanity check for torn reads (issue 051). The wire size
-        # field is exactly 4 bytes (uint32 little-endian), so any
-        # value > 0xFFFFFFFF cannot come from a well-formed header
-        # — it can only come from a ``bytearray`` slice that
-        # observed torn ``ob_size``/``ob_start`` during a concurrent
-        # realloc on a free-threaded build, returning more than 4
-        # bytes. Distinguish this from legitimate oversized messages
-        # so the non-poisoning ``DecodeError`` recovery contract
-        # still applies to real wire-oversized messages while torn
-        # reads poison the buffer.
-        if size_words > 0xFFFFFFFF:
-            err = DecodeError(
-                f"torn header read: size_words={size_words:#x} (>32 bits, "
-                "indicates concurrent misuse on a free-threaded build)"
-            )
-            self.poison(err)
-            raise err
+        self._check_torn_size(size_words)
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
@@ -351,23 +337,7 @@ class ReadBuffer:
             return False
 
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
-        # Sanity check for torn reads (issue 051). The wire size
-        # field is exactly 4 bytes (uint32 little-endian), so any
-        # value > 0xFFFFFFFF cannot come from a well-formed header
-        # — it can only come from a ``bytearray`` slice that
-        # observed torn ``ob_size``/``ob_start`` during a concurrent
-        # realloc on a free-threaded build, returning more than 4
-        # bytes. Distinguish this from legitimate oversized messages
-        # so the non-poisoning ``DecodeError`` recovery contract
-        # still applies to real wire-oversized messages while torn
-        # reads poison the buffer.
-        if size_words > 0xFFFFFFFF:
-            err = DecodeError(
-                f"torn header read: size_words={size_words:#x} (>32 bits, "
-                "indicates concurrent misuse on a free-threaded build)"
-            )
-            self.poison(err)
-            raise err
+        self._check_torn_size(size_words)
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         # Normal-sized message: only skip when complete to avoid
@@ -459,7 +429,7 @@ class ReadBuffer:
         caller fails fast with ``ProtocolError`` instead of reading
         from an inconsistent offset.
         """
-        if self._pos <= 4096:
+        if self._pos <= _COMPACT_THRESHOLD:
             return
         try:
             new_data = self._data[self._pos :]

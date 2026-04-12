@@ -56,22 +56,22 @@ from dqlitewire.constants import (
 from dqlitewire.exceptions import DecodeError, EncodeError, ProtocolError
 
 __all__ = [
+    "DecodeError",
+    "EncodeError",
     "MessageDecoder",
     "MessageEncoder",
     "PROTOCOL_VERSION",
     "PROTOCOL_VERSION_LEGACY",
     "ProtocolError",
-    "DecodeError",
-    "EncodeError",
-    "ReadBuffer",
     "ROW_DONE_BYTE",
     "ROW_DONE_MARKER",
     "ROW_PART_BYTE",
     "ROW_PART_MARKER",
-    "WriteBuffer",
+    "ReadBuffer",
     "RequestType",
     "ResponseType",
     "ValueType",
+    "WriteBuffer",
 ]
 
 __version__ = "0.1.0"

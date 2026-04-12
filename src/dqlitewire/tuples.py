@@ -242,7 +242,7 @@ def encode_row_values(values: Sequence[Any], types: Sequence[ValueType]) -> byte
             f"Row values count ({len(values)}) does not match types count ({len(types)})"
         )
     result = bytearray()
-    for value, vtype in zip(values, types, strict=False):
+    for value, vtype in zip(values, types, strict=True):
         encoded, _ = encode_value(value, vtype)
         result.extend(encoded)
     return bytes(result)

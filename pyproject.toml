@@ -31,6 +31,9 @@ Issues = "https://github.com/letsdiscodev/python-dqlite-wire/issues"
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=4.0", "mypy>=1.0", "ruff>=0.4"]
 
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-cov>=4.0", "mypy>=1.0", "ruff>=0.4"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/dqlitewire"]
 
