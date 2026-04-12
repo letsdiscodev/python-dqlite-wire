@@ -180,6 +180,7 @@ class MessageDecoder:
         # handshake before decoding any messages. Response decoders (client-side)
         # don't receive an inbound handshake, so they skip this check.
         self._handshake_done = not is_request
+        self._continuation_expected = False
 
     @property
     def version(self) -> int | None:
@@ -204,6 +205,7 @@ class MessageDecoder:
         handshake state to "not yet received". Use this after a reconnect.
         """
         self._buffer.reset()
+        self._continuation_expected = False
         if self._is_request:
             self._handshake_done = False
             self._version = None
@@ -280,9 +282,12 @@ class MessageDecoder:
                     f"got type {header.msg_type}"
                 )
 
-            return RowsResponse.decode_rows_continuation(
+            result = RowsResponse.decode_rows_continuation(
                 body, column_names, column_count, max_rows=max_rows
             )
+            if not result.has_more:
+                self._continuation_expected = False
+            return result
         except BaseException as e:
             # poison() stores Exception | None; wrap non-Exception
             # BaseException subclasses so the poison cause is still a
@@ -300,8 +305,17 @@ class MessageDecoder:
         Returns None if no complete message is available.
         Raises ProtocolError if called on a request decoder before decode_handshake().
         Raises ProtocolError if the decoder is poisoned.
+        Raises ProtocolError if a ROWS continuation is in progress
+        (call ``decode_continuation()`` until ``has_more`` is ``False``,
+        or ``reset()`` to abandon the stream).
         """
         self._buffer._check_poisoned()
+        if self._continuation_expected:
+            raise ProtocolError(
+                "Cannot decode a new message while a ROWS continuation "
+                "is in progress. Call decode_continuation() until "
+                "has_more is False, or call reset() to abandon the stream."
+            )
         if not self._handshake_done:
             raise ProtocolError(
                 "Protocol handshake not yet received. Call decode_handshake() before decode()."
@@ -321,7 +335,7 @@ class MessageDecoder:
         # struct.error, ValueError, UnicodeDecodeError, IndexError,
         # etc., and all of them mean the stream is desynchronized.
         try:
-            return self.decode_bytes(data)
+            msg = self.decode_bytes(data)
         except BaseException as e:
             # poison() stores Exception | None; wrap non-Exception
             # BaseException subclasses so the poison cause is still a
@@ -332,6 +346,11 @@ class MessageDecoder:
                 else RuntimeError(f"decode interrupted: {type(e).__name__}")
             )
             raise
+
+        if isinstance(msg, RowsResponse) and msg.has_more:
+            self._continuation_expected = True
+
+        return msg
 
     def decode_bytes(self, data: bytes) -> Message:
         """Decode a message from bytes.

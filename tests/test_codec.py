@@ -939,6 +939,149 @@ class TestDecoderContinuation:
             decoder.decode_continuation(column_names=["id"], column_count=1)
 
 
+class TestDecoderContinuationExpected:
+    """Regression tests for issue 058.
+
+    When ``decode()`` returns a ``RowsResponse`` with ``has_more=True``,
+    the decoder enters a "continuation expected" state. Calling ``decode()``
+    again before draining all continuations via ``decode_continuation()``
+    is a protocol error — the next frame in the buffer is a continuation
+    (no column header prefix), so ``decode()`` would misparse it. The
+    ``_continuation_expected`` flag makes this misuse fail loudly with
+    ``ProtocolError`` instead of producing silent stream desynchronization.
+    """
+
+    def test_decode_raises_when_continuation_expected(self) -> None:
+        """decode() must refuse while a ROWS continuation is in progress."""
+        from dqlitewire.constants import ROW_PART_MARKER, ValueType
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER]
+
+        # Build a RowsResponse with has_more=True
+        body = encode_uint64(1)  # column_count
+        body += encode_text("id")
+        body += encode_row_header(types)
+        body += encode_row_values([1], types)
+        body += encode_uint64(ROW_PART_MARKER)
+        header = Header(size_words=len(body) // 8, msg_type=7, schema=0)
+        msg_bytes = header.encode() + body
+
+        # Also feed a second (standalone) message that decode() would try to read
+        second = ResultResponse(last_insert_id=0, rows_affected=0).encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(msg_bytes + second)
+
+        # First decode() returns the initial RowsResponse with has_more=True
+        result = decoder.decode()
+        assert isinstance(result, RowsResponse)
+        assert result.has_more is True
+
+        # Second decode() must raise — we're in "continuation expected" state
+        with pytest.raises(ProtocolError, match="continuation"):
+            decoder.decode()
+
+    def test_decode_continuation_clears_flag(self) -> None:
+        """After draining all continuations (has_more=False), decode() works again."""
+        from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER]
+
+        # Initial frame (has_more=True)
+        body1 = encode_uint64(1)
+        body1 += encode_text("id")
+        body1 += encode_row_header(types)
+        body1 += encode_row_values([1], types)
+        body1 += encode_uint64(ROW_PART_MARKER)
+        h1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
+
+        # Continuation frame (has_more=False)
+        body2 = encode_row_header(types)
+        body2 += encode_row_values([2], types)
+        body2 += encode_uint64(ROW_DONE_MARKER)
+        h2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
+
+        # Normal message after the ROWS sequence
+        normal = ResultResponse(last_insert_id=5, rows_affected=3).encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(h1.encode() + body1 + h2.encode() + body2 + normal)
+
+        # decode initial
+        initial = decoder.decode()
+        assert isinstance(initial, RowsResponse) and initial.has_more
+
+        # decode continuation
+        cont = decoder.decode_continuation(
+            column_names=initial.column_names,
+            column_count=len(initial.column_names),
+        )
+        assert isinstance(cont, RowsResponse) and not cont.has_more
+
+        # Now decode() should work again
+        result = decoder.decode()
+        assert isinstance(result, ResultResponse)
+        assert result.last_insert_id == 5
+
+    def test_reset_clears_continuation_expected(self) -> None:
+        """reset() must clear the continuation-expected flag."""
+        from dqlitewire.constants import ROW_PART_MARKER, ValueType
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER]
+        body = encode_uint64(1)
+        body += encode_text("id")
+        body += encode_row_header(types)
+        body += encode_row_values([1], types)
+        body += encode_uint64(ROW_PART_MARKER)
+        header = Header(size_words=len(body) // 8, msg_type=7, schema=0)
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(header.encode() + body)
+        result = decoder.decode()
+        assert isinstance(result, RowsResponse) and result.has_more
+
+        # Reset should clear the flag
+        decoder.reset()
+        normal = ResultResponse(last_insert_id=0, rows_affected=0).encode()
+        decoder.feed(normal)
+        msg = decoder.decode()
+        assert isinstance(msg, ResultResponse)
+
+    def test_has_more_false_does_not_set_flag(self) -> None:
+        """A RowsResponse with has_more=False should NOT set the flag."""
+        from dqlitewire.messages.responses import RowsResponse
+
+        decoder = MessageDecoder(is_request=False)
+        msg = RowsResponse(
+            column_names=["x"],
+            column_types=[1],
+            rows=[[1]],
+            has_more=False,
+        )
+        normal = ResultResponse(last_insert_id=0, rows_affected=0).encode()
+        decoder.feed(msg.encode() + normal)
+
+        result = decoder.decode()
+        assert isinstance(result, RowsResponse) and not result.has_more
+
+        # decode() should work fine — no continuation expected
+        result2 = decoder.decode()
+        assert isinstance(result2, ResultResponse)
+
+
 class TestDecoderSkipMessage:
     """Test skip_message() and is_skipping on MessageDecoder."""
 
