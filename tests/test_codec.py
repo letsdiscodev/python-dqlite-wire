@@ -177,6 +177,24 @@ class TestMessageDecoder:
         with pytest.raises(EncodeError, match="header"):
             header.encode()
 
+    def test_header_encode_msg_type_overflow_raises_encode_error(self) -> None:
+        """Header with msg_type exceeding uint8 must raise EncodeError."""
+        from dqlitewire.exceptions import EncodeError
+        from dqlitewire.messages.base import Header
+
+        header = Header(size_words=1, msg_type=256, schema=0)
+        with pytest.raises(EncodeError, match="header"):
+            header.encode()
+
+    def test_header_encode_schema_overflow_raises_encode_error(self) -> None:
+        """Header with schema exceeding uint8 must raise EncodeError."""
+        from dqlitewire.exceptions import EncodeError
+        from dqlitewire.messages.base import Header
+
+        header = Header(size_words=1, msg_type=0, schema=256)
+        with pytest.raises(EncodeError, match="header"):
+            header.encode()
+
     def test_unknown_schema_version_raises(self) -> None:
         """Unknown schema versions should raise DecodeError, not silently default."""
         from dqlitewire.messages.base import Header
