@@ -379,6 +379,22 @@ class TestValue:
         assert decoded.minute == 30
         assert decoded.second == 45
 
+    def test_encode_decode_pre_epoch_datetime(self) -> None:
+        """Pre-epoch datetimes (year < 1000) must roundtrip correctly.
+        strftime('%Y') produces fewer than 4 digits on some platforms,
+        which breaks fromisoformat on decode.
+        """
+        import datetime
+
+        dt = datetime.datetime(1, 1, 1, tzinfo=datetime.UTC)
+        encoded, vtype = encode_value(dt)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.year == 1
+        assert decoded.month == 1
+        assert decoded.day == 1
+
     def test_decode_iso8601_empty_string_returns_none(self) -> None:
         """Empty ISO8601 string should decode as None, matching Go's nil."""
         encoded, _ = encode_value("", ValueType.ISO8601)

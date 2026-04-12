@@ -149,7 +149,7 @@ def decode_blob(data: bytes) -> tuple[bytes, int]:
 
 def _format_datetime_iso8601(value: datetime.datetime) -> str:
     """Format a datetime to ISO 8601 string matching Go's time format."""
-    formatted = value.strftime("%Y-%m-%d %H:%M:%S")
+    formatted = f"{value.year:04d}" + value.strftime("-%m-%d %H:%M:%S")
     if value.microsecond:
         formatted += f".{value.microsecond:06d}".rstrip("0")
     utcoffset = value.utcoffset()
