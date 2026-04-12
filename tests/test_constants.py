@@ -131,3 +131,23 @@ class TestPublicExports:
         from dqlitewire.messages.responses import NodeInfo as DirectNodeInfo
 
         assert NodeInfo is DirectNodeInfo
+
+
+class TestTypeDictCompleteness:
+    """Verify REQUEST_TYPES and RESPONSE_TYPES cover all enum members."""
+
+    def test_request_types_covers_all_enum_members(self) -> None:
+        from dqlitewire.codec import REQUEST_TYPES
+
+        for member in RequestType:
+            assert member.value in REQUEST_TYPES, (
+                f"RequestType.{member.name} ({member.value}) has no entry in REQUEST_TYPES"
+            )
+
+    def test_response_types_covers_all_enum_members(self) -> None:
+        from dqlitewire.codec import RESPONSE_TYPES
+
+        for member in ResponseType:
+            assert member.value in RESPONSE_TYPES, (
+                f"ResponseType.{member.name} ({member.value}) has no entry in RESPONSE_TYPES"
+            )

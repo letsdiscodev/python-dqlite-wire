@@ -1452,3 +1452,155 @@ class TestDecoderPoisonedState:
 
         with pytest.raises(ProtocolError, match="[Hh]andshake"):
             decoder.decode()
+
+
+class TestDecoderPoisonOnMalformedBody:
+    """Verify decode() poisons on a malformed message body — not just
+    on unknown types or oversized headers.
+    """
+
+    def test_decode_poisons_on_truncated_rows_body(self) -> None:
+        """A ROWS message with a valid header but a body too short for
+        the claimed column_count must poison the decoder.
+        """
+        import struct
+
+        from dqlitewire.constants import ResponseType
+        from dqlitewire.exceptions import ProtocolError
+
+        # Valid ROWS header (type 7), body = 8 bytes (column_count=1
+        # but no column name follows — decode_body will fail)
+        body = struct.pack("<Q", 1)
+        header = struct.pack("<IBBH", len(body) // 8, ResponseType.ROWS, 0, 0)
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(header + body)
+
+        with pytest.raises((DecodeError, ProtocolError)):
+            decoder.decode()
+
+        assert decoder.is_poisoned, (
+            "decode() must poison the buffer when decode_body raises on a malformed message body"
+        )
+
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.decode()
+
+
+class TestStreamingContinuation:
+    """End-to-end streaming decode tests for the continuation protocol.
+    These verify the full feed→decode→decode_continuation path with
+    realistic wire data (including column headers in continuations,
+    matching the C server format).
+    """
+
+    def test_full_streaming_continuation_roundtrip(self) -> None:
+        """082: encode multi-part, feed, decode initial + continuation,
+        verify all row data and column names.
+        """
+        from dqlitewire.constants import ValueType
+        from dqlitewire.messages.responses import RowsResponse
+
+        initial = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[[1, "alice"]],
+            has_more=True,
+        )
+        continuation = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[[2, "bob"]],
+            has_more=False,
+        )
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(initial.encode() + continuation.encode())
+
+        msg1 = decoder.decode()
+        assert isinstance(msg1, RowsResponse)
+        assert msg1.has_more is True
+        assert msg1.rows == [[1, "alice"]]
+        assert msg1.column_names == ["id", "name"]
+
+        msg2 = decoder.decode_continuation()
+        assert isinstance(msg2, RowsResponse)
+        assert msg2.has_more is False
+        assert msg2.rows == [[2, "bob"]]
+
+        # Decoder ready for next message
+        normal = ResultResponse(last_insert_id=0, rows_affected=0)
+        decoder.feed(normal.encode())
+        msg3 = decoder.decode()
+        assert isinstance(msg3, ResultResponse)
+
+    def test_failure_during_continuation_poisons(self) -> None:
+        """083: server sends FailureResponse instead of continuation."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.responses import FailureResponse, RowsResponse
+
+        initial = RowsResponse(
+            column_names=["id"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+        failure = FailureResponse(code=5, message="disk I/O error")
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(initial.encode() + failure.encode())
+
+        msg = decoder.decode()
+        assert isinstance(msg, RowsResponse) and msg.has_more
+
+        with pytest.raises(ProtocolError, match="disk I/O error"):
+            decoder.decode_continuation()
+
+        assert decoder.is_poisoned
+
+    def test_chained_continuations_part_part_done(self) -> None:
+        """084: three frames — initial(PART) + cont(PART) + cont(DONE)."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.messages.responses import RowsResponse
+
+        frame1 = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+        frame2 = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[2]],
+            has_more=True,
+        )
+        frame3 = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[3]],
+            has_more=False,
+        )
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(frame1.encode() + frame2.encode() + frame3.encode())
+
+        msg1 = decoder.decode()
+        assert isinstance(msg1, RowsResponse) and msg1.has_more
+
+        msg2 = decoder.decode_continuation()
+        assert isinstance(msg2, RowsResponse)
+        assert msg2.has_more is True
+        assert msg2.rows == [[2]]
+
+        msg3 = decoder.decode_continuation()
+        assert isinstance(msg3, RowsResponse)
+        assert msg3.has_more is False
+        assert msg3.rows == [[3]]
+
+        # Decoder should now accept decode() again
+        normal = ResultResponse(last_insert_id=0, rows_affected=0)
+        decoder.feed(normal.encode())
+        msg4 = decoder.decode()
+        assert isinstance(msg4, ResultResponse)
