@@ -267,6 +267,35 @@ class TestRowsResponseAliasing:
             "msg.column_types (issue 042 invariant)"
         )
 
+    def test_get_row_types_does_not_alias_row_types(self) -> None:
+        """Regression for issue 059.
+
+        The ``row_types`` branch of ``_get_row_types`` used to return
+        ``self.row_types[row_idx]`` by reference — the same aliasing
+        pattern that issue 052 fixed for the ``column_types`` fallback.
+        A caller who captured the return value and mutated it would
+        silently rewrite the message's internal ``row_types[i]`` list.
+        """
+        msg = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[1]],
+            has_more=False,
+        )
+
+        row_types = msg._get_row_types(0, [1])
+
+        assert row_types is not msg.row_types[0], (
+            "_get_row_types must return a fresh list, not alias row_types[i]"
+        )
+
+        row_types.append(ValueType.BLOB)
+        assert msg.row_types[0] == [ValueType.INTEGER], (
+            "mutating the _get_row_types return value must not affect "
+            "msg.row_types[i] (issue 042 invariant)"
+        )
+
 
 class TestRowsResponse:
     def test_empty_result(self) -> None:

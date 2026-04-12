@@ -254,7 +254,7 @@ class RowsResponse(Message):
         ``__post_init__`` establishes (issue 042, issue 052).
         """
         if self.row_types and row_idx < len(self.row_types):
-            return self.row_types[row_idx]
+            return list(self.row_types[row_idx])
         if self.column_types:
             return list(self.column_types)
         # Infer from values
