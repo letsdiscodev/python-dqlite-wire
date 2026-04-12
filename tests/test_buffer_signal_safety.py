@@ -429,3 +429,88 @@ class TestTornHeaderSizeSanityCheck:
             "oversized-but-wire-legal DecodeError must remain non-poisoning "
             "to preserve the skip_message() recovery contract"
         )
+
+
+class TestConsumeMethodSignalSafety:
+    """Regression tests for issue 061.
+
+    ``read_message()``, ``skip_message()``, and ``read_bytes()`` each
+    advance ``_pos`` and then call ``_maybe_compact()``. The CALL to
+    ``_maybe_compact`` is a CPython eval-breaker check point — a pending
+    signal is delivered there BEFORE the function body runs. If the
+    signal fires at that boundary, ``_pos`` has advanced (bytes consumed)
+    but ``_maybe_compact``'s own try/except never executes, so no poison
+    fires. The return value is lost with the unwinding frame.
+
+    The fix wraps the mutation block in ``try/except BaseException``
+    matching the template from issues 037 (``_maybe_compact``) and
+    048 (``feed``).
+    """
+
+    def test_torn_read_message_leaves_buffer_poisoned(self) -> None:
+        buf = ReadBuffer()
+        buf.feed(b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 8)
+
+        tracer = _raise_on_source_match("read_message", "self._maybe_compact()")
+
+        sys.settrace(tracer)
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                buf.read_message()
+        finally:
+            sys.settrace(None)
+
+        assert buf.is_poisoned, (
+            "read_message must poison when a BaseException escapes its mutation block"
+        )
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.read_message()
+
+    def test_torn_read_bytes_leaves_buffer_poisoned(self) -> None:
+        buf = ReadBuffer()
+        buf.feed(b"\x00" * 32)
+
+        tracer = _raise_on_source_match("read_bytes", "self._maybe_compact()")
+
+        sys.settrace(tracer)
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                buf.read_bytes(8)
+        finally:
+            sys.settrace(None)
+
+        assert buf.is_poisoned, (
+            "read_bytes must poison when a BaseException escapes its mutation block"
+        )
+
+    def test_torn_skip_message_leaves_buffer_poisoned(self) -> None:
+        buf = ReadBuffer()
+        buf.feed(b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 8)
+
+        tracer = _raise_on_source_match("skip_message", "self._maybe_compact()")
+
+        sys.settrace(tracer)
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                buf.skip_message()
+        finally:
+            sys.settrace(None)
+
+        assert buf.is_poisoned, (
+            "skip_message must poison when a BaseException escapes its mutation block"
+        )
+
+    def test_happy_paths_still_work(self) -> None:
+        """Sanity: without any interrupt, all three methods work normally."""
+        buf = ReadBuffer()
+        buf.feed(b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 8)
+        msg = buf.read_message()
+        assert msg is not None and not buf.is_poisoned
+
+        buf.feed(b"\x00" * 32)
+        data = buf.read_bytes(8)
+        assert data is not None and len(data) == 8
+
+        buf.feed(b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 8)
+        skipped = buf.skip_message()
+        assert skipped is True and not buf.is_poisoned

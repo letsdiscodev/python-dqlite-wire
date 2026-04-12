@@ -316,9 +316,17 @@ class ReadBuffer:
         if available < total_size:
             return None
 
-        message = bytes(self._data[self._pos : self._pos + total_size])
-        self._pos += total_size
-        self._maybe_compact()
+        try:
+            message = bytes(self._data[self._pos : self._pos + total_size])
+            self._pos += total_size
+            self._maybe_compact()
+        except BaseException as e:
+            if self._poisoned is None:
+                if isinstance(e, Exception):
+                    self._poisoned = e
+                else:
+                    self._poisoned = RuntimeError(f"read_message interrupted: {type(e).__name__}")
+            raise
 
         return message
 
@@ -362,24 +370,33 @@ class ReadBuffer:
             raise err
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
-        if total_size <= self._max_message_size:
-            # Normal-sized message: only skip when complete to avoid
-            # stream corruption from partially consumed messages.
-            if available < total_size:
-                return False
-            self._pos += total_size
-        else:
-            # Oversized message: discard what we have and track remaining
-            # bytes to be discarded in subsequent feed() calls.
-            # Cap to max_message_size to prevent amplification attacks where
-            # an 8-byte header claiming a ~32 GiB body would cause that much
-            # legitimate data to be silently discarded.
-            effective_total = min(total_size, self._max_message_size)
-            skip_now = min(effective_total, available)
-            self._pos += skip_now
-            self._skip_remaining = effective_total - skip_now
+        # Normal-sized message: only skip when complete to avoid
+        # stream corruption from partially consumed messages.
+        if total_size <= self._max_message_size and available < total_size:
+            return False
 
-        self._maybe_compact()
+        try:
+            if total_size <= self._max_message_size:
+                self._pos += total_size
+            else:
+                # Oversized message: discard what we have and track remaining
+                # bytes to be discarded in subsequent feed() calls.
+                # Cap to max_message_size to prevent amplification attacks
+                # where an 8-byte header claiming a ~32 GiB body would cause
+                # that much legitimate data to be silently discarded.
+                effective_total = min(total_size, self._max_message_size)
+                skip_now = min(effective_total, available)
+                self._pos += skip_now
+                self._skip_remaining = effective_total - skip_now
+            self._maybe_compact()
+        except BaseException as e:
+            if self._poisoned is None:
+                if isinstance(e, Exception):
+                    self._poisoned = e
+                else:
+                    self._poisoned = RuntimeError(f"skip_message interrupted: {type(e).__name__}")
+            raise
+
         return self._skip_remaining == 0
 
     def read_bytes(self, n: int) -> bytes | None:
@@ -393,9 +410,17 @@ class ReadBuffer:
         if available < n:
             return None
 
-        data = bytes(self._data[self._pos : self._pos + n])
-        self._pos += n
-        self._maybe_compact()
+        try:
+            data = bytes(self._data[self._pos : self._pos + n])
+            self._pos += n
+            self._maybe_compact()
+        except BaseException as e:
+            if self._poisoned is None:
+                if isinstance(e, Exception):
+                    self._poisoned = e
+                else:
+                    self._poisoned = RuntimeError(f"read_bytes interrupted: {type(e).__name__}")
+            raise
         return data
 
     def peek_bytes(self, n: int) -> bytes | None:
