@@ -905,6 +905,7 @@ class TestDecoderContinuation:
     def test_decode_continuation_returns_none_when_no_data(self) -> None:
         """decode_continuation should return None when no message is available."""
         decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
         result = decoder.decode_continuation(column_names=["x"], column_count=1)
         assert result is None
 
@@ -917,6 +918,7 @@ class TestDecoderContinuation:
         failure_bytes = failure.encode()
 
         decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
         decoder.feed(failure_bytes)
 
         with pytest.raises(ProtocolError, match="disk I/O error") as exc_info:
@@ -933,6 +935,7 @@ class TestDecoderContinuation:
         result_bytes = result.encode()
 
         decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
         decoder.feed(result_bytes)
 
         with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
@@ -1080,6 +1083,64 @@ class TestDecoderContinuationExpected:
         # decode() should work fine — no continuation expected
         result2 = decoder.decode()
         assert isinstance(result2, ResultResponse)
+
+
+class TestContinuationFlagCompleteness:
+    """Regression tests for issues 063 and 064.
+
+    Issue 058 added the ``_continuation_expected`` flag and made
+    ``decode()`` check it. Issues 063 and 064 complete the state
+    machine: ``decode_continuation()`` must refuse when the flag is
+    False (no continuation in progress), and ``skip_message()`` must
+    refuse when the flag is True (continuation in progress).
+    """
+
+    def test_decode_continuation_raises_when_not_expected(self) -> None:
+        """decode_continuation() must refuse when no continuation is
+        in progress — calling it without a prior has_more=True would
+        silently consume and misparse the next message.
+        """
+        from dqlitewire.exceptions import ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        result = ResultResponse(last_insert_id=0, rows_affected=0)
+        decoder.feed(result.encode())
+
+        with pytest.raises(ProtocolError, match="no ROWS continuation"):
+            decoder.decode_continuation(column_names=["x"], column_count=1)
+
+        # The message must NOT have been consumed
+        assert decoder.has_message(), (
+            "decode_continuation must not consume the message when the guard fires"
+        )
+        # Caller can still decode it correctly
+        msg = decoder.decode()
+        assert isinstance(msg, ResultResponse)
+
+    def test_skip_message_raises_during_continuation(self) -> None:
+        """skip_message() must refuse while a continuation is in progress."""
+        from dqlitewire.constants import ROW_PART_MARKER, ValueType
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER]
+        body = encode_uint64(1)
+        body += encode_text("id")
+        body += encode_row_header(types)
+        body += encode_row_values([1], types)
+        body += encode_uint64(ROW_PART_MARKER)
+        header = Header(size_words=len(body) // 8, msg_type=7, schema=0)
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(header.encode() + body)
+        result = decoder.decode()
+        assert isinstance(result, RowsResponse) and result.has_more
+
+        with pytest.raises(ProtocolError, match="continuation"):
+            decoder.skip_message()
 
 
 class TestDecoderSkipMessage:
@@ -1271,6 +1332,7 @@ class TestDecoderPoisonedState:
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
         # Feed a non-ROWS message where decode_continuation expects ROWS.
         # An EmptyResponse is type 127, body is empty.
         empty = EmptyResponse().encode()

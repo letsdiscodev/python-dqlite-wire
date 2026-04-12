@@ -226,7 +226,17 @@ class MessageDecoder:
         returns False until the full message has been discarded
         (check is_skipping). For normal-sized messages, waits until
         the full message is available before skipping.
+
+        Raises ProtocolError if a ROWS continuation is in progress —
+        use ``decode_continuation()`` to drain, or ``reset()`` to
+        abandon the stream.
         """
+        if self._continuation_expected:
+            raise ProtocolError(
+                "Cannot skip a message while a ROWS continuation is "
+                "in progress. Call decode_continuation() to drain, "
+                "or reset() to abandon the stream."
+            )
         return self._buffer.skip_message()
 
     @property
@@ -253,8 +263,15 @@ class MessageDecoder:
             max_rows: Maximum rows to decode per message.
 
         Returns None if no complete message is available.
+        Raises ProtocolError if no continuation is in progress
+        (use ``decode()`` for the initial message).
         """
         self._buffer._check_poisoned()
+        if not self._continuation_expected:
+            raise ProtocolError(
+                "decode_continuation() called but no ROWS continuation "
+                "is in progress. Use decode() for the initial message."
+            )
         data = self._buffer.read_message()
         if data is None:
             return None
