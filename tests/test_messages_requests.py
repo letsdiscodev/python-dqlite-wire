@@ -521,6 +521,18 @@ class TestRequestFieldValidation:
         HeartbeatRequest(timestamp=0)
         OpenRequest(name="test.db", flags=0, vfs="")
 
+    def test_exec_sql_accepts_large_db_id(self) -> None:
+        """134: ExecSqlRequest uses uint64 db_id, accepting values > uint32 max."""
+        msg = ExecSqlRequest(db_id=2**32, sql="SELECT 1")
+        assert msg.db_id == 2**32
+
+    def test_exec_rejects_large_db_id(self) -> None:
+        """134: ExecRequest uses uint32 db_id, rejecting values > uint32 max."""
+        import pytest
+
+        with pytest.raises(ValueError, match="db_id"):
+            ExecRequest(db_id=2**32, stmt_id=0)
+
     def test_bool_rejected_for_uint32_db_id(self) -> None:
         """Bool must not be silently accepted as a uint32 field."""
         import pytest
