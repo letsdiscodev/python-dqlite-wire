@@ -133,6 +133,30 @@ class TestPublicExports:
         assert NodeInfo is DirectNodeInfo
 
 
+class TestNodeRoleValues:
+    """Verify NodeRole enum matches Go's protocol constants."""
+
+    def test_voter_is_0(self) -> None:
+        from dqlitewire.constants import NodeRole
+
+        assert NodeRole.VOTER == 0
+
+    def test_standby_is_1(self) -> None:
+        from dqlitewire.constants import NodeRole
+
+        assert NodeRole.STANDBY == 1
+
+    def test_spare_is_2(self) -> None:
+        from dqlitewire.constants import NodeRole
+
+        assert NodeRole.SPARE == 2
+
+    def test_importable_from_top_level(self) -> None:
+        from dqlitewire import NodeRole
+
+        assert NodeRole.VOTER == 0
+
+
 class TestTypeDictCompleteness:
     """Verify REQUEST_TYPES and RESPONSE_TYPES cover all enum members."""
 

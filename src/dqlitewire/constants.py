@@ -74,3 +74,15 @@ class ValueType(IntEnum):
     UNIXTIME = 9  # Unix time (deprecated, maps to INTEGER)
     ISO8601 = 10  # ISO8601 string (maps to TEXT)
     BOOLEAN = 11  # Boolean (maps to INTEGER)
+
+
+class NodeRole(IntEnum):
+    """Node roles in a dqlite cluster.
+
+    Matches Go's protocol.Voter/StandBy/Spare and C's
+    DQLITE_VOTER/DQLITE_STANDBY/DQLITE_SPARE.
+    """
+
+    VOTER = 0
+    STANDBY = 1
+    SPARE = 2
