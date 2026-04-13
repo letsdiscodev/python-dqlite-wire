@@ -1616,3 +1616,40 @@ class TestStreamingContinuation:
         decoder.feed(normal.encode())
         msg4 = decoder.decode()
         assert isinstance(msg4, ResultResponse)
+
+    def test_decode_continuation_rejects_unsupported_schema(self) -> None:
+        """099: decode_continuation must validate schema like decode_bytes."""
+        import struct
+
+        from dqlitewire.constants import ValueType
+        from dqlitewire.messages.responses import RowsResponse
+
+        # Build an initial ROWS frame with has_more=True
+        initial = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+        # Build a continuation frame with schema=1 (unsupported for ROWS)
+        cont_body = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[2]],
+            has_more=False,
+        ).encode_body()
+        # Manually build header with schema=1
+        from dqlitewire.constants import ResponseType
+
+        size_words = len(cont_body) // 8
+        bad_header = struct.pack("<IBBH", size_words, ResponseType.ROWS, 1, 0)
+        bad_frame = bad_header + cont_body
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(initial.encode() + bad_frame)
+
+        msg1 = decoder.decode()
+        assert isinstance(msg1, RowsResponse) and msg1.has_more
+
+        with pytest.raises(DecodeError, match="Unsupported schema version"):
+            decoder.decode_continuation()

@@ -274,6 +274,13 @@ class MessageDecoder:
             header = Header.decode(data[:HEADER_SIZE])
             body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
 
+            max_schema = _MAX_SCHEMA.get(header.msg_type, 0)
+            if header.schema > max_schema:
+                raise DecodeError(
+                    f"Unsupported schema version {header.schema} for message type "
+                    f"{header.msg_type} (max supported: {max_schema})"
+                )
+
             if header.msg_type == ResponseType.FAILURE:
                 failure = FailureResponse.decode_body(body, schema=header.schema)
                 raise ProtocolError(
