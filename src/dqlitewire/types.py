@@ -172,6 +172,11 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
     Returns (encoded_data, value_type).
     """
     if value is None:
+        if value_type is not None and value_type != ValueType.NULL:
+            raise EncodeError(
+                f"Cannot encode None with explicit type {value_type.name}. "
+                f"Pass value_type=ValueType.NULL or omit value_type."
+            )
         return b"\x00" * 8, ValueType.NULL
 
     if value_type is None:

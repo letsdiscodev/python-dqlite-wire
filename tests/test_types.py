@@ -736,6 +736,28 @@ class TestValue:
         with pytest.raises(EncodeError, match="Cannot encode non-None value"):
             encode_value("hello", ValueType.NULL)
 
+    def test_encode_value_none_with_explicit_integer_raises(self) -> None:
+        """None with explicit ValueType.INTEGER should raise EncodeError."""
+        with pytest.raises(EncodeError, match="Cannot encode None with explicit type"):
+            encode_value(None, ValueType.INTEGER)
+
+    def test_encode_value_none_with_explicit_text_raises(self) -> None:
+        """None with explicit ValueType.TEXT should raise EncodeError."""
+        with pytest.raises(EncodeError, match="Cannot encode None with explicit type"):
+            encode_value(None, ValueType.TEXT)
+
+    def test_encode_value_none_with_explicit_null_ok(self) -> None:
+        """None with explicit ValueType.NULL should succeed."""
+        encoded, vtype = encode_value(None, ValueType.NULL)
+        assert vtype == ValueType.NULL
+        assert encoded == b"\x00" * 8
+
+    def test_encode_value_none_without_type_ok(self) -> None:
+        """None without explicit type should succeed (infer NULL)."""
+        encoded, vtype = encode_value(None)
+        assert vtype == ValueType.NULL
+        assert encoded == b"\x00" * 8
+
     def test_parse_iso8601_rejects_garbage(self) -> None:
         """Unparseable ISO 8601 string should raise DecodeError."""
         from dqlitewire.types import _parse_iso8601
