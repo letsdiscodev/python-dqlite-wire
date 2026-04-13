@@ -901,6 +901,26 @@ class TestFilesResponse:
         assert decoded.files["file1.db"] == b"\x01\x02\x03"
         assert decoded.files["file2.db"] == b"\x04\x05\x06\x07\x08\x09\x0a"
 
+    def test_roundtrip_empty_content(self) -> None:
+        """116: zero-length file content must round-trip correctly."""
+        msg = FilesResponse(files={"empty.db": b""})
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files == {"empty.db": b""}
+
+    def test_roundtrip_mixed_empty_and_nonempty(self) -> None:
+        """116: empty and non-empty files in the same response."""
+        msg = FilesResponse(
+            files={
+                "main.db": b"data",
+                "empty.db": b"",
+                "wal.db": b"more data",
+            }
+        )
+        encoded = msg.encode()
+        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.files == msg.files
+
     def test_aligned_content_has_no_padding(self) -> None:
         """Word-aligned content must not produce any extra padding bytes."""
         content = b"\x00" * 16  # exactly 2 words
