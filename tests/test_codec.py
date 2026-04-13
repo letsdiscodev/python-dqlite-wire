@@ -636,6 +636,29 @@ class TestRoundTrip:
         assert isinstance(decoded, PrepareRequest)
         assert decoded.schema == 1
 
+    def test_stmt_response_v1_through_codec(self) -> None:
+        """112: StmtResponse V1 must pass through the codec _MAX_SCHEMA gate."""
+        msg = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=42)
+        encoded = msg.encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(encoded)
+        decoded = decoder.decode()
+
+        assert isinstance(decoded, StmtResponse)
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 2
+        assert decoded.num_params == 3
+        assert decoded.tail_offset == 42
+
+    def test_stmt_response_v1_through_decode_message(self) -> None:
+        """112: StmtResponse V1 via decode_message convenience function."""
+        msg = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=42)
+        encoded = msg.encode()
+        decoded = decode_message(encoded)
+        assert isinstance(decoded, StmtResponse)
+        assert decoded.tail_offset == 42
+
     def test_decode_bytes_slices_body_to_header_size(self) -> None:
         """decode_bytes() must not pass trailing bytes to the message decoder.
 
