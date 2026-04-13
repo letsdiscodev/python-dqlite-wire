@@ -1586,6 +1586,32 @@ class TestStreamingContinuation:
 
         assert decoder.is_poisoned
 
+    def test_failure_during_continuation_clears_flag(self) -> None:
+        """103: _continuation_expected must be False after FailureResponse."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.responses import FailureResponse, RowsResponse
+
+        initial = RowsResponse(
+            column_names=["id"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+        failure = FailureResponse(code=5, message="disk I/O error")
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(initial.encode() + failure.encode())
+
+        msg = decoder.decode()
+        assert isinstance(msg, RowsResponse) and msg.has_more
+
+        with pytest.raises(ProtocolError, match="disk I/O error"):
+            decoder.decode_continuation()
+
+        # The continuation flag must be cleared even though the buffer is poisoned
+        assert not decoder._continuation_expected
+
     def test_chained_continuations_part_part_done(self) -> None:
         """084: three frames — initial(PART) + cont(PART) + cont(DONE)."""
         from dqlitewire.constants import ValueType
