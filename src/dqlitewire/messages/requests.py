@@ -507,6 +507,12 @@ class ClusterRequest(Message):
 
     def __post_init__(self) -> None:
         _check_uint64("format", self.format)
+        if self.format == 0:
+            raise ValueError(
+                "ClusterRequest format=0 (V0) is not supported. "
+                "ServersResponse only decodes V1 format (with node role fields). "
+                "Use format=1."
+            )
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)

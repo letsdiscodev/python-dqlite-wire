@@ -1,5 +1,7 @@
 """Tests for request message encoding/decoding."""
 
+import pytest
+
 from dqlitewire.constants import HEADER_SIZE, RequestType
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.requests import (
@@ -401,6 +403,11 @@ class TestClusterRequest:
         """Go client defaults to DQLITE_REQUEST_CLUSTER_FORMAT_V1 (1)."""
         msg = ClusterRequest()
         assert msg.format == 1
+
+    def test_format_v0_rejected(self) -> None:
+        """120: V0 cluster format not supported by ServersResponse decoder."""
+        with pytest.raises(ValueError, match="format=0.*not supported"):
+            ClusterRequest(format=0)
 
 
 class TestTransferRequest:
