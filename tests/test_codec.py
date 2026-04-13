@@ -1726,3 +1726,39 @@ class TestStreamingContinuation:
 
         with pytest.raises(DecodeError, match="Unsupported schema version"):
             decoder.decode_continuation()
+
+    def test_oversized_continuation_frame_clears_flag_and_poisons(self) -> None:
+        """123: oversized continuation frame must clear flag and poison."""
+        import struct
+
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.responses import RowsResponse
+
+        initial = RowsResponse(
+            column_names=["id"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._buffer._max_message_size = 128
+
+        # Oversized continuation header: 200 words = 1600 bytes > 128
+        oversized_header = struct.pack("<IBBH", 200, 7, 0, 0)  # type 7 = ROWS
+
+        decoder.feed(initial.encode() + oversized_header)
+
+        msg = decoder.decode()
+        assert isinstance(msg, RowsResponse) and msg.has_more
+
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            decoder.decode_continuation()
+
+        # Flag must be cleared and buffer poisoned
+        assert not decoder._continuation_expected
+        assert decoder.is_poisoned
+
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.decode()

@@ -276,7 +276,17 @@ class MessageDecoder:
                 "decode_continuation() called but no ROWS continuation "
                 "is in progress. Use decode() for the initial message."
             )
-        data = self._buffer.read_message()
+        try:
+            data = self._buffer.read_message()
+        except DecodeError:
+            # Oversized continuation frame — no skip_message() recovery
+            # available during continuation mode. Clear the flag and
+            # poison so the caller knows reset() is required.
+            self._continuation_expected = False
+            self._buffer.poison(
+                DecodeError("Oversized ROWS continuation frame; call reset() to recover")
+            )
+            raise
         if data is None:
             return None
 
