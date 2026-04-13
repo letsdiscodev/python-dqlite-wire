@@ -302,8 +302,8 @@ class MessageDecoder:
                 )
 
             if header.msg_type == ResponseType.FAILURE:
-                failure = FailureResponse.decode_body(body, schema=header.schema)
                 self._continuation_expected = False
+                failure = FailureResponse.decode_body(body, schema=header.schema)
                 raise ProtocolError(
                     f"Server error during ROWS continuation: [{failure.code}] {failure.message}"
                 )
