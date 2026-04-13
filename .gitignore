@@ -25,6 +25,9 @@ wheels/
 venv/
 ENV/
 
+# uv lock file (library — consumers resolve their own deps)
+uv.lock
+
 # IDE
 .idea/
 .vscode/
