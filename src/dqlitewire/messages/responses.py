@@ -12,7 +12,7 @@ from dqlitewire.constants import (
     ResponseType,
     ValueType,
 )
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import (
     RowMarker,
@@ -264,7 +264,21 @@ class RowsResponse(Message):
         return [encode_value(v)[1] for v in row]
 
     def encode_body(self) -> bytes:
-        result = encode_uint64(len(self.column_names))
+        col_count = len(self.column_names)
+        if self.column_types and len(self.column_types) != col_count:
+            raise EncodeError(
+                f"column_types length ({len(self.column_types)}) != "
+                f"column_names length ({col_count})"
+            )
+        for i, row in enumerate(self.rows):
+            if len(row) != col_count:
+                raise EncodeError(f"Row {i} has {len(row)} values, expected {col_count}")
+            if self.row_types and i < len(self.row_types) and len(self.row_types[i]) != col_count:
+                raise EncodeError(
+                    f"row_types[{i}] has {len(self.row_types[i])} types, expected {col_count}"
+                )
+
+        result = encode_uint64(col_count)
 
         # Column names
         for name in self.column_names:

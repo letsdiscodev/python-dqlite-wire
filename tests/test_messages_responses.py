@@ -1,6 +1,9 @@
 """Tests for response message encoding/decoding."""
 
+import pytest
+
 from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
+from dqlitewire.exceptions import EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
     DbResponse,
@@ -574,6 +577,48 @@ class TestRowsResponse:
         # One fewer than max_rows should succeed
         decoded = RowsResponse.decode_body(build_body(2), max_rows=3)
         assert len(decoded.rows) == 2
+
+
+class TestRowsResponseEncodeValidation:
+    """Encode-time validation of column count consistency."""
+
+    def test_mismatched_column_types_length(self) -> None:
+        resp = RowsResponse(
+            column_names=["a", "b", "c"],
+            column_types=[ValueType.INTEGER],
+            rows=[],
+        )
+        with pytest.raises(EncodeError, match="column_types length"):
+            resp.encode_body()
+
+    def test_mismatched_row_values_length(self) -> None:
+        resp = RowsResponse(
+            column_names=["a", "b"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            row_types=[[ValueType.INTEGER, ValueType.TEXT]],
+            rows=[[1]],  # only 1 value, expected 2
+        )
+        with pytest.raises(EncodeError, match="Row 0 has 1 values, expected 2"):
+            resp.encode_body()
+
+    def test_mismatched_row_types_length(self) -> None:
+        resp = RowsResponse(
+            column_names=["a", "b"],
+            row_types=[[ValueType.INTEGER]],  # only 1 type, expected 2
+            rows=[[1, 2]],
+        )
+        with pytest.raises(EncodeError, match="row_types\\[0\\] has 1 types, expected 2"):
+            resp.encode_body()
+
+    def test_empty_column_types_with_rows_ok(self) -> None:
+        """Empty column_types is valid — types are inferred from values."""
+        resp = RowsResponse(
+            column_names=["a"],
+            rows=[[42]],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.rows == [[42]]
 
 
 class TestRowsResponseValueTypes:
