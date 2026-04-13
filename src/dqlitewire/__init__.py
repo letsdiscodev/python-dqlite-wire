@@ -41,7 +41,7 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
     )
 
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
-from dqlitewire.codec import MessageDecoder, MessageEncoder
+from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_LEGACY,
@@ -72,6 +72,8 @@ __all__ = [
     "ResponseType",
     "ValueType",
     "WriteBuffer",
+    "decode_message",
+    "encode_message",
 ]
 
 __version__ = "0.1.0"
