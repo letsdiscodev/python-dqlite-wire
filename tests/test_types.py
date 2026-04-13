@@ -353,6 +353,32 @@ class TestValue:
         assert decoded.month == 1
         assert decoded.day == 15
 
+    def test_encode_date_explicit_iso8601(self) -> None:
+        """114: datetime.date with explicit ValueType.ISO8601 must work."""
+        import datetime
+
+        d = datetime.date(2024, 1, 15)
+        encoded, vtype = encode_value(d, ValueType.ISO8601)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        # Round-trip produces datetime, not date
+        assert isinstance(decoded, datetime.datetime)
+        assert decoded.year == 2024
+        assert decoded.month == 1
+        assert decoded.day == 15
+
+    def test_encode_date_explicit_iso8601_pre_epoch(self) -> None:
+        """114: pre-epoch date with explicit ISO8601 type."""
+        import datetime
+
+        d = datetime.date(1, 1, 1)
+        encoded, vtype = encode_value(d, ValueType.ISO8601)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert decoded.year == 1
+        assert decoded.month == 1
+        assert decoded.day == 1
+
     def test_decode_integer(self) -> None:
         value, consumed = decode_value(encode_int64(42), ValueType.INTEGER)
         assert value == 42
