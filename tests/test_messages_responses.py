@@ -621,6 +621,64 @@ class TestRowsResponseEncodeValidation:
         assert decoded.rows == [[42]]
 
 
+class TestRowsResponseWordBoundary:
+    """115: row header padding crosses word boundary at 17+ columns."""
+
+    def test_16_columns_exact_word(self) -> None:
+        """16 columns = 8 nibble bytes = exactly 1 word, no padding."""
+        n = 16
+        types = [ValueType.INTEGER] * n
+        names = [f"c{i}" for i in range(n)]
+        values = list(range(n))
+        resp = RowsResponse(
+            column_names=names,
+            column_types=types,
+            row_types=[types],
+            rows=[values],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.column_names == names
+        assert decoded.rows == [values]
+        assert decoded.row_types[0] == types
+
+    def test_17_columns_crosses_word_boundary(self) -> None:
+        """17 columns = 9 nibble bytes, padded to 16 = 2 words."""
+        n = 17
+        types = [ValueType.INTEGER] * n
+        names = [f"c{i}" for i in range(n)]
+        values = list(range(n))
+        resp = RowsResponse(
+            column_names=names,
+            column_types=types,
+            row_types=[types],
+            rows=[values],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.column_names == names
+        assert decoded.rows == [values]
+        assert decoded.row_types[0] == types
+
+    def test_33_columns_third_word_boundary(self) -> None:
+        """33 columns = 17 nibble bytes, padded to 24 = 3 words."""
+        n = 33
+        types = [ValueType.INTEGER] * n
+        names = [f"c{i}" for i in range(n)]
+        values = list(range(n))
+        resp = RowsResponse(
+            column_names=names,
+            column_types=types,
+            row_types=[types],
+            rows=[values],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.column_names == names
+        assert decoded.rows == [values]
+        assert decoded.row_types[0] == types
+
+
 class TestRowsResponseValueTypes:
     """Full RowsResponse round-trips with BOOLEAN, UNIXTIME, ISO8601, and BLOB."""
 
