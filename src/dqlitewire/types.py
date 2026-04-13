@@ -281,9 +281,12 @@ def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
     elif value_type == ValueType.INTEGER:
         return decode_int64(data), 8
     elif value_type == ValueType.UNIXTIME:
-        # Return raw int64 to match Go's getInt64() behavior and preserve
-        # round-trip identity. Previously returned datetime.datetime, which
-        # caused type-changing re-encode (UNIXTIME → ISO8601).
+        # Return raw int64 to preserve round-trip identity at the wire level.
+        # Previously returned datetime.datetime, which caused type-changing
+        # re-encode (UNIXTIME → ISO8601). See issue 006.
+        # Note: Go's Rows.Next() converts this to time.Time, but that
+        # conversion belongs in a higher-level client layer, not the wire
+        # protocol codec.
         return decode_int64(data), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
