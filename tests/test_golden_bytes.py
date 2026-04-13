@@ -222,7 +222,7 @@ class TestGoldenResponses:
             + _u64(1)  # column_count
             + _text("flag")
             + row_header
-            + _i64(1)  # BOOLEAN True encoded as int64(1)
+            + _u64(1)  # BOOLEAN True encoded as uint64(1)
             + done_marker
         )
 
