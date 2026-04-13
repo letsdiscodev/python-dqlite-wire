@@ -455,6 +455,39 @@ class TestReadBuffer:
         assert data is not None
         assert data == valid_encoded
 
+    def test_single_feed_completes_skip_and_appends_message(self) -> None:
+        """118: single feed() that completes skip AND contains next valid message."""
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=64)
+        # 200 words = 1600 bytes body, well over 64-byte limit
+        oversized_header = struct.pack("<IBBH", 200, 0, 0, 0)
+
+        buf.feed(oversized_header)
+        assert buf.has_message() is True
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.read_message()
+        assert buf.skip_message() is False
+        assert buf.is_skipping
+
+        # Build a single payload: remaining skip bytes + valid message
+        remaining = buf._skip_remaining
+        valid_msg = LeaderRequest()
+        valid_encoded = valid_msg.encode()
+        combined = b"\xcc" * remaining + valid_encoded
+
+        buf.feed(combined)
+
+        assert not buf.is_skipping
+        assert buf.has_message()
+        data = buf.read_message()
+        assert data is not None
+        assert data == valid_encoded
+
     def test_skip_oversized_across_multiple_feeds(self) -> None:
         """Oversized message bytes should be discarded across multiple feed() calls.
 
