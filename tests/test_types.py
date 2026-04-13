@@ -379,6 +379,49 @@ class TestValue:
         assert decoded.minute == 30
         assert decoded.second == 45
 
+    def test_encode_decode_iso8601_positive_offset(self) -> None:
+        """113: non-UTC positive offset must round-trip correctly."""
+        import datetime
+
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=tz)
+        encoded, vtype = encode_value(dt, ValueType.ISO8601)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert decoded == dt
+
+    def test_encode_decode_iso8601_negative_offset(self) -> None:
+        """113: non-UTC negative offset must round-trip correctly."""
+        import datetime
+
+        tz = datetime.timezone(datetime.timedelta(hours=-7))
+        dt = datetime.datetime(2024, 7, 4, 14, 0, 0, tzinfo=tz)
+        encoded, vtype = encode_value(dt, ValueType.ISO8601)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert decoded == dt
+
+    def test_encode_decode_iso8601_negative_fractional_offset(self) -> None:
+        """113: negative fractional-hour offset (-09:30) must round-trip."""
+        import datetime
+
+        tz = datetime.timezone(datetime.timedelta(hours=-9, minutes=-30))
+        dt = datetime.datetime(2024, 3, 1, 8, 0, 0, tzinfo=tz)
+        encoded, vtype = encode_value(dt, ValueType.ISO8601)
+        assert vtype == ValueType.ISO8601
+        decoded, _ = decode_value(encoded, ValueType.ISO8601)
+        assert decoded == dt
+
+    def test_format_iso8601_positive_offset_string(self) -> None:
+        """113: verify the formatted string for positive offset."""
+        import datetime
+
+        from dqlitewire.types import _format_datetime_iso8601
+
+        tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        dt = datetime.datetime(2024, 1, 15, 10, 30, 0, tzinfo=tz)
+        assert _format_datetime_iso8601(dt) == "2024-01-15 10:30:00+05:30"
+
     def test_encode_decode_pre_epoch_datetime(self) -> None:
         """Pre-epoch datetimes (year < 1000) must roundtrip correctly.
         strftime('%Y') produces fewer than 4 digits on some platforms,
