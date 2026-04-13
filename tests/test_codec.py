@@ -80,6 +80,21 @@ class TestMessageEncoder:
 
 
 class TestMessageDecoder:
+    def test_decoder_rejects_invalid_version(self) -> None:
+        """122: response decoder must reject invalid version at construction."""
+        with pytest.raises(ProtocolError, match="Unsupported protocol version"):
+            MessageDecoder(version=0xDEADBEEF)
+
+    def test_decoder_accepts_legacy_version(self) -> None:
+        """122: PROTOCOL_VERSION_LEGACY must be accepted."""
+        decoder = MessageDecoder(version=PROTOCOL_VERSION_LEGACY)
+        assert decoder.version == PROTOCOL_VERSION_LEGACY
+
+    def test_decoder_request_ignores_version(self) -> None:
+        """122: request decoders ignore version param (comes from handshake)."""
+        decoder = MessageDecoder(is_request=True, version=0xDEADBEEF)
+        assert decoder.version is None  # not set until handshake
+
     def test_decode_handshake(self) -> None:
         decoder = MessageDecoder(is_request=True)
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))

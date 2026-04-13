@@ -175,6 +175,11 @@ class MessageDecoder:
                     for pre-1.0 dqlite servers (affects LeaderResponse format).
                     Ignored for request decoders (version comes from handshake).
         """
+        if not is_request and version not in _SUPPORTED_VERSIONS:
+            raise ProtocolError(
+                f"Unsupported protocol version: {version:#x}. "
+                f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
+            )
         self._buffer = ReadBuffer()
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
