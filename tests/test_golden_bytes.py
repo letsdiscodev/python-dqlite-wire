@@ -237,6 +237,21 @@ class TestGoldenResponses:
         assert isinstance(msg, RowsResponse)
         assert msg.rows == [[True]]
 
+    def test_rows_response_part_marker(self) -> None:
+        """145: PART marker must be 0xEEEEEEEEEEEEEEEE on the wire."""
+        part_marker = _u64(0xEEEEEEEEEEEEEEEE)
+
+        msg = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[1]],
+            has_more=True,
+        )
+        body = msg.encode_body()
+        # Last 8 bytes should be the PART marker
+        assert body[-8:] == part_marker
+
 
 class TestGoldenHandshake:
     """Verify handshake encoding."""
