@@ -9,7 +9,7 @@ from dqlitewire.codec import (
     encode_message,
 )
 from dqlitewire.constants import PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, ProtocolError
 from dqlitewire.messages import (
     ClientRequest,
     DbResponse,
@@ -49,6 +49,21 @@ class TestMessageEncoder:
         """MessageEncoder should not have unused _buffer attribute."""
         encoder = MessageEncoder()
         assert not hasattr(encoder, "_buffer")
+
+    def test_encoder_rejects_invalid_version(self) -> None:
+        """102: invalid handshake version should raise at construction time."""
+        with pytest.raises(ProtocolError, match="Unsupported protocol version"):
+            MessageEncoder(version=0xDEADBEEF)
+
+    def test_encoder_accepts_legacy_version(self) -> None:
+        """102: PROTOCOL_VERSION_LEGACY must be accepted."""
+        encoder = MessageEncoder(version=PROTOCOL_VERSION_LEGACY)
+        assert encoder.encode_handshake() is not None
+
+    def test_encoder_accepts_default_version(self) -> None:
+        """102: default PROTOCOL_VERSION must be accepted."""
+        encoder = MessageEncoder(version=PROTOCOL_VERSION)
+        assert encoder.encode_handshake() is not None
 
     def test_encode_message(self) -> None:
         from dqlitewire.constants import RequestType

@@ -119,6 +119,11 @@ class MessageEncoder:
                      PROTOCOL_VERSION (1). Use PROTOCOL_VERSION_LEGACY
                      (0x86104dd760433fe5) for pre-1.0 dqlite servers.
         """
+        if version not in _SUPPORTED_VERSIONS:
+            raise ProtocolError(
+                f"Unsupported protocol version: {version:#x}. "
+                f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
+            )
         self._version = version
 
     def encode(self, message: Message) -> bytes:
