@@ -95,6 +95,26 @@ class TestMessageDecoder:
         decoder = MessageDecoder(is_request=True, version=0xDEADBEEF)
         assert decoder.version is None  # not set until handshake
 
+    def test_decoder_custom_max_message_size(self) -> None:
+        """138: max_message_size should be configurable via constructor."""
+        import struct
+
+        from dqlitewire.exceptions import DecodeError
+
+        decoder = MessageDecoder(max_message_size=64)
+        # Feed a message larger than 64 bytes
+        oversized = struct.pack("<IBBH", 100, 0, 0, 0)  # 808-byte body
+        decoder.feed(oversized)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            decoder.decode()
+
+    def test_decoder_default_max_message_size(self) -> None:
+        """138: default max_message_size should match ReadBuffer default."""
+        from dqlitewire.buffer import ReadBuffer
+
+        decoder = MessageDecoder()
+        assert decoder._buffer._max_message_size == ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE
+
     def test_decode_handshake(self) -> None:
         decoder = MessageDecoder(is_request=True)
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))

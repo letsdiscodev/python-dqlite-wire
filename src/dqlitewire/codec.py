@@ -164,7 +164,12 @@ class MessageDecoder:
     layer that owns the socket.
     """
 
-    def __init__(self, is_request: bool = False, version: int = PROTOCOL_VERSION) -> None:
+    def __init__(
+        self,
+        is_request: bool = False,
+        version: int = PROTOCOL_VERSION,
+        max_message_size: int = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE,
+    ) -> None:
         """Initialize decoder.
 
         Args:
@@ -174,13 +179,16 @@ class MessageDecoder:
                     Defaults to PROTOCOL_VERSION (1). Use PROTOCOL_VERSION_LEGACY
                     for pre-1.0 dqlite servers (affects LeaderResponse format).
                     Ignored for request decoders (version comes from handshake).
+            max_message_size: Maximum allowed message size in bytes.
+                    Defaults to 64 MiB. Messages exceeding this limit are
+                    rejected with DecodeError.
         """
         if not is_request and version not in _SUPPORTED_VERSIONS:
             raise ProtocolError(
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
             )
-        self._buffer = ReadBuffer()
+        self._buffer = ReadBuffer(max_message_size=max_message_size)
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
         # For client-side decoders, version is set from the constructor parameter.
