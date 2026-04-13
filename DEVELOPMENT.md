@@ -12,8 +12,7 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Create virtual environment and install dependencies
-uv venv --python 3.13
-uv pip install -e ".[dev]"
+uv sync --group dev
 ```
 
 ## Development Tools
@@ -31,40 +30,40 @@ This project uses modern Python tooling:
 
 ```bash
 # Run all tests
-.venv/bin/pytest
+uv run pytest
 
 # Run with verbose output
-.venv/bin/pytest -v
+uv run pytest -v
 
 # Run with coverage
-.venv/bin/pytest --cov=dqlitewire
+uv run pytest --cov=dqlitewire
 ```
 
 ## Linting
 
 ```bash
 # Check for issues
-.venv/bin/ruff check src tests
+uv run ruff check src tests
 
 # Auto-fix issues
-.venv/bin/ruff check --fix src tests
+uv run ruff check --fix src tests
 ```
 
 ## Formatting
 
 ```bash
 # Format all files
-.venv/bin/ruff format src tests
+uv run ruff format src tests
 
 # Check formatting without modifying
-.venv/bin/ruff format --check src tests
+uv run ruff format --check src tests
 ```
 
 ## Type Checking
 
 ```bash
 # Run mypy with strict mode
-.venv/bin/mypy src
+uv run mypy src
 ```
 
 ## Pre-commit Workflow
@@ -72,8 +71,8 @@ This project uses modern Python tooling:
 Before committing, run all checks:
 
 ```bash
-.venv/bin/ruff format src tests
-.venv/bin/ruff check --fix src tests
-.venv/bin/mypy src
-.venv/bin/pytest
+uv run ruff format src tests
+uv run ruff check --fix src tests
+uv run mypy src
+uv run pytest
 ```
