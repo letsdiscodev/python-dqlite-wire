@@ -621,6 +621,52 @@ class TestRowsResponseEncodeValidation:
         assert decoded.rows == [[42]]
 
 
+class TestRowsResponseNullInTypedColumn:
+    """137: None values in rows with explicit column types must encode correctly."""
+
+    def test_none_with_explicit_column_types(self) -> None:
+        """None in a TEXT column must encode as NULL, not crash."""
+        resp = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            row_types=[[ValueType.INTEGER, ValueType.TEXT]],
+            rows=[[1, None]],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.rows == [[1, None]]
+        # The type nibble for the None column should be NULL (5), not TEXT (3)
+        assert decoded.row_types[0][1] == ValueType.NULL
+
+    def test_none_with_explicit_row_types_integer(self) -> None:
+        """None in an INTEGER column with explicit row_types."""
+        resp = RowsResponse(
+            column_names=["val"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[None]],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.rows == [[None]]
+        assert decoded.row_types[0][0] == ValueType.NULL
+
+    def test_mixed_none_and_values(self) -> None:
+        """Row with mix of None and real values."""
+        resp = RowsResponse(
+            column_names=["a", "b", "c"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT, ValueType.FLOAT],
+            row_types=[[ValueType.INTEGER, ValueType.TEXT, ValueType.FLOAT]],
+            rows=[[None, "hello", None]],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.rows == [[None, "hello", None]]
+        assert decoded.row_types[0][0] == ValueType.NULL
+        assert decoded.row_types[0][1] == ValueType.TEXT
+        assert decoded.row_types[0][2] == ValueType.NULL
+
+
 class TestRowsResponseWordBoundary:
     """115: row header padding crosses word boundary at 17+ columns."""
 

@@ -254,14 +254,24 @@ class RowsResponse(Message):
         return value cannot silently rewrite the message's private
         copy. This preserves the aliasing invariant that
         ``__post_init__`` establishes (issue 042, issue 052).
+
+        None values override the declared type to NULL, matching Go's
+        per-row type header behavior where the nibble reflects the actual
+        value, not the column schema (issue 137).
         """
         if self.row_types and row_idx < len(self.row_types):
-            return list(self.row_types[row_idx])
-        if self.column_types:
-            return list(self.column_types)
-        # Infer from values
+            types = list(self.row_types[row_idx])
+        elif self.column_types:
+            types = list(self.column_types)
+        else:
+            # Infer from values
+            return [encode_value(v)[1] for v in row]
 
-        return [encode_value(v)[1] for v in row]
+        # Override type to NULL for None values, matching Go's behavior
+        for i, v in enumerate(row):
+            if v is None and i < len(types):
+                types[i] = ValueType.NULL
+        return types
 
     def encode_body(self) -> bytes:
         col_count = len(self.column_names)
