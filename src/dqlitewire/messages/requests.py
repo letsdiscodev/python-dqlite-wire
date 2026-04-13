@@ -76,6 +76,14 @@ class HeartbeatRequest(Message):
     """Send heartbeat to server.
 
     Body: uint64 timestamp
+
+    Note: The C dqlite server does not currently handle this request type
+    (HEARTBEAT is omitted from the gateway dispatcher). The Go client's
+    heartbeat code is also commented out. Sending this request will result
+    in a FailureResponse from the server.
+
+    If heartbeat is ever enabled, the expected response is a
+    ServersResponse (type 3) containing the cluster node list.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.HEARTBEAT
