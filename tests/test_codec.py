@@ -643,6 +643,27 @@ class TestRoundTrip:
         assert isinstance(decoded, FailureResponse)
         assert decoded.message == "Error: \u00e9\u00e8\u00e0"
 
+    def test_rows_response(self) -> None:
+        """131: RowsResponse through full codec round-trip."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.messages.responses import RowsResponse
+
+        original = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            row_types=[
+                [ValueType.INTEGER, ValueType.TEXT],
+                [ValueType.INTEGER, ValueType.TEXT],
+            ],
+            rows=[[1, "alice"], [2, "bob"]],
+        )
+        encoded = encode_message(original)
+        decoded = decode_message(encoded, is_request=False)
+        assert isinstance(decoded, RowsResponse)
+        assert decoded.column_names == ["id", "name"]
+        assert decoded.rows == [[1, "alice"], [2, "bob"]]
+        assert decoded.has_more is False
+
     def test_prepare_request_schema_survives_roundtrip(self) -> None:
         """PrepareRequest with schema=1 must preserve schema through codec round-trip."""
         original = PrepareRequest(db_id=1, sql="SELECT 1", schema=1)
