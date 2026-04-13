@@ -5,6 +5,7 @@ Row tuples and parameter tuples have different formats:
 - Row tuples: column types header, then values
 """
 
+import struct
 from collections.abc import Sequence
 from enum import Enum
 from typing import Any
@@ -57,8 +58,6 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
     header = bytearray()
     if schema == 1:
         # V1: uint32 count
-        import struct
-
         header.extend(struct.pack("<I", len(params)))
     else:
         # V0: uint8 count
@@ -120,8 +119,6 @@ def decode_params_tuple(
     count_size: int
     if count is None:
         if schema == 1:
-            import struct
-
             count = struct.unpack("<I", data[:4])[0]
             count_size = 4
         else:
