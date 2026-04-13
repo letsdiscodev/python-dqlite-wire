@@ -413,24 +413,24 @@ class TestReadBuffer:
         with pytest.raises(DecodeError, match="exceeds maximum"):
             buf.read_message()
 
-    def test_skip_message_recovers_from_oversized(self) -> None:
-        """After skipping an oversized message, stream should not be corrupted.
+    def test_skip_message_poisons_after_capped_oversized(self) -> None:
+        """After a capped oversized skip, stream is desynchronized and
+        the buffer must be poisoned (issue 121).
 
         skip_message caps _skip_remaining to max_message_size to prevent
-        amplification attacks. The test feeds at most max_message_size bytes
-        of oversized body, then verifies the next message decodes correctly.
+        amplification attacks. Since the peer sent more bytes than the cap,
+        the stream is permanently desynchronized. The buffer is poisoned
+        once the capped skip completes.
         """
         import struct
 
         import pytest
 
-        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.exceptions import DecodeError, ProtocolError
 
         buf = ReadBuffer(max_message_size=1024)
         # Header claiming a huge body: size_words=1000 (8000 bytes > 1024 limit)
         oversized_header = struct.pack("<IBBH", 1000, 0, 0, 0)
-        valid_msg = LeaderResponse(node_id=1, address="node1:9001")
-        valid_encoded = valid_msg.encode()
 
         # Feed header + first chunk
         buf.feed(oversized_header + b"\xab" * 500)
@@ -443,25 +443,60 @@ class TestReadBuffer:
         # skip_message should return False — partial skip
         assert buf.skip_message() is False
 
-        # Feed enough bytes to complete the capped skip + valid message.
-        # _skip_remaining is capped to max_message_size (1024), and skip_message
-        # already consumed the 508 bytes in the buffer (8 header + 500 body),
-        # so _skip_remaining = 1024 - 508 = 516 bytes.
-        buf.feed(b"\xab" * 516 + valid_encoded)
+        # Feed enough bytes to complete the capped skip.
+        remaining = buf._skip_remaining
+        buf.feed(b"\xab" * remaining)
 
-        # The capped oversized bytes should be discarded; valid message readable
-        assert buf.has_message()
-        data = buf.read_message()
-        assert data is not None
-        assert data == valid_encoded
+        # Skip is complete but buffer is poisoned — stream is desynchronized
+        assert not buf.is_skipping
+        assert buf.is_poisoned
 
-    def test_single_feed_completes_skip_and_appends_message(self) -> None:
-        """118: single feed() that completes skip AND contains next valid message."""
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.read_message()
+
+    def test_capped_oversized_skip_poisons_buffer(self) -> None:
+        """121: capped skip of oversized message must poison the buffer.
+
+        When the header claims a body larger than max_message_size, the skip
+        is capped to max_message_size bytes. Since the peer sent more bytes
+        than were discarded, the stream is permanently desynchronized. The
+        buffer must be poisoned to prevent silent garbage reads.
+        """
         import struct
 
         import pytest
 
-        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.exceptions import DecodeError, ProtocolError
+
+        buf = ReadBuffer(max_message_size=64)
+        # Header claiming 200 words = 1600 bytes body (>> 64 byte limit)
+        oversized_header = struct.pack("<IBBH", 200, 0, 0, 0)
+        buf.feed(oversized_header)
+
+        assert buf.has_message() is True
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.read_message()
+
+        # skip_message triggers capped skip
+        buf.skip_message()
+
+        # After the capped skip completes, buffer must be poisoned
+        remaining = buf._skip_remaining
+        buf.feed(b"\x00" * remaining)
+        assert not buf.is_skipping
+        assert buf.is_poisoned
+
+        # Further operations should raise ProtocolError
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.read_message()
+
+    def test_single_feed_completes_capped_skip_and_poisons(self) -> None:
+        """118/121: single feed() that completes capped skip poisons buffer."""
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError, ProtocolError
 
         buf = ReadBuffer(max_message_size=64)
         # 200 words = 1600 bytes body, well over 64-byte limit
@@ -474,37 +509,34 @@ class TestReadBuffer:
         assert buf.skip_message() is False
         assert buf.is_skipping
 
-        # Build a single payload: remaining skip bytes + valid message
+        # Build a single payload: remaining skip bytes + extra data
         remaining = buf._skip_remaining
-        valid_msg = LeaderRequest()
-        valid_encoded = valid_msg.encode()
-        combined = b"\xcc" * remaining + valid_encoded
+        combined = b"\xcc" * remaining + b"\x00" * 16
 
         buf.feed(combined)
 
         assert not buf.is_skipping
-        assert buf.has_message()
-        data = buf.read_message()
-        assert data is not None
-        assert data == valid_encoded
+        assert buf.is_poisoned
 
-    def test_skip_oversized_across_multiple_feeds(self) -> None:
-        """Oversized message bytes should be discarded across multiple feed() calls.
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.read_message()
+
+    def test_skip_oversized_across_multiple_feeds_poisons(self) -> None:
+        """Oversized skip across multiple feeds poisons when complete (issue 121).
 
         skip_message caps _skip_remaining to max_message_size, so only that
-        many bytes are discarded (not the full claimed body size).
+        many bytes are discarded. Once the capped skip completes, the buffer
+        is poisoned because the stream is desynchronized.
         """
         import struct
 
         import pytest
 
-        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.exceptions import DecodeError, ProtocolError
 
         buf = ReadBuffer(max_message_size=64)
         # 200 words = 1600 bytes body, well over 64-byte limit
         oversized_header = struct.pack("<IBBH", 200, 0, 0, 0)
-        valid_msg = LeaderRequest()
-        valid_encoded = valid_msg.encode()
 
         # Feed just the header
         buf.feed(oversized_header)
@@ -513,8 +545,7 @@ class TestReadBuffer:
             buf.read_message()
         assert buf.skip_message() is False
 
-        # Feed capped body in chunks (max_message_size=64, header was 8 bytes,
-        # so _skip_remaining = 64 - 8 = 56 bytes)
+        # Feed capped body in chunks
         remaining = buf._skip_remaining
         body = b"\xcc" * remaining
         while body:
@@ -522,11 +553,12 @@ class TestReadBuffer:
             body = body[20:]
             buf.feed(chunk)
 
-        # Now feed the valid message
-        buf.feed(valid_encoded)
-        assert buf.has_message()
-        data = buf.read_message()
-        assert data == valid_encoded
+        # Capped skip is complete — buffer should be poisoned
+        assert not buf.is_skipping
+        assert buf.is_poisoned
+
+        with pytest.raises(ProtocolError, match="poisoned"):
+            buf.feed(b"\x00" * 16)
 
     def test_is_skipping_property(self) -> None:
         """is_skipping reflects whether an oversized skip is in progress."""

@@ -1243,11 +1243,11 @@ class TestDecoderSkipMessage:
         assert hasattr(decoder, "skip_message")
         assert hasattr(decoder, "is_skipping")
 
-    def test_skip_oversized_and_recover(self) -> None:
-        """After skipping an oversized message, normal messages should decode."""
+    def test_skip_oversized_poisons_after_capped_skip(self) -> None:
+        """After a capped oversized skip, buffer is poisoned (issue 121)."""
         import struct
 
-        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.exceptions import DecodeError, ProtocolError
 
         # Create a decoder with a small max_message_size
         decoder = MessageDecoder(is_request=False)
@@ -1255,32 +1255,28 @@ class TestDecoderSkipMessage:
 
         # Build an oversized message header (size_words=100 → 808 bytes total)
         oversized_header = struct.pack("<IBBH", 100, 0, 0, 0)
-        # Build a normal message after it
-        normal_msg = FailureResponse(code=42, message="test").encode()
 
         # Feed just the oversized header
         decoder.feed(oversized_header)
 
-        # has_message() is total; the raise surfaces from decode() / read_message().
         assert decoder.has_message() is True
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decoder.decode()
 
         # skip_message() should handle the oversized message
         result = decoder.skip_message()
-        assert result is False  # haven't received full oversized body yet
+        assert result is False
         assert decoder.is_skipping is True
 
-        # Feed enough bytes to complete the capped skip + normal message.
-        # _skip_remaining is capped to max_message_size (128), header was 8,
-        # so _skip_remaining = 128 - 8 = 120 bytes.
-        decoder.feed(b"\x00" * decoder._buffer._skip_remaining + normal_msg)
+        # Feed enough bytes to complete the capped skip
+        decoder.feed(b"\x00" * decoder._buffer._skip_remaining)
 
-        # Now should be able to decode the normal message
+        # Buffer is now poisoned — stream is desynchronized
         assert decoder.is_skipping is False
-        decoded = decoder.decode()
-        assert isinstance(decoded, FailureResponse)
-        assert decoded.code == 42
+        assert decoder.is_poisoned is True
+
+        with pytest.raises(ProtocolError, match="poisoned"):
+            decoder.decode()
 
 
 class TestDecoderPoisonedState:
@@ -1348,10 +1344,13 @@ class TestDecoderPoisonedState:
         with pytest.raises(ProtocolError):
             decoder.decode()
 
-    def test_oversized_header_does_not_poison(self) -> None:
+    def test_oversized_header_does_not_poison_before_skip(self) -> None:
         """An oversized-header error from the buffer framing layer is
         recoverable via skip_message(); it must NOT poison because the
         bytes have not yet been consumed from the buffer.
+
+        After a capped skip completes, the buffer IS poisoned because the
+        stream is desynchronized (issue 121).
         """
         import struct
 
@@ -1362,18 +1361,13 @@ class TestDecoderPoisonedState:
 
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decoder.decode()
-        # NOT poisoned — skip_message() is the documented recovery path.
+        # NOT poisoned before skip — skip_message() is the recovery path.
         assert decoder.is_poisoned is False
 
-        # Recovery via skip_message should still work.
+        # After capped skip completes, buffer IS poisoned (desync).
         decoder.skip_message()
         decoder.feed(b"\x00" * decoder._buffer._skip_remaining)
-        assert decoder.is_poisoned is False
-
-        # And a fresh message decodes afterwards.
-        normal = FailureResponse(code=1, message="ok").encode()
-        decoder.feed(normal)
-        assert isinstance(decoder.decode(), FailureResponse)
+        assert decoder.is_poisoned is True
 
     def test_poison_catches_non_protocol_exceptions(self) -> None:
         """Any exception from decode_bytes — not just DecodeError/ProtocolError —

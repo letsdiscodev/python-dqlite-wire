@@ -94,6 +94,7 @@ class ReadBuffer:
         self._max_message_size = max_message_size
         self._skip_remaining = 0
         self._poisoned: Exception | None = None
+        self._poison_after_skip: Exception | None = None
 
     @property
     def is_poisoned(self) -> bool:
@@ -117,6 +118,7 @@ class ReadBuffer:
         self._pos = 0
         self._skip_remaining = 0
         self._poisoned = None
+        self._poison_after_skip = None
 
     def _check_poisoned(self) -> None:
         if self._poisoned is not None:
@@ -182,6 +184,12 @@ class ReadBuffer:
                 discard = min(len(data), self._skip_remaining)
                 data = data[discard:]
                 self._skip_remaining -= discard
+                # Trigger deferred poison once the capped skip completes.
+                # The stream is desynchronized — remaining peer bytes were
+                # not discarded — so all further reads would be garbage.
+                if self._skip_remaining == 0 and self._poison_after_skip is not None:
+                    self._poisoned = self._poison_after_skip
+                    self._poison_after_skip = None
                 if not data:
                     return
             self._maybe_compact()
@@ -358,6 +366,27 @@ class ReadBuffer:
                 skip_now = min(effective_total, available)
                 self._pos += skip_now
                 self._skip_remaining = effective_total - skip_now
+                # If the cap is smaller than the actual message, mark for
+                # deferred poisoning. We cannot poison immediately because
+                # feed() needs to keep discarding bytes during the skip.
+                # Once _skip_remaining reaches 0, feed() will poison.
+                if effective_total < total_size:
+                    if self._skip_remaining == 0:
+                        # Capped skip completed immediately — poison now.
+                        self.poison(
+                            DecodeError(
+                                f"Oversized message skip capped to "
+                                f"{effective_total} of {total_size} bytes; "
+                                f"stream is desynchronized. Call reset()."
+                            )
+                        )
+                    else:
+                        # Deferred: feed() will poison once skip completes.
+                        self._poison_after_skip = DecodeError(
+                            f"Oversized message skip capped to "
+                            f"{effective_total} of {total_size} bytes; "
+                            f"stream is desynchronized. Call reset()."
+                        )
             self._maybe_compact()
         except BaseException as e:
             if self._poisoned is None:
