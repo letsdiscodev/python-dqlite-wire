@@ -229,6 +229,8 @@ class TestQueryRequest:
         encoded = encode_message(msg)
         decoded = decode_message(encoded, is_request=True)
         assert isinstance(decoded, QueryRequest)
+        assert decoded.db_id == 1
+        assert decoded.stmt_id == 2
         assert list(decoded.params) == params
 
 
