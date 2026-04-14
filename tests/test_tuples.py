@@ -1,6 +1,11 @@
 """Tests for tuple encoding/decoding."""
 
+import struct
+
+import pytest
+
 from dqlitewire.constants import ValueType
+from dqlitewire.exceptions import DecodeError
 from dqlitewire.tuples import (
     RowMarker,
     decode_params_tuple,
@@ -565,3 +570,24 @@ class TestRowValues:
         encoded = encode_row_values(values, types)
         decoded, _ = decode_row_values(encoded, types)
         assert decoded == values
+
+
+class TestParamsTupleMaxCount:
+    """170: decode_params_tuple should reject excessive parameter counts."""
+
+    def test_v1_count_exceeding_cap_raises(self) -> None:
+        """A V1 params tuple claiming 200_000 params should be rejected."""
+        # Craft a V1 header with count = 200_000
+        count = 200_000
+        header = struct.pack("<I", count)
+        # Pad to a full 8-byte word
+        data = header + b"\x00" * 4
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            decode_params_tuple(data, schema=1)
+
+    def test_v0_count_within_cap_succeeds(self) -> None:
+        """V0 counts (max 255) should never hit the cap."""
+        # Encode a valid empty-params V0 tuple (count=0)
+        data = b"\x00" + b"\x00" * 7  # count=0, padded to 8 bytes
+        result, _ = decode_params_tuple(data, schema=0)
+        assert result == []

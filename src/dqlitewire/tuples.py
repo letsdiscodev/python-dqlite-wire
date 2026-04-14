@@ -17,6 +17,11 @@ from dqlitewire.types import decode_value, encode_value, pad_to_word
 # Valid ValueType codes as integers, for fast membership testing in hot paths.
 _VALID_TYPE_CODES = frozenset(int(v) for v in ValueType)
 
+# Defense-in-depth cap on parameter count, matching the pattern used by
+# _MAX_COLUMN_COUNT, _MAX_FILE_COUNT, and _MAX_NODE_COUNT in responses.py.
+# SQLite's default limit is 999 (compile-time max 32766).
+_MAX_PARAM_COUNT = 100_000
+
 
 class RowMarker(Enum):
     """Row marker detected during header parsing."""
@@ -133,6 +138,11 @@ def decode_params_tuple(
     elif count == 0:
         # Count was externally provided, no data consumed
         return [], 0
+
+    # Defense-in-depth: reject unreasonable parameter counts early,
+    # before allocating type-code lists or iterating over values.
+    if count > _MAX_PARAM_COUNT:
+        raise DecodeError(f"Parameter count {count} exceeds maximum ({_MAX_PARAM_COUNT})")
 
     # Header: count field (if read from data) + type codes, padded to word boundary.
     # When count was externally provided, the data starts directly with type codes
