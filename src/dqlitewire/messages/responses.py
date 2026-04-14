@@ -547,7 +547,10 @@ class ServersResponse(Message):
 
 @dataclass
 class MetadataResponse(Message):
-    """Statement metadata response.
+    """Node metadata response (failure domain and weight).
+
+    Returned in response to a DescribeRequest. Contains the node's
+    failure domain and weight, used for cluster topology decisions.
 
     Body: uint64 failure_domain, uint64 weight
     """
