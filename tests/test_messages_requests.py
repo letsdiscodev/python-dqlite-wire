@@ -169,9 +169,10 @@ class TestExecRequest:
         decoded = ExecRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 1
         assert decoded.stmt_id == 2
+        assert len(decoded.params) == 3
         assert decoded.params[0] == 42
         assert decoded.params[1] == "hello"
-        assert abs(decoded.params[2] - 3.14) < 0.0001
+        assert decoded.params[2] == pytest.approx(3.14)
 
     def test_schema_v0_for_small_params_in_header(self) -> None:
         """Go uses schema=0 for <= 255 params, schema=1 for > 255."""
@@ -217,8 +218,7 @@ class TestQueryRequest:
         decoded = QueryRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 1
         assert decoded.stmt_id == 2
-        assert decoded.params[0] == 100
-        assert decoded.params[1] == "world"
+        assert decoded.params == [100, "world"]
 
     def test_roundtrip_v1_more_than_255_params(self) -> None:
         """QueryRequest with >255 params must roundtrip correctly via V1 schema."""
@@ -258,7 +258,7 @@ class TestExecSqlRequest:
         decoded = ExecSqlRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 1
         assert decoded.sql == "INSERT INTO t VALUES(?)"
-        assert decoded.params[0] == 42
+        assert decoded.params == [42]
 
     def test_roundtrip_v1_more_than_255_params(self) -> None:
         """ExecSqlRequest with >255 params must roundtrip correctly via V1 schema."""
@@ -287,7 +287,7 @@ class TestQuerySqlRequest:
         decoded = QuerySqlRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.db_id == 1
         assert decoded.sql == "SELECT * FROM t WHERE id=?"
-        assert decoded.params[0] == 99
+        assert decoded.params == [99]
 
     def test_roundtrip_v1_more_than_255_params(self) -> None:
         """QuerySqlRequest with >255 params must roundtrip correctly via V1 schema."""
