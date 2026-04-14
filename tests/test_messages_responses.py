@@ -1046,9 +1046,10 @@ class TestServersResponse:
         encoded = msg.encode()
         decoded = ServersResponse.decode_body(encoded[HEADER_SIZE:])
         assert len(decoded.nodes) == 3
-        assert decoded.nodes[0].node_id == 1
-        assert decoded.nodes[0].address == "node1:9001"
-        assert decoded.nodes[1].role == 2
+        for i, expected in enumerate(nodes):
+            assert decoded.nodes[i].node_id == expected.node_id
+            assert decoded.nodes[i].address == expected.address
+            assert decoded.nodes[i].role == expected.role
 
     def test_wire_format_starts_with_count(self) -> None:
         """Body must start with uint64 node count per Go reference."""
