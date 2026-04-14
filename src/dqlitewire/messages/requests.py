@@ -446,7 +446,7 @@ class AssignRequest(Message):
                 "(1-word body). Modern dqlite servers and the Go client always send "
                 "both node_id and role. Use role=0 (VOTER) for equivalent behavior.",
                 DeprecationWarning,
-                stacklevel=3,
+                stacklevel=2,
             )
         return result
 

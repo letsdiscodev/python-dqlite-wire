@@ -365,6 +365,18 @@ class TestAssignRequest:
             assert issubclass(w[0].category, DeprecationWarning)
             assert "legacy" in str(w[0].message).lower() or "promote" in str(w[0].message).lower()
 
+    def test_encode_without_role_warning_points_at_encode_body_caller(self) -> None:
+        """153: stacklevel should point at the caller of encode_body()."""
+        import warnings
+
+        msg = AssignRequest(node_id=1)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            # Call encode_body() directly — the warning should point here.
+            msg.encode_body()
+            assert len(w) == 1
+            assert w[0].filename == __file__
+
     def test_encode_with_role_no_warning(self) -> None:
         """Encoding AssignRequest with role should not warn."""
         import warnings
