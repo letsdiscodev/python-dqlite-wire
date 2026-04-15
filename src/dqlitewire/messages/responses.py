@@ -402,7 +402,7 @@ class RowsResponse(Message):
             offset += consumed
 
             if len(rows) >= max_rows:
-                raise DecodeError(f"Row count {len(rows)} exceeds maximum {max_rows}")
+                raise DecodeError(f"Row count {len(rows)} reached maximum {max_rows}")
 
             if offset == prev_offset:
                 raise DecodeError(

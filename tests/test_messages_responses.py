@@ -544,7 +544,7 @@ class TestRowsResponse:
         assert len(decoded.rows) == 5
 
         # Should fail with max_rows=3
-        with pytest.raises(DecodeError, match="Row count.*exceeds maximum"):
+        with pytest.raises(DecodeError, match="Row count.*reached maximum"):
             RowsResponse.decode_body(body, max_rows=3)
 
     def test_max_rows_exact_boundary_rejects_at_limit(self) -> None:
@@ -570,8 +570,9 @@ class TestRowsResponse:
             body += encode_uint64(0xFFFFFFFFFFFFFFFF)  # DONE
             return body
 
-        # Exactly max_rows rows should raise
-        with pytest.raises(DecodeError, match="exceeds maximum"):
+        # Exactly max_rows rows should raise — message must say "reached",
+        # not "exceeds", because len(rows) == max_rows (issue 178)
+        with pytest.raises(DecodeError, match="reached maximum"):
             RowsResponse.decode_body(build_body(3), max_rows=3)
 
         # One fewer than max_rows should succeed
