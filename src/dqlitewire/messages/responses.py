@@ -497,7 +497,7 @@ class NodeInfo:
 class ServersResponse(Message):
     """Cluster servers response.
 
-    Body: repeated (uint64 node_id, text address, uint64 role)
+    Body: uint64 count, then repeated (uint64 node_id, text address, uint64 role)
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.SERVERS
