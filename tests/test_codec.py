@@ -1895,3 +1895,16 @@ class TestEndToEndPipeline:
         assert isinstance(decoded, ResultResponse)
         assert decoded.last_insert_id == 42
         assert decoded.rows_affected == 7
+
+
+class TestReadmeExample:
+    """Verify the README usage example actually works."""
+
+    def test_readme_example_runs_without_error(self) -> None:
+        """The README shows encode_message / decode_message with a LeaderRequest."""
+        from dqlitewire import decode_message, encode_message
+        from dqlitewire.messages import LeaderRequest
+
+        data = encode_message(LeaderRequest())
+        message = decode_message(data, is_request=True)
+        assert isinstance(message, LeaderRequest)

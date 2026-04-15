@@ -11,17 +11,14 @@ pip install dqlite-wire
 ## Usage
 
 ```python
-from dqlitewire import MessageEncoder, MessageDecoder
-from dqlitewire.messages import LeaderRequest, ClientRequest
+from dqlitewire import encode_message, decode_message
+from dqlitewire.messages import LeaderRequest
 
 # Encode a message
-encoder = MessageEncoder()
-data = encoder.encode(LeaderRequest())
+data = encode_message(LeaderRequest())
 
 # Decode a message
-decoder = MessageDecoder()
-decoder.feed(data)
-message = decoder.decode()
+message = decode_message(data, is_request=True)
 ```
 
 ## Thread-safety
