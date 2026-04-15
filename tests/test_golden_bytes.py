@@ -16,14 +16,29 @@ import struct
 from dqlitewire.codec import decode_message, encode_message
 from dqlitewire.constants import ValueType
 from dqlitewire.messages import (
+    AddRequest,
+    AssignRequest,
     ClientRequest,
+    DbResponse,
+    EmptyResponse,
     ExecRequest,
+    ExecSqlRequest,
     FailureResponse,
     FinalizeRequest,
     LeaderRequest,
+    LeaderResponse,
+    MetadataResponse,
+    NodeInfo,
     OpenRequest,
+    PrepareRequest,
+    QueryRequest,
+    QuerySqlRequest,
+    RemoveRequest,
     ResultResponse,
     RowsResponse,
+    ServersResponse,
+    StmtResponse,
+    WelcomeResponse,
 )
 
 
@@ -328,3 +343,282 @@ class TestGoldenBlobEncoding:
         expected = _u64(8) + data
         assert result == expected
         assert len(result) == 16
+
+
+class TestGoldenRequestsPriority1:
+    """Golden byte tests for high-priority request messages (issue 204)."""
+
+    def test_prepare_request(self) -> None:
+        """PrepareRequest(db_id=1, sql="SELECT 1"): type=4, schema=0.
+
+        Body: uint64(1) + text("SELECT 1")
+        text("SELECT 1") = 8 chars + null = 9 bytes, padded to 16
+        Total body = 8 + 16 = 24 = 3 words
+        """
+        expected = _header(3, 4) + _u64(1) + _text("SELECT 1")
+        assert encode_message(PrepareRequest(db_id=1, sql="SELECT 1")) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, PrepareRequest)
+        assert msg.db_id == 1
+        assert msg.sql == "SELECT 1"
+
+    def test_query_request_no_params(self) -> None:
+        """QueryRequest(db_id=0, stmt_id=1, params=[]): type=6, schema=0.
+
+        Body: uint32(0) + uint32(1) = 8 bytes = 1 word
+        (empty params produce no additional bytes)
+        """
+        expected = _header(1, 6) + _u32(0) + _u32(1)
+        assert encode_message(QueryRequest(db_id=0, stmt_id=1, params=[])) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, QueryRequest)
+        assert msg.db_id == 0
+        assert msg.stmt_id == 1
+        assert list(msg.params) == []
+
+    def test_exec_sql_request(self) -> None:
+        """ExecSqlRequest(db_id=0, sql="INSERT INTO t VALUES(1)", params=[]): type=8.
+
+        Body: uint64(0) + text("INSERT INTO t VALUES(1)")
+        text = 23 chars + null = 24 bytes (exact 3 words)
+        Total body = 8 + 24 = 32 = 4 words
+        """
+        sql = "INSERT INTO t VALUES(1)"
+        expected = _header(4, 8) + _u64(0) + _text(sql)
+        assert encode_message(ExecSqlRequest(db_id=0, sql=sql, params=[])) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, ExecSqlRequest)
+        assert msg.db_id == 0
+        assert msg.sql == sql
+
+    def test_query_sql_request(self) -> None:
+        """QuerySqlRequest(db_id=0, sql="SELECT 1", params=[]): type=9.
+
+        Body: uint64(0) + text("SELECT 1")
+        text("SELECT 1") = 8 chars + null = 9 bytes, padded to 16
+        Total body = 8 + 16 = 24 = 3 words
+        """
+        expected = _header(3, 9) + _u64(0) + _text("SELECT 1")
+        assert encode_message(QuerySqlRequest(db_id=0, sql="SELECT 1", params=[])) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, QuerySqlRequest)
+        assert msg.db_id == 0
+        assert msg.sql == "SELECT 1"
+
+    def test_add_request(self) -> None:
+        """AddRequest(node_id=2, address="10.0.0.2:9001"): type=12.
+
+        Body: uint64(2) + text("10.0.0.2:9001")
+        text = 13 chars + null = 14 bytes, padded to 16
+        Total body = 8 + 16 = 24 = 3 words
+        """
+        expected = _header(3, 12) + _u64(2) + _text("10.0.0.2:9001")
+        assert encode_message(AddRequest(node_id=2, address="10.0.0.2:9001")) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, AddRequest)
+        assert msg.node_id == 2
+        assert msg.address == "10.0.0.2:9001"
+
+    def test_assign_request(self) -> None:
+        """AssignRequest(node_id=1, role=0): type=13.
+
+        Body: uint64(1) + uint64(0) = 16 bytes = 2 words
+        """
+        expected = _header(2, 13) + _u64(1) + _u64(0)
+        assert encode_message(AssignRequest(node_id=1, role=0)) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, AssignRequest)
+        assert msg.node_id == 1
+        assert msg.role == 0
+
+    def test_remove_request(self) -> None:
+        """RemoveRequest(node_id=3): type=14.
+
+        Body: uint64(3) = 8 bytes = 1 word
+        """
+        expected = _header(1, 14) + _u64(3)
+        assert encode_message(RemoveRequest(node_id=3)) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, RemoveRequest)
+        assert msg.node_id == 3
+
+
+class TestGoldenResponsesPriority1:
+    """Golden byte tests for high-priority response messages (issue 204)."""
+
+    def test_leader_response(self) -> None:
+        """LeaderResponse(node_id=1, address="127.0.0.1:9001"): type=1.
+
+        Body: uint64(1) + text("127.0.0.1:9001")
+        text = 14 chars + null = 15 bytes, padded to 16
+        Total body = 8 + 16 = 24 = 3 words
+        """
+        expected = _header(3, 1) + _u64(1) + _text("127.0.0.1:9001")
+        assert encode_message(LeaderResponse(node_id=1, address="127.0.0.1:9001")) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, LeaderResponse)
+        assert msg.node_id == 1
+        assert msg.address == "127.0.0.1:9001"
+
+    def test_welcome_response(self) -> None:
+        """WelcomeResponse(heartbeat_timeout=15000000000): type=2.
+
+        Body: uint64(15000000000) = 8 bytes = 1 word
+        """
+        expected = _header(1, 2) + _u64(15000000000)
+        assert encode_message(WelcomeResponse(heartbeat_timeout=15000000000)) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, WelcomeResponse)
+        assert msg.heartbeat_timeout == 15000000000
+
+    def test_db_response(self) -> None:
+        """DbResponse(db_id=0): type=4.
+
+        Body: uint32(0) + uint32(0) = 8 bytes = 1 word
+        """
+        expected = _header(1, 4) + _u32(0) + _u32(0)
+        assert encode_message(DbResponse(db_id=0)) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, DbResponse)
+        assert msg.db_id == 0
+
+    def test_stmt_response_v0(self) -> None:
+        """StmtResponse(db_id=0, stmt_id=1, num_params=2): type=5, schema=0.
+
+        Body: uint32(0) + uint32(1) + uint64(2) = 16 bytes = 2 words
+        """
+        expected = _header(2, 5) + _u32(0) + _u32(1) + _u64(2)
+        assert encode_message(StmtResponse(db_id=0, stmt_id=1, num_params=2)) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, StmtResponse)
+        assert msg.db_id == 0
+        assert msg.stmt_id == 1
+        assert msg.num_params == 2
+        assert msg.tail_offset is None
+
+    def test_stmt_response_v1_with_tail_offset(self) -> None:
+        """StmtResponse V1 with tail_offset: type=5, schema=1.
+
+        Body: uint32(0) + uint32(1) + uint64(2) + uint64(10) = 24 bytes = 3 words
+        """
+        expected = _header(3, 5, schema=1) + _u32(0) + _u32(1) + _u64(2) + _u64(10)
+        assert (
+            encode_message(StmtResponse(db_id=0, stmt_id=1, num_params=2, tail_offset=10))
+            == expected
+        )
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, StmtResponse)
+        assert msg.tail_offset == 10
+
+    def test_empty_response(self) -> None:
+        """EmptyResponse(): type=8.
+
+        Body: uint64(0) = 8 bytes = 1 word
+        """
+        expected = _header(1, 8) + _u64(0)
+        assert encode_message(EmptyResponse()) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, EmptyResponse)
+
+    def test_servers_response_one_node(self) -> None:
+        """ServersResponse with 1 node: type=3.
+
+        Body: uint64(1) + uint64(node_id=1) + text("10.0.0.1:9001") + uint64(role=0)
+        text = 13 chars + null = 14 bytes, padded to 16
+        Total body = 8 + 8 + 16 + 8 = 40 = 5 words
+        """
+        expected = _header(5, 3) + _u64(1) + _u64(1) + _text("10.0.0.1:9001") + _u64(0)
+        msg_obj = ServersResponse(nodes=[NodeInfo(node_id=1, address="10.0.0.1:9001", role=0)])
+        assert encode_message(msg_obj) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, ServersResponse)
+        assert len(msg.nodes) == 1
+        assert msg.nodes[0].node_id == 1
+        assert msg.nodes[0].address == "10.0.0.1:9001"
+        assert msg.nodes[0].role == 0
+
+    def test_metadata_response(self) -> None:
+        """MetadataResponse(failure_domain=0, weight=1): type=10.
+
+        Body: uint64(0) + uint64(1) = 16 bytes = 2 words
+        """
+        expected = _header(2, 10) + _u64(0) + _u64(1)
+        assert encode_message(MetadataResponse(failure_domain=0, weight=1)) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, MetadataResponse)
+        assert msg.failure_domain == 0
+        assert msg.weight == 1
+
+    def test_rows_response_multiple_rows(self) -> None:
+        """RowsResponse with 2 rows, verifying per-row type headers.
+
+        Body layout:
+          uint64(1)                           = 8 bytes  (column_count)
+          text("val") = b"val\\0" + 4 pad     = 8 bytes
+          row 0 header: [INTEGER=1] → 0x01 + 7 pad = 8 bytes
+          int64(10)                           = 8 bytes
+          row 1 header: [INTEGER=1] → 0x01 + 7 pad = 8 bytes
+          int64(20)                           = 8 bytes
+          DONE marker                         = 8 bytes
+        Total body = 56 = 7 words
+        """
+        row_hdr = bytes([0x01]) + b"\x00" * 7
+        expected = (
+            _header(7, 7)
+            + _u64(1)
+            + _text("val")
+            + row_hdr
+            + _i64(10)
+            + row_hdr
+            + _i64(20)
+            + _u64(0xFFFFFFFFFFFFFFFF)
+        )
+
+        msg_obj = RowsResponse(
+            column_names=["val"],
+            column_types=[ValueType.INTEGER],
+            rows=[[10], [20]],
+        )
+        assert encode_message(msg_obj) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, RowsResponse)
+        assert msg.rows == [[10], [20]]
+        assert msg.has_more is False
+
+    def test_rows_response_part_marker_golden(self) -> None:
+        """RowsResponse with PART marker (has_more=True): full golden bytes.
+
+        Same layout as above but PART marker (0xEE...) instead of DONE.
+        """
+        row_hdr = bytes([0x01]) + b"\x00" * 7
+        expected = (
+            _header(5, 7) + _u64(1) + _text("x") + row_hdr + _i64(1) + _u64(0xEEEEEEEEEEEEEEEE)
+        )
+
+        msg_obj = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[1]],
+            has_more=True,
+        )
+        assert encode_message(msg_obj) == expected
+
+        msg = decode_message(expected, is_request=False)
+        assert isinstance(msg, RowsResponse)
+        assert msg.has_more is True
