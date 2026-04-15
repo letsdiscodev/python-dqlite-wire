@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from dqlitewire.constants import RequestType
+from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
@@ -528,6 +529,11 @@ class ClusterRequest(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
         format_val = decode_uint64(data)
+        if format_val == 0:
+            raise DecodeError(
+                "ClusterRequest format=0 (V0) is not supported. "
+                "ServersResponse only decodes V1 format (with node role fields)."
+            )
         return cls(format_val)
 
 

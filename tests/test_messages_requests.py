@@ -423,6 +423,15 @@ class TestClusterRequest:
         with pytest.raises(ValueError, match="format=0.*not supported"):
             ClusterRequest(format=0)
 
+    def test_decode_format_v0_raises_decode_error(self) -> None:
+        """208: decode_body with format=0 should raise DecodeError, not ValueError."""
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(0)  # format=0
+        with pytest.raises(DecodeError, match="format=0.*not supported"):
+            ClusterRequest.decode_body(body)
+
 
 class TestTransferRequest:
     def test_roundtrip(self) -> None:
