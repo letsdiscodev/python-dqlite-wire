@@ -826,6 +826,25 @@ class TestValue:
         assert vtype == ValueType.NULL
         assert encoded == b"\x00" * 8
 
+    def test_parse_iso8601_z_suffix(self) -> None:
+        """Z suffix should be treated as UTC (+00:00)."""
+        import datetime
+
+        from dqlitewire.types import _parse_iso8601
+
+        result = _parse_iso8601("2024-01-15T12:00:00Z")
+        assert result == datetime.datetime(2024, 1, 15, 12, 0, 0, tzinfo=datetime.UTC)
+
+    def test_parse_iso8601_z_suffix_with_fractional(self) -> None:
+        """Z suffix with fractional seconds."""
+        import datetime
+
+        from dqlitewire.types import _parse_iso8601
+
+        result = _parse_iso8601("2024-01-15T12:00:00.123Z")
+        assert result.microsecond == 123000
+        assert result.tzinfo == datetime.UTC
+
     def test_parse_iso8601_rejects_garbage(self) -> None:
         """Unparseable ISO 8601 string should raise DecodeError."""
         from dqlitewire.types import _parse_iso8601
