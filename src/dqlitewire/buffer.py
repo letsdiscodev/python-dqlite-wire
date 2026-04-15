@@ -403,7 +403,10 @@ class ReadBuffer:
 
         Returns None if not enough data available.
         Raises ``ProtocolError`` if the buffer is poisoned.
+        Raises ``ValueError`` if *n* is negative.
         """
+        if n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
         self._check_poisoned()
         available = len(self._data) - self._pos
         if available < n:
@@ -430,7 +433,10 @@ class ReadBuffer:
         validate the bytes before deciding whether to consume them.
 
         Raises ``ProtocolError`` if the buffer is poisoned.
+        Raises ``ValueError`` if *n* is negative.
         """
+        if n < 0:
+            raise ValueError(f"n must be non-negative, got {n}")
         self._check_poisoned()
         available = len(self._data) - self._pos
         if available < n:

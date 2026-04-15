@@ -118,6 +118,27 @@ class TestReadBuffer:
         assert data is None
         assert buf.available() == 2
 
+    def test_read_bytes_negative_n_raises(self) -> None:
+        """read_bytes with negative n must raise, not corrupt _pos."""
+        import pytest
+
+        buf = ReadBuffer()
+        buf.feed(b"hello world")
+        with pytest.raises(ValueError, match="non-negative"):
+            buf.read_bytes(-1)
+        # Buffer state must be unchanged
+        assert buf.available() == 11
+
+    def test_peek_bytes_negative_n_raises(self) -> None:
+        """peek_bytes with negative n must raise, not return empty bytes."""
+        import pytest
+
+        buf = ReadBuffer()
+        buf.feed(b"hello world")
+        with pytest.raises(ValueError, match="non-negative"):
+            buf.peek_bytes(-1)
+        assert buf.available() == 11
+
     def test_has_message_incomplete(self) -> None:
         buf = ReadBuffer()
         # Feed only header
