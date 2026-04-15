@@ -366,8 +366,6 @@ class RowsResponse(Message):
             )
 
         while offset < len(data):
-            prev_offset = offset
-
             # Read row header; markers are detected byte-by-byte inside
             result, consumed = decode_row_header(data[offset:], column_count)
             offset += consumed
@@ -403,11 +401,6 @@ class RowsResponse(Message):
 
             if len(rows) >= max_rows:
                 raise DecodeError(f"Row count {len(rows)} reached maximum {max_rows}")
-
-            if offset == prev_offset:
-                raise DecodeError(
-                    "No progress in row decoding (possible zero-column result with malformed data)"
-                )
 
         raise DecodeError(
             f"RowsResponse body exhausted without end marker "
