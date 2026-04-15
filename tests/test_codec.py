@@ -1803,3 +1803,95 @@ class TestStreamingContinuation:
 
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.decode()
+
+
+class TestEndToEndPipeline:
+    """End-to-end tests exercising the full MessageEncoder + MessageDecoder pipeline."""
+
+    def test_handshake_then_request_response_roundtrip(self) -> None:
+        """Full stateful pipeline: handshake → request → response."""
+        # Client side
+        encoder = MessageEncoder()
+        client_decoder = MessageDecoder(is_request=False)
+
+        # Server side
+        server_decoder = MessageDecoder(is_request=True)
+
+        # Step 1: Client sends handshake
+        handshake_bytes = encoder.encode_handshake()
+
+        # Step 2: Server receives and decodes handshake
+        server_decoder.feed(handshake_bytes)
+        version = server_decoder.decode_handshake()
+        assert version == PROTOCOL_VERSION
+
+        # Step 3: Client sends a LeaderRequest
+        request = LeaderRequest()
+        request_bytes = encoder.encode(request)
+
+        # Step 4: Server receives and decodes request
+        server_decoder.feed(request_bytes)
+        assert server_decoder.has_message()
+        decoded_request = server_decoder.decode()
+        assert isinstance(decoded_request, LeaderRequest)
+
+        # Step 5: Server sends a LeaderResponse
+        response = LeaderResponse(node_id=1, address="127.0.0.1:9001")
+        response_bytes = response.encode()
+
+        # Step 6: Client receives and decodes response
+        client_decoder.feed(response_bytes)
+        assert client_decoder.has_message()
+        decoded_response = client_decoder.decode()
+        assert isinstance(decoded_response, LeaderResponse)
+        assert decoded_response.node_id == 1
+        assert decoded_response.address == "127.0.0.1:9001"
+
+    def test_multiple_messages_single_feed(self) -> None:
+        """Concatenate multiple encoded messages, feed all at once, decode sequentially."""
+        decoder = MessageDecoder(is_request=False)
+
+        msg1 = WelcomeResponse(heartbeat_timeout=15000000000)
+        msg2 = DbResponse(db_id=0)
+        msg3 = StmtResponse(db_id=0, stmt_id=1, num_params=2)
+
+        # Concatenate all bytes and feed in one call
+        all_bytes = msg1.encode() + msg2.encode() + msg3.encode()
+        decoder.feed(all_bytes)
+
+        decoded1 = decoder.decode()
+        assert isinstance(decoded1, WelcomeResponse)
+        assert decoded1.heartbeat_timeout == 15000000000
+
+        decoded2 = decoder.decode()
+        assert isinstance(decoded2, DbResponse)
+        assert decoded2.db_id == 0
+
+        decoded3 = decoder.decode()
+        assert isinstance(decoded3, StmtResponse)
+        assert decoded3.db_id == 0
+        assert decoded3.stmt_id == 1
+        assert decoded3.num_params == 2
+
+        # No more messages
+        assert not decoder.has_message()
+
+    def test_partial_feed_chunked(self) -> None:
+        """Split encoded message at arbitrary points, feed in chunks."""
+        decoder = MessageDecoder(is_request=False)
+        msg = ResultResponse(last_insert_id=42, rows_affected=7)
+        encoded = msg.encode()
+
+        # Feed one byte at a time
+        for i in range(len(encoded) - 1):
+            decoder.feed(encoded[i : i + 1])
+            assert not decoder.has_message(), f"should not be complete at byte {i}"
+
+        # Feed the last byte — now the message should be complete
+        decoder.feed(encoded[-1:])
+        assert decoder.has_message()
+
+        decoded = decoder.decode()
+        assert isinstance(decoded, ResultResponse)
+        assert decoded.last_insert_id == 42
+        assert decoded.rows_affected == 7
