@@ -44,6 +44,13 @@ class FailureResponse(Message):
     """Operation failed.
 
     Body: uint64 code, text message
+
+    The ``code`` field contains a SQLite error code (or extended error code).
+    Common values include ``SQLITE_ERROR`` (1), ``SQLITE_BUSY`` (5), and the
+    dqlite-specific extended codes ``SQLITE_IOERR_NOT_LEADER`` (the node is
+    not the cluster leader) and ``SQLITE_IOERR_LEADERSHIP_LOST`` (leadership
+    was lost during the operation). See the `SQLite result codes documentation
+    <https://www.sqlite.org/rescode.html>`_ for the full list.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.FAILURE
