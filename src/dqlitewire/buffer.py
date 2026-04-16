@@ -1,7 +1,7 @@
 """Buffer utilities for streaming protocol data."""
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
-from dqlitewire.exceptions import DecodeError, ProtocolError
+from dqlitewire.exceptions import DecodeError, PoisonedError
 
 _COMPACT_THRESHOLD = 4096
 
@@ -134,7 +134,7 @@ class ReadBuffer:
 
     def _check_poisoned(self) -> None:
         if self._poisoned is not None:
-            raise ProtocolError(
+            raise PoisonedError(
                 "buffer is poisoned; call reset() and reconnect"
             ) from self._poisoned
 

@@ -8,7 +8,13 @@ from dqlitewire.constants import (
     RequestType,
     ResponseType,
 )
-from dqlitewire.exceptions import DecodeError, ProtocolError
+from dqlitewire.exceptions import (
+    ContinuationError,
+    DecodeError,
+    HandshakeError,
+    ServerFailure,
+    StreamError,
+)
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.requests import (
     AddRequest,
@@ -126,7 +132,7 @@ class MessageEncoder:
                      (0x86104dd760433fe5) for pre-1.0 dqlite servers.
         """
         if version not in _SUPPORTED_VERSIONS:
-            raise ProtocolError(
+            raise HandshakeError(
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
             )
@@ -201,7 +207,7 @@ class MessageDecoder:
                     this limit raises ``DecodeError``.
         """
         if not is_request and version not in _SUPPORTED_VERSIONS:
-            raise ProtocolError(
+            raise HandshakeError(
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
             )
@@ -270,7 +276,7 @@ class MessageDecoder:
         abandon the stream.
         """
         if self._continuation_expected:
-            raise ProtocolError(
+            raise ContinuationError(
                 "Cannot skip a message while a ROWS continuation is "
                 "in progress. Call decode_continuation() to drain, "
                 "or reset() to abandon the stream."
@@ -300,7 +306,7 @@ class MessageDecoder:
         """
         self._buffer._check_poisoned()
         if not self._continuation_expected:
-            raise ProtocolError(
+            raise ContinuationError(
                 "decode_continuation() called but no ROWS continuation "
                 "is in progress. Use decode() for the initial message."
             )
@@ -332,12 +338,10 @@ class MessageDecoder:
             if header.msg_type == ResponseType.FAILURE:
                 self._continuation_expected = False
                 failure = FailureResponse.decode_body(body, schema=header.schema)
-                raise ProtocolError(
-                    f"Server error during ROWS continuation: [{failure.code}] {failure.message}"
-                )
+                raise ServerFailure(failure.code, failure.message)
             if header.msg_type != ResponseType.ROWS:
                 self._continuation_expected = False
-                raise ProtocolError(
+                raise StreamError(
                     f"Expected ROWS continuation (type {ResponseType.ROWS}), "
                     f"got type {header.msg_type}"
                 )
@@ -366,13 +370,13 @@ class MessageDecoder:
         """
         self._buffer._check_poisoned()
         if self._continuation_expected:
-            raise ProtocolError(
+            raise ContinuationError(
                 "Cannot decode a new message while a ROWS continuation "
                 "is in progress. Call decode_continuation() until "
                 "has_more is False, or call reset() to abandon the stream."
             )
         if not self._handshake_done:
-            raise ProtocolError(
+            raise HandshakeError(
                 "Protocol handshake not yet received. Call decode_handshake() before decode()."
             )
         # read_message may raise DecodeError for an oversized header. That
@@ -421,7 +425,7 @@ class MessageDecoder:
         """
         self._buffer._check_poisoned()
         if not self._handshake_done:
-            raise ProtocolError(
+            raise HandshakeError(
                 "Protocol handshake not yet received. "
                 "Call decode_handshake() before decode_bytes()."
             )
@@ -490,7 +494,7 @@ class MessageDecoder:
         protocol version" error.
         """
         if self._handshake_done:
-            raise ProtocolError("Handshake already completed")
+            raise HandshakeError("Handshake already completed")
         # Peek first so we only commit on a valid version. An invalid version
         # leaves the bytes in place — a retry is deterministic rather than
         # silently advancing into real message data.
@@ -499,7 +503,7 @@ class MessageDecoder:
             return None
         version = int.from_bytes(peek, "little")
         if version not in _SUPPORTED_VERSIONS:
-            raise ProtocolError(f"Unsupported protocol version: {version:#x}")
+            raise HandshakeError(f"Unsupported protocol version: {version:#x}")
         # Commit state BEFORE consuming bytes. If the consume is
         # interrupted by an async exception, revert so the peek/commit
         # pair becomes atomic from the caller's perspective.

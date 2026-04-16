@@ -1120,8 +1120,16 @@ class TestDecoderContinuation:
         assert result is None
 
     def test_decode_continuation_raises_on_failure_response(self) -> None:
-        """decode_continuation should surface server error, not a confusing DecodeError."""
-        from dqlitewire.exceptions import ProtocolError
+        """decode_continuation should surface server error as ServerFailure.
+
+        The exception must be a ServerFailure (subclass of ProtocolError)
+        carrying structured ``code`` and ``message`` attributes — NOT a
+        DecodeError (which would mean the failure body was misinterpreted
+        as row data) and NOT a bare ProtocolError (issue 230 — callers
+        need to distinguish recoverable server errors from fatal stream
+        desync).
+        """
+        from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse
 
         failure = FailureResponse(code=266, message="disk I/O error")
@@ -1131,11 +1139,10 @@ class TestDecoderContinuation:
         decoder._continuation_expected = True
         decoder.feed(failure_bytes)
 
-        with pytest.raises(ProtocolError, match="disk I/O error") as exc_info:
+        with pytest.raises(ServerFailure, match="disk I/O error") as exc_info:
             decoder.decode_continuation()
-        # Must be a ProtocolError, NOT a DecodeError (which would mean the
-        # failure body was misinterpreted as row data).
-        assert type(exc_info.value) is ProtocolError
+        assert exc_info.value.code == 266
+        assert exc_info.value.message == "disk I/O error"
 
     def test_decode_continuation_raises_on_unexpected_type(self) -> None:
         """decode_continuation should raise ProtocolError for non-ROWS, non-FAILURE type."""

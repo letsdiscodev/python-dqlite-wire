@@ -54,16 +54,28 @@ from dqlitewire.constants import (
     ResponseType,
     ValueType,
 )
-from dqlitewire.exceptions import DecodeError, EncodeError, ProtocolError
+from dqlitewire.exceptions import (
+    ContinuationError,
+    DecodeError,
+    EncodeError,
+    HandshakeError,
+    PoisonedError,
+    ProtocolError,
+    ServerFailure,
+    StreamError,
+)
 
 __all__ = [
+    "ContinuationError",
     "DecodeError",
     "EncodeError",
+    "HandshakeError",
     "MessageDecoder",
     "MessageEncoder",
     "NodeRole",
     "PROTOCOL_VERSION",
     "PROTOCOL_VERSION_LEGACY",
+    "PoisonedError",
     "ProtocolError",
     "ROW_DONE_BYTE",
     "ROW_DONE_MARKER",
@@ -72,6 +84,8 @@ __all__ = [
     "ReadBuffer",
     "RequestType",
     "ResponseType",
+    "ServerFailure",
+    "StreamError",
     "ValueType",
     "WriteBuffer",
     "decode_message",
