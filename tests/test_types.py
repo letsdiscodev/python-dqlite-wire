@@ -234,6 +234,27 @@ class TestText:
         with pytest.raises(EncodeError, match="embedded null byte"):
             encode_text("\x00")
 
+    @pytest.mark.parametrize(
+        "bad",
+        [None, 42, b"x", 3.14, ["x"], bytearray(b"x"), memoryview(b"x")],
+    )
+    def test_non_str_raises_encode_error(self, bad: object) -> None:
+        """234: Non-string inputs must raise EncodeError, not raw TypeError.
+
+        Callers following the library's documented exception contract
+        (``except EncodeError``) would otherwise miss these failures.
+        """
+        with pytest.raises(EncodeError, match="expected str"):
+            encode_text(bad)  # type: ignore[arg-type]
+
+    def test_lone_surrogate_raises_encode_error(self) -> None:
+        """234: Lone UTF-16 surrogates are legal Python str but not UTF-8-encodable.
+
+        Must raise EncodeError (not the stdlib's UnicodeEncodeError).
+        """
+        with pytest.raises(EncodeError, match="invalid UTF-8"):
+            encode_text("\ud800")
+
     def test_decode_not_terminated_fails(self) -> None:
         with pytest.raises(DecodeError):
             decode_text(b"hello")
