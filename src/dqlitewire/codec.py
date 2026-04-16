@@ -383,6 +383,15 @@ class MessageDecoder:
         # etc., and all of them mean the stream is desynchronized.
         try:
             msg = self.decode_bytes(data)
+            # The flag store MUST be inside the try block: the bytes
+            # have been consumed, so any asynchronously-delivered
+            # exception here (KeyboardInterrupt, PyErr_SetAsyncExc)
+            # between the successful decode and the flag store would
+            # otherwise leave the stream desynchronized without
+            # poisoning — the next ``decode()`` would mis-frame the
+            # continuation frame as a top-level message (issue 233).
+            if isinstance(msg, RowsResponse) and msg.has_more:
+                self._continuation_expected = True
         except BaseException as e:
             # poison() stores Exception | None; wrap non-Exception
             # BaseException subclasses so the poison cause is still a
@@ -393,9 +402,6 @@ class MessageDecoder:
                 else RuntimeError(f"decode interrupted: {type(e).__name__}")
             )
             raise
-
-        if isinstance(msg, RowsResponse) and msg.has_more:
-            self._continuation_expected = True
 
         return msg
 

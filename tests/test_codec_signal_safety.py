@@ -73,6 +73,30 @@ def _tracer_raising_in(
     return tracer
 
 
+def _tracer_raising_in_after_call(
+    func_name: str,
+    callee_name: str,
+    exc: BaseException = _DEFAULT_EXC,
+) -> Any:
+    """Raise ``exc`` on the first line event in ``func_name`` AFTER a
+    call to ``callee_name`` has returned. Used to target the window
+    between a sub-call and the post-call statements in the caller.
+    """
+    state = {"saw_return": False, "raised": False}
+
+    def tracer(frame: FrameType, event: str, arg: object) -> Any:
+        if state["raised"]:
+            return tracer
+        if event == "return" and frame.f_code.co_name == callee_name:
+            state["saw_return"] = True
+        elif event == "line" and frame.f_code.co_name == func_name and state["saw_return"]:
+            state["raised"] = True
+            raise exc
+        return tracer
+
+    return tracer
+
+
 class TestDecodeSignalSafety:
     """Regression tests for issue 045 (consumed-but-unpoisoned window
     in ``decode()`` / ``decode_continuation()``).
@@ -121,6 +145,42 @@ class TestDecodeSignalSafety:
             dec.decode()
 
         assert not dec.is_poisoned
+
+    def test_keyboard_interrupt_between_parse_and_flag_set_poisons(self) -> None:
+        """233: a KeyboardInterrupt delivered in ``decode()`` AFTER
+        ``decode_bytes`` returns but BEFORE ``_continuation_expected``
+        is set used to propagate without poisoning, because the flag
+        assignment lived outside the ``except BaseException`` block.
+        The next ``decode()`` call would then read the continuation
+        frame as a top-level message (silent stream desync).
+
+        The fix moves the flag store inside the try/except block, so
+        any exception in that window poisons the buffer.
+        """
+        # Feed any valid message — a DbResponse is fine because the
+        # flag-check line runs before the isinstance() short-circuits.
+        dec = MessageDecoder(is_request=False)
+        dec.feed(_make_db(1) + _make_db(2))
+
+        tracer = _tracer_raising_in_after_call("decode", "decode_bytes")
+
+        sys.settrace(tracer)
+        try:
+            with contextlib.suppress(KeyboardInterrupt):
+                dec.decode()
+        finally:
+            sys.settrace(None)
+
+        assert dec.is_poisoned, (
+            "decode() must poison when an interrupt lands after "
+            "decode_bytes returns but before the flag store"
+        )
+
+        # The retry must fail fast with ProtocolError rather than
+        # silently returning the next message from a desynchronized
+        # stream.
+        with pytest.raises(ProtocolError, match="poisoned"):
+            dec.decode()
 
     def test_keyboard_interrupt_in_decode_continuation_poisons(self) -> None:
         """Same hazard as decode(): decode_continuation() also needs
