@@ -115,6 +115,68 @@ class TestMessageDecoder:
         decoder = MessageDecoder()
         assert decoder._buffer._max_message_size == ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE
 
+    def test_decoder_custom_max_rows(self) -> None:
+        """231: max_rows should be forwarded to RowsResponse.decode_body.
+
+        The knob exists on RowsResponse.decode_body, but MessageDecoder
+        previously omitted it at the call site, leaving the 1M default
+        always in force regardless of caller configuration.
+        """
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.responses import RowsResponse
+
+        msg = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]] * 3,
+            rows=[[1], [2], [3]],
+        )
+        encoded = msg.encode()
+
+        decoder = MessageDecoder(max_rows=2)
+        decoder.feed(encoded)
+        with pytest.raises(DecodeError, match="reached maximum 2"):
+            decoder.decode()
+
+    def test_decoder_default_max_rows(self) -> None:
+        """231: default max_rows should match RowsResponse.DEFAULT_MAX_ROWS."""
+        from dqlitewire.messages.responses import RowsResponse
+
+        decoder = MessageDecoder()
+        assert decoder._max_rows == RowsResponse.DEFAULT_MAX_ROWS
+
+    def test_decoder_rejects_zero_max_rows(self) -> None:
+        """231: max_rows < 1 should be rejected at construction time."""
+        with pytest.raises(ValueError, match="max_rows must be >= 1"):
+            MessageDecoder(max_rows=0)
+
+    def test_decoder_continuation_honors_max_rows(self) -> None:
+        """231: decode_continuation should also honor max_rows.
+
+        A multi-frame ROWS stream can exceed max_rows across frames; the
+        per-frame cap still applies to each continuation response.
+        """
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.responses import RowsResponse
+
+        cont = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]] * 3,
+            rows=[[1], [2], [3]],
+            has_more=False,
+        )
+        cont_bytes = cont.encode()
+
+        decoder = MessageDecoder(max_rows=2)
+        # Mark decoder as mid-continuation so decode_continuation() runs.
+        decoder._continuation_expected = True
+        decoder.feed(cont_bytes)
+        with pytest.raises(DecodeError, match="reached maximum 2"):
+            decoder.decode_continuation()
+
     def test_decode_handshake(self) -> None:
         decoder = MessageDecoder(is_request=True)
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))

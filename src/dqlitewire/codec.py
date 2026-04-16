@@ -181,6 +181,7 @@ class MessageDecoder:
         is_request: bool = False,
         version: int = PROTOCOL_VERSION,
         max_message_size: int = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE,
+        max_rows: int = RowsResponse.DEFAULT_MAX_ROWS,
     ) -> None:
         """Initialize decoder.
 
@@ -194,12 +195,18 @@ class MessageDecoder:
             max_message_size: Maximum allowed message size in bytes.
                     Defaults to 64 MiB. Messages exceeding this limit are
                     rejected with DecodeError.
+            max_rows: Maximum number of rows permitted in a single
+                    ``RowsResponse`` frame (including continuation frames).
+                    Defaults to ``RowsResponse.DEFAULT_MAX_ROWS``. Exceeding
+                    this limit raises ``DecodeError``.
         """
         if not is_request and version not in _SUPPORTED_VERSIONS:
             raise ProtocolError(
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
             )
+        if max_rows < 1:
+            raise ValueError(f"max_rows must be >= 1, got {max_rows}")
         self._buffer = ReadBuffer(max_message_size=max_message_size)
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
@@ -211,6 +218,7 @@ class MessageDecoder:
         # don't receive an inbound handshake, so they skip this check.
         self._handshake_done = not is_request
         self._continuation_expected = False
+        self._max_rows = max_rows
 
     @property
     def version(self) -> int | None:
@@ -334,7 +342,7 @@ class MessageDecoder:
                     f"got type {header.msg_type}"
                 )
 
-            result = RowsResponse.decode_body(body, schema=header.schema)
+            result = RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
             if not result.has_more:
                 self._continuation_expected = False
             return result
@@ -448,6 +456,11 @@ class MessageDecoder:
             and msg_class is LeaderResponse
         ):
             return LeaderResponse.decode_body_legacy(body)
+
+        # RowsResponse takes an extra ``max_rows`` cap; other classes
+        # share the generic (body, schema) signature.
+        if msg_class is RowsResponse:
+            return RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
 
         return msg_class.decode_body(body, schema=header.schema)
 
