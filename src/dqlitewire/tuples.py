@@ -203,7 +203,9 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
     return bytes(header)
 
 
-def decode_row_header(data: bytes, column_count: int) -> tuple[list[ValueType] | RowMarker, int]:
+def decode_row_header(
+    data: bytes | memoryview, column_count: int
+) -> tuple[list[ValueType] | RowMarker, int]:
     """Decode row column type header.
 
     Format: 4-bit type codes packed two per byte, padded to word boundary.
@@ -255,7 +257,9 @@ def encode_row_values(values: Sequence[Any], types: Sequence[ValueType]) -> byte
     return bytes(result)
 
 
-def decode_row_values(data: bytes, types: Sequence[ValueType]) -> tuple[list[Any], int]:
+def decode_row_values(
+    data: bytes | memoryview, types: Sequence[ValueType]
+) -> tuple[list[Any], int]:
     """Decode row values according to column types.
 
     Returns (values, bytes_consumed).

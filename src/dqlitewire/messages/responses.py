@@ -322,17 +322,23 @@ class RowsResponse(Message):
     def decode_body(
         cls, data: bytes, schema: int = 0, max_rows: int = DEFAULT_MAX_ROWS
     ) -> "RowsResponse":
+        # Wrap in memoryview so per-iteration slices are O(1) rather
+        # than O(remaining). Without this, a body with many small rows
+        # triggers quadratic-time decode (issue 228): each
+        # ``data[offset:]`` allocates a fresh ``bytes`` copy of the
+        # tail. Memoryview slicing is a view, so slicing is free.
+        view = memoryview(data)
         offset = 0
 
         # Column count
-        column_count = decode_uint64(data[offset:])
+        column_count = decode_uint64(view[offset:])
         offset += 8
 
         if column_count > _MAX_COLUMN_COUNT:
             raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
 
         # Bounds check: each column name is at least 8 bytes (null + padding)
-        remaining = len(data) - offset
+        remaining = len(view) - offset
         if column_count > remaining // 8:
             raise DecodeError(
                 f"Column count {column_count} exceeds maximum possible in "
@@ -342,7 +348,7 @@ class RowsResponse(Message):
         # Column names
         column_names: list[str] = []
         for _ in range(column_count):
-            name, consumed = decode_text(data[offset:])
+            name, consumed = decode_text(view[offset:])
             column_names.append(name)
             offset += consumed
 
@@ -354,11 +360,11 @@ class RowsResponse(Message):
         # Zero-column results cannot have row data (each row would be zero
         # bytes), so skip the row loop and consume the end marker directly.
         if column_count == 0:
-            if offset + WORD_SIZE > len(data):
+            if offset + WORD_SIZE > len(view):
                 raise DecodeError(
                     "RowsResponse body exhausted without end marker (zero-column result)"
                 )
-            marker_byte = data[offset]
+            marker_byte = view[offset]
             if marker_byte == ROW_DONE_BYTE:
                 has_more = False
             elif marker_byte == ROW_PART_BYTE:
@@ -375,9 +381,9 @@ class RowsResponse(Message):
                 has_more=has_more,
             )
 
-        while offset < len(data):
+        while offset < len(view):
             # Read row header; markers are detected byte-by-byte inside
-            result, consumed = decode_row_header(data[offset:], column_count)
+            result, consumed = decode_row_header(view[offset:], column_count)
             offset += consumed
 
             if result is RowMarker.DONE:
@@ -405,7 +411,7 @@ class RowsResponse(Message):
                 column_types = types
 
             # Read row values
-            values, consumed = decode_row_values(data[offset:], types)
+            values, consumed = decode_row_values(view[offset:], types)
             rows.append(values)
             offset += consumed
 
@@ -414,7 +420,7 @@ class RowsResponse(Message):
 
         raise DecodeError(
             f"RowsResponse body exhausted without end marker "
-            f"(decoded {len(rows)} rows, consumed {offset} of {len(data)} bytes)"
+            f"(decoded {len(rows)} rows, consumed {offset} of {len(view)} bytes)"
         )
 
 
@@ -464,30 +470,32 @@ class FilesResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
+        # Memoryview for O(1) slicing in the per-file loop (issue 228).
+        view = memoryview(data)
         files: dict[str, bytes] = {}
         offset = 0
-        count = decode_uint64(data[offset:])
+        count = decode_uint64(view[offset:])
         offset += 8
         if count > _MAX_FILE_COUNT:
             raise DecodeError(f"File count {count} exceeds maximum {_MAX_FILE_COUNT}")
         # Bounds check: each file is at least 16 bytes (name + size)
-        remaining = len(data) - offset
+        remaining = len(view) - offset
         if count > remaining // 16:
             raise DecodeError(
                 f"File count {count} exceeds maximum possible in "
                 f"{remaining} bytes of remaining data"
             )
         for _ in range(count):
-            name, consumed = decode_text(data[offset:])
+            name, consumed = decode_text(view[offset:])
             offset += consumed
-            size = decode_uint64(data[offset:])
+            size = decode_uint64(view[offset:])
             offset += 8
-            if offset + size > len(data):
+            if offset + size > len(view):
                 raise DecodeError(
                     f"FilesResponse file content truncated: expected {size} bytes "
-                    f"at offset {offset}, but only {len(data) - offset} bytes available"
+                    f"at offset {offset}, but only {len(view) - offset} bytes available"
                 )
-            content = data[offset : offset + size]
+            content = bytes(view[offset : offset + size])
             # No padding after content — matches Go's byte-by-byte read.
             offset += size
             files[name] = content
@@ -524,25 +532,27 @@ class ServersResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ServersResponse":
+        # Memoryview for O(1) slicing in the per-node loop (issue 228).
+        view = memoryview(data)
         nodes: list[NodeInfo] = []
         offset = 0
-        count = decode_uint64(data[offset:])
+        count = decode_uint64(view[offset:])
         offset += 8
         if count > _MAX_NODE_COUNT:
             raise DecodeError(f"Node count {count} exceeds maximum {_MAX_NODE_COUNT}")
         # Bounds check: each node is at least 24 bytes (id + address + role)
-        remaining = len(data) - offset
+        remaining = len(view) - offset
         if count > remaining // 24:
             raise DecodeError(
                 f"Node count {count} exceeds maximum possible in "
                 f"{remaining} bytes of remaining data"
             )
         for _ in range(count):
-            node_id = decode_uint64(data[offset:])
+            node_id = decode_uint64(view[offset:])
             offset += 8
-            address, consumed = decode_text(data[offset:])
+            address, consumed = decode_text(view[offset:])
             offset += consumed
-            role = decode_uint64(data[offset:])
+            role = decode_uint64(view[offset:])
             offset += 8
             nodes.append(NodeInfo(node_id, address, role))
         return cls(nodes)

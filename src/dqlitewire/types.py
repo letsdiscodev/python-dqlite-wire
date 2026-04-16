@@ -19,8 +19,12 @@ def encode_uint64(value: int) -> bytes:
     return struct.pack("<Q", value)
 
 
-def decode_uint64(data: bytes) -> int:
-    """Decode an unsigned 64-bit integer (little-endian)."""
+def decode_uint64(data: bytes | memoryview) -> int:
+    """Decode an unsigned 64-bit integer (little-endian).
+
+    Accepts ``bytes`` or ``memoryview`` so hot-path body decoders
+    (issue 228) can pass memoryview slices without copying.
+    """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for uint64, got {len(data)}")
     result: int = struct.unpack("<Q", data[:8])[0]
@@ -34,8 +38,11 @@ def encode_int64(value: int) -> bytes:
     return struct.pack("<q", value)
 
 
-def decode_int64(data: bytes) -> int:
-    """Decode a signed 64-bit integer (little-endian)."""
+def decode_int64(data: bytes | memoryview) -> int:
+    """Decode a signed 64-bit integer (little-endian).
+
+    Accepts ``bytes`` or ``memoryview`` (issue 228).
+    """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for int64, got {len(data)}")
     result: int = struct.unpack("<q", data[:8])[0]
@@ -49,8 +56,11 @@ def encode_uint32(value: int) -> bytes:
     return struct.pack("<I", value)
 
 
-def decode_uint32(data: bytes) -> int:
-    """Decode an unsigned 32-bit integer (little-endian)."""
+def decode_uint32(data: bytes | memoryview) -> int:
+    """Decode an unsigned 32-bit integer (little-endian).
+
+    Accepts ``bytes`` or ``memoryview`` (issue 228).
+    """
     if len(data) < 4:
         raise DecodeError(f"Need 4 bytes for uint32, got {len(data)}")
     result: int = struct.unpack("<I", data[:4])[0]
@@ -66,11 +76,12 @@ def encode_double(value: float) -> bytes:
     return struct.pack("<d", value)
 
 
-def decode_double(data: bytes) -> float:
+def decode_double(data: bytes | memoryview) -> float:
     """Decode a 64-bit floating point number (little-endian).
 
     All IEEE 754 values are accepted, including NaN and infinity,
-    matching the Go reference implementation behavior.
+    matching the Go reference implementation behavior. Accepts
+    ``bytes`` or ``memoryview`` (issue 228).
     """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for double, got {len(data)}")
@@ -103,21 +114,60 @@ def encode_text(value: str) -> bytes:
     return encoded + (b"\x00" * padding)
 
 
-def decode_text(data: bytes) -> tuple[str, int]:
+_TEXT_SCAN_CHUNK = 4096
+
+
+def decode_text(data: bytes | memoryview) -> tuple[str, int]:
     """Decode null-terminated UTF-8 text.
 
-    Returns the decoded string and the number of bytes consumed (including padding).
-    """
-    # Find null terminator
-    try:
-        null_pos = data.index(b"\x00")
-    except ValueError as e:
-        raise DecodeError("Text not null-terminated") from e
+    Accepts either ``bytes`` or ``memoryview``. Returns the decoded
+    string and the number of bytes consumed (including padding).
 
-    try:
-        text = data[:null_pos].decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+    The decoder's hot body loops (RowsResponse, FilesResponse,
+    ServersResponse) wrap the body in a ``memoryview`` so
+    per-iteration slices are O(1) rather than O(remaining) — see
+    issue 228. ``bytes`` inputs use zero-copy ``.index(b"\\x00")``.
+    ``memoryview`` inputs walk the buffer in fixed-size chunks so the
+    per-chunk ``bytes(...)`` copy is bounded; arbitrarily long text
+    values (e.g. multi-KiB SQL strings or TEXT column values) are
+    supported because the scan simply visits more chunks. Per-call
+    cost scales with the actual text length, not with the remaining
+    body.
+    """
+    if isinstance(data, memoryview):
+        # Memoryview has no ``.index(bytes)``. Scan in fixed chunks and
+        # accumulate so we can decode the full text without re-copying
+        # after the NUL is found.
+        chunks: list[bytes] = []
+        scanned = 0
+        null_pos = -1
+        data_len = len(data)
+        while scanned < data_len:
+            chunk_end = min(scanned + _TEXT_SCAN_CHUNK, data_len)
+            chunk = bytes(data[scanned:chunk_end])
+            local = chunk.find(b"\x00")
+            if local >= 0:
+                chunks.append(chunk[:local])
+                null_pos = scanned + local
+                break
+            chunks.append(chunk)
+            scanned = chunk_end
+        if null_pos < 0:
+            raise DecodeError("Text not null-terminated")
+        try:
+            text = b"".join(chunks).decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+    else:
+        try:
+            null_pos = data.index(b"\x00")
+        except ValueError as e:
+            raise DecodeError("Text not null-terminated") from e
+        try:
+            text = data[:null_pos].decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+
     # Calculate total size including padding
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
     if len(data) < total_size:
@@ -135,10 +185,11 @@ def encode_blob(value: bytes) -> bytes:
     return encode_uint64(length) + value + (b"\x00" * padding)
 
 
-def decode_blob(data: bytes) -> tuple[bytes, int]:
+def decode_blob(data: bytes | memoryview) -> tuple[bytes, int]:
     """Decode a blob.
 
-    Returns the blob data and the number of bytes consumed.
+    Accepts either ``bytes`` or ``memoryview``. Returns the blob data
+    (always as ``bytes``) and the number of bytes consumed.
     """
     if len(data) < 8:
         raise DecodeError("Not enough data for blob length")
@@ -149,7 +200,7 @@ def decode_blob(data: bytes) -> tuple[bytes, int]:
     if len(data) < total_size:
         raise DecodeError(f"Not enough data for blob: need {total_size}, got {len(data)}")
 
-    return data[8 : 8 + length], total_size
+    return bytes(data[8 : 8 + length]), total_size
 
 
 def _format_datetime_iso8601(value: datetime.datetime) -> str:
@@ -276,7 +327,7 @@ def _parse_iso8601(text: str) -> datetime.datetime:
     raise DecodeError(f"Cannot parse ISO 8601 datetime: {text!r}")
 
 
-def decode_value(data: bytes, value_type: ValueType) -> tuple[Any, int]:
+def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[Any, int]:
     """Decode a value from wire format.
 
     Returns (value, bytes_consumed).
