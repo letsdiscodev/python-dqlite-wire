@@ -111,6 +111,12 @@ class MessageEncoder:
     ``ReadBuffer``.
     """
 
+    def __reduce__(self) -> None:  # type: ignore[override]
+        raise TypeError(
+            "MessageEncoder cannot be pickled. Each instance is bound to a "
+            "single connection and must not be duplicated across processes."
+        )
+
     def __init__(self, version: int = PROTOCOL_VERSION) -> None:
         """Initialize encoder.
 
@@ -163,6 +169,12 @@ class MessageDecoder:
     call site in an ``asyncio.Lock`` or ``threading.Lock`` at the
     layer that owns the socket.
     """
+
+    def __reduce__(self) -> None:  # type: ignore[override]
+        raise TypeError(
+            "MessageDecoder cannot be pickled. Each instance is bound to a "
+            "single connection and must not be duplicated across processes."
+        )
 
     def __init__(
         self,

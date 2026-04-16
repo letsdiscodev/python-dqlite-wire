@@ -1,5 +1,9 @@
 """Tests for buffer utilities."""
 
+import pickle
+
+import pytest
+
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.messages import LeaderRequest, LeaderResponse
 
@@ -85,6 +89,13 @@ class TestWriteBuffer:
                 ), f"torn word at offset {i}: {bytes(word)!r}"
         finally:
             sys.setswitchinterval(old_interval)
+
+    def test_pickle_raises_typeerror(self) -> None:
+        """WriteBuffer must not be picklable (issue 227)."""
+        buf = WriteBuffer()
+        buf.write(b"data")
+        with pytest.raises(TypeError, match="cannot be pickled"):
+            pickle.dumps(buf)
 
 
 class TestReadBuffer:
@@ -758,3 +769,10 @@ class TestReadBuffer:
         # Buffer should still work
         buf.feed(encoded)
         assert buf.has_message()
+
+    def test_pickle_raises_typeerror(self) -> None:
+        """ReadBuffer must not be picklable (issue 227)."""
+        buf = ReadBuffer()
+        buf.feed(b"\x00" * 16)
+        with pytest.raises(TypeError, match="cannot be pickled"):
+            pickle.dumps(buf)

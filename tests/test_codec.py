@@ -1908,3 +1908,19 @@ class TestReadmeExample:
         data = encode_message(LeaderRequest())
         message = decode_message(data, is_request=True)
         assert isinstance(message, LeaderRequest)
+
+
+class TestPicklePrevention:
+    """Issue 227: core classes must not be picklable."""
+
+    def test_message_decoder_pickle_raises(self) -> None:
+        import pickle
+
+        with pytest.raises(TypeError, match="cannot be pickled"):
+            pickle.dumps(MessageDecoder())
+
+    def test_message_encoder_pickle_raises(self) -> None:
+        import pickle
+
+        with pytest.raises(TypeError, match="cannot be pickled"):
+            pickle.dumps(MessageEncoder())

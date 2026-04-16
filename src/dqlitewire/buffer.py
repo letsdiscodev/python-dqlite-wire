@@ -18,6 +18,12 @@ class WriteBuffer:
     a narrow defense, not a general thread-safety guarantee.
     """
 
+    def __reduce__(self) -> None:  # type: ignore[override]
+        raise TypeError(
+            "WriteBuffer cannot be pickled. Each instance is bound to a "
+            "single connection stream and must not be duplicated across processes."
+        )
+
     def __init__(self) -> None:
         self._data = bytearray()
 
@@ -87,6 +93,12 @@ class ReadBuffer:
     """
 
     DEFAULT_MAX_MESSAGE_SIZE = 64 * 1024 * 1024  # 64 MiB
+
+    def __reduce__(self) -> None:  # type: ignore[override]
+        raise TypeError(
+            "ReadBuffer cannot be pickled. Each instance is bound to a "
+            "single connection stream and must not be duplicated across processes."
+        )
 
     def __init__(self, max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE) -> None:
         self._data = bytearray()
