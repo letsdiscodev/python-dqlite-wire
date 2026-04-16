@@ -179,12 +179,15 @@ class StmtResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
+        expected = 24 if schema >= 1 else 16
+        if len(data) < expected:
+            raise DecodeError(
+                f"StmtResponse schema={schema} requires at least {expected} bytes, got {len(data)}"
+            )
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
-        tail_offset: int | None = None
-        if schema >= 1 and len(data) >= 24:
-            tail_offset = decode_uint64(data[16:])
+        tail_offset = decode_uint64(data[16:]) if schema >= 1 else None
         return cls(db_id, stmt_id, num_params, tail_offset)
 
 

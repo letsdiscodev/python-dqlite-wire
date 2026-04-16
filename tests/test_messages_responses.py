@@ -3,7 +3,7 @@
 import pytest
 
 from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
-from dqlitewire.exceptions import EncodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
     DbResponse,
@@ -133,6 +133,23 @@ class TestStmtResponse:
         encoded = msg.encode()
         decoded = StmtResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.tail_offset is None
+
+    def test_schema_0_rejects_short_body(self) -> None:
+        """235: Schema=0 body must be at least 16 bytes."""
+        with pytest.raises(DecodeError, match="requires at least 16 bytes"):
+            StmtResponse.decode_body(b"\x00" * 8, schema=0)
+
+    def test_schema_1_rejects_v0_length_body(self) -> None:
+        """235: Schema=1 demands 24 bytes.
+
+        A 16-byte body under schema=1 was previously accepted silently and
+        returned ``tail_offset=None``, indistinguishable from a real V0
+        body. That collapsed two different protocol states into one.
+        """
+        v0_body = b"\x01\x00\x00\x00" + b"\x02\x00\x00\x00" + b"\x03" + b"\x00" * 7
+        assert len(v0_body) == 16
+        with pytest.raises(DecodeError, match="requires at least 24 bytes"):
+            StmtResponse.decode_body(v0_body, schema=1)
 
 
 class TestResultResponse:
