@@ -204,10 +204,19 @@ def decode_blob(data: bytes | memoryview) -> tuple[bytes, int]:
 
 
 def _format_datetime_iso8601(value: datetime.datetime) -> str:
-    """Format a datetime to ISO 8601 string matching Go's time format."""
+    """Format a datetime to an ISO 8601 string compatible with Go's
+    space-separated layout and with Python's datetime.fromisoformat.
+
+    - Space separator between date and time (matches Go's layout so values
+      written by Go clients can be compared byte-for-byte).
+    - Full 6-digit microseconds (no rstrip): otherwise ``.100000`` became
+      ``.1`` which was ambiguous between ``0.1 s`` and ``100000 µs`` to
+      lenient parsers and broke direct string equality with
+      ``datetime.isoformat(" ")``.
+    """
     formatted = f"{value.year:04d}" + value.strftime("-%m-%d %H:%M:%S")
     if value.microsecond:
-        formatted += f".{value.microsecond:06d}".rstrip("0")
+        formatted += f".{value.microsecond:06d}"
     utcoffset = value.utcoffset()
     if utcoffset is not None:
         total_seconds = int(utcoffset.total_seconds())
@@ -216,7 +225,8 @@ def _format_datetime_iso8601(value: datetime.datetime) -> str:
         minutes = remainder // 60
         formatted += f"{sign}{hours:02d}:{minutes:02d}"
     else:
-        # Naive datetime: assume UTC to match Go's always-offset format
+        # Naive datetime: assume UTC to match Go's always-offset format.
+        # (See #137 for a separate branch that rejects naive instead.)
         formatted += "+00:00"
     return formatted
 
