@@ -5,7 +5,7 @@ import struct
 import pytest
 
 from dqlitewire.constants import ValueType
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.tuples import (
     RowMarker,
     decode_params_tuple,
@@ -22,6 +22,20 @@ class TestParamsTuple:
         """Empty params should encode to nothing, matching Go behavior."""
         encoded = encode_params_tuple([])
         assert encoded == b""
+
+    def test_params_tuple_rejects_unixtime_tag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Defense in depth: if anything ever produces a UNIXTIME tag on an
+        outgoing param, encode_params_tuple must reject it — the C server
+        cannot decode DQLITE_UNIXTIME inbound.
+        """
+        from dqlitewire import tuples as tuples_mod
+
+        def fake_encode(value: object, value_type: object = None) -> tuple:
+            return b"\x00" * 8, ValueType.UNIXTIME
+
+        monkeypatch.setattr(tuples_mod, "encode_value", fake_encode)
+        with pytest.raises(EncodeError, match="UNIXTIME"):
+            encode_params_tuple([1_700_000_000])
 
     def test_encode_single_integer(self) -> None:
         encoded = encode_params_tuple([42])

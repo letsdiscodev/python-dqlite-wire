@@ -71,7 +71,11 @@ class ValueType(IntEnum):
     TEXT = 3
     BLOB = 4
     NULL = 5
-    UNIXTIME = 9  # Unix time (deprecated, maps to INTEGER)
+    # Unix time (deprecated, maps to INTEGER).
+    # Server-to-client ONLY: the C server's tuple_decoder has no inbound
+    # case for DQLITE_UNIXTIME, so this tag must never appear on outgoing
+    # parameters. encode_params_tuple enforces this defensively.
+    UNIXTIME = 9
     ISO8601 = 10  # ISO8601 string (maps to TEXT)
     BOOLEAN = 11  # Boolean (maps to INTEGER)
 

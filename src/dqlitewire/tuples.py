@@ -54,8 +54,16 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
     types: list[int] = []
     values: list[bytes] = []
 
-    for param in params:
+    for i, param in enumerate(params):
         encoded, value_type = encode_value(param)
+        # Defense in depth: UNIXTIME is server-to-client only. Inference
+        # never picks it, but guard against a future caller threading an
+        # explicit UNIXTIME hint through this path.
+        if value_type == ValueType.UNIXTIME:
+            raise EncodeError(
+                f"Parameter {i} resolved to UNIXTIME, which the server "
+                "cannot decode; use INTEGER or ISO8601 instead"
+            )
         types.append(value_type)
         values.append(encoded)
 

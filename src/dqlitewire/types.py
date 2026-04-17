@@ -276,6 +276,13 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             raise EncodeError(f"Expected bool or int for BOOLEAN, got {type(value).__name__}")
         return encode_uint64(1 if value else 0), value_type
     elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
+        # Note: UNIXTIME is a server-to-client-only type (the C server's
+        # tuple_decoder has no inbound case for DQLITE_UNIXTIME). Explicit
+        # UNIXTIME encoding here is supported for roundtrip tests that
+        # simulate server-to-client frames; encode_params_tuple, which is
+        # the outgoing-params path, uses inference and never picks
+        # UNIXTIME, so the server-rejection case cannot arise via the
+        # documented client API.
         if isinstance(value, bool):
             value = 1 if value else 0
         if not isinstance(value, int):
