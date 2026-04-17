@@ -682,11 +682,11 @@ class TestValue:
         assert decoded.hour == 10
         assert decoded.second == 45
 
-    def test_naive_datetime_includes_utc_offset(self) -> None:
-        """Naive datetime should include +00:00 offset to match Go's format."""
-        from datetime import datetime
+    def test_aware_utc_datetime_includes_offset(self) -> None:
+        """Aware UTC datetime should include +00:00 offset to match Go's format."""
+        from datetime import UTC, datetime
 
-        dt = datetime(2024, 1, 15, 10, 30, 45)  # naive, no tzinfo
+        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         encoded, vtype = encode_value(dt)
         assert vtype == ValueType.ISO8601
         # Check the raw encoded text contains +00:00
@@ -885,35 +885,28 @@ class TestValue:
 class TestNaiveDatetimeISO8601:
     """166: naive datetime 'assume UTC' fallback path is untested."""
 
-    def test_naive_datetime_assumes_utc(self) -> None:
-        """Naive datetime is encoded as UTC (+00:00)."""
+    def test_naive_datetime_raises(self) -> None:
+        """Naive datetime params are rejected (no silent UTC assumption)."""
         import datetime
 
         naive = datetime.datetime(2024, 6, 15, 12, 30, 45)  # noqa: DTZ001
-        encoded, vtype = encode_value(naive, ValueType.ISO8601)
-        assert vtype == ValueType.ISO8601
-        decoded, _ = decode_value(encoded, ValueType.ISO8601)
-        assert decoded.utcoffset() == datetime.timedelta(0)
-        assert decoded.year == 2024
-        assert decoded.month == 6
-        assert decoded.hour == 12
+        with pytest.raises(EncodeError, match="[Nn]aive"):
+            encode_value(naive, ValueType.ISO8601)
 
-    def test_naive_datetime_with_microseconds(self) -> None:
-        """Naive datetime with fractional seconds encodes correctly."""
+    def test_aware_utc_datetime_with_microseconds(self) -> None:
+        """Aware UTC datetime with fractional seconds encodes correctly."""
         import datetime
 
-        naive = datetime.datetime(2024, 1, 1, 0, 0, 0, 123456)  # noqa: DTZ001
-        encoded, _ = encode_value(naive, ValueType.ISO8601)
+        dt = datetime.datetime(2024, 1, 1, 0, 0, 0, 123456, tzinfo=datetime.UTC)
+        encoded, _ = encode_value(dt, ValueType.ISO8601)
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
         assert decoded.microsecond == 123456
 
-    def test_naive_datetime_roundtrip_becomes_aware(self) -> None:
-        """Naive datetime round-trips as timezone-aware UTC."""
+    def test_utc_datetime_roundtrips(self) -> None:
+        """Aware UTC datetime round-trips as timezone-aware UTC."""
         import datetime
 
-        naive = datetime.datetime(2024, 6, 15, 12, 30, 45)  # noqa: DTZ001
-        assert naive.tzinfo is None
-        encoded, _ = encode_value(naive, ValueType.ISO8601)
+        dt = datetime.datetime(2024, 6, 15, 12, 30, 45, tzinfo=datetime.UTC)
+        encoded, _ = encode_value(dt, ValueType.ISO8601)
         decoded, _ = decode_value(encoded, ValueType.ISO8601)
-        assert decoded.tzinfo is not None
-        assert decoded.replace(tzinfo=None) == naive
+        assert decoded == dt

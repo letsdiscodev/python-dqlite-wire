@@ -213,21 +213,26 @@ def _format_datetime_iso8601(value: datetime.datetime) -> str:
       ``.1`` which was ambiguous between ``0.1 s`` and ``100000 µs`` to
       lenient parsers and broke direct string equality with
       ``datetime.isoformat(" ")``.
+    - Naive datetimes (tzinfo is None) are rejected: silently assuming UTC
+      hides real bugs in callers that used ``datetime.now()``/``utcnow()``
+      in a local-time context.
     """
+    if value.tzinfo is None:
+        raise EncodeError(
+            "Naive datetime has no timezone; pass an aware datetime "
+            "(e.g. datetime.now(datetime.UTC) or "
+            "dt.replace(tzinfo=datetime.UTC))."
+        )
     formatted = f"{value.year:04d}" + value.strftime("-%m-%d %H:%M:%S")
     if value.microsecond:
         formatted += f".{value.microsecond:06d}"
     utcoffset = value.utcoffset()
-    if utcoffset is not None:
-        total_seconds = int(utcoffset.total_seconds())
-        sign = "+" if total_seconds >= 0 else "-"
-        hours, remainder = divmod(abs(total_seconds), 3600)
-        minutes = remainder // 60
-        formatted += f"{sign}{hours:02d}:{minutes:02d}"
-    else:
-        # Naive datetime: assume UTC to match Go's always-offset format.
-        # (See #137 for a separate branch that rejects naive instead.)
-        formatted += "+00:00"
+    assert utcoffset is not None  # noqa: S101 - guarded above
+    total_seconds = int(utcoffset.total_seconds())
+    sign = "+" if total_seconds >= 0 else "-"
+    hours, remainder = divmod(abs(total_seconds), 3600)
+    minutes = remainder // 60
+    formatted += f"{sign}{hours:02d}:{minutes:02d}"
     return formatted
 
 
