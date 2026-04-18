@@ -119,6 +119,13 @@ def encode_text(value: str) -> bytes:
     return encoded + (b"\x00" * padding)
 
 
+# Threshold below which we materialize a memoryview to bytes in one
+# shot (one allocation + one ``bytes.find``) instead of the chunked
+# scan. Row text payloads are almost always well under 64 KiB, so the
+# one-shot path dominates the common case (ISSUE-65). Above the
+# threshold we fall back to chunked scanning to bound peak memory for
+# pathologically long texts.
+_TEXT_ONE_SHOT_MAX = 65_536
 _TEXT_SCAN_CHUNK = 4096
 
 
@@ -132,37 +139,46 @@ def decode_text(data: bytes | memoryview) -> tuple[str, int]:
     ServersResponse) wrap the body in a ``memoryview`` so
     per-iteration slices are O(1) rather than O(remaining) — see
     issue 228. ``bytes`` inputs use zero-copy ``.index(b"\\x00")``.
-    ``memoryview`` inputs walk the buffer in fixed-size chunks so the
-    per-chunk ``bytes(...)`` copy is bounded; arbitrarily long text
-    values (e.g. multi-KiB SQL strings or TEXT column values) are
-    supported because the scan simply visits more chunks. Per-call
-    cost scales with the actual text length, not with the remaining
-    body.
+
+    ``memoryview`` inputs use a single ``bytes(mv).find(b"\\x00")``
+    when the remaining buffer is small (< 64 KiB). This is one
+    allocation and one C-level scan, matching the hot-path cost of the
+    ``bytes`` branch. For larger buffers we fall back to a chunked
+    scan so peak memory stays bounded (ISSUE-65).
     """
     if isinstance(data, memoryview):
-        # Memoryview has no ``.index(bytes)``. Scan in fixed chunks and
-        # accumulate so we can decode the full text without re-copying
-        # after the NUL is found.
-        chunks: list[bytes] = []
-        scanned = 0
-        null_pos = -1
         data_len = len(data)
-        while scanned < data_len:
-            chunk_end = min(scanned + _TEXT_SCAN_CHUNK, data_len)
-            chunk = bytes(data[scanned:chunk_end])
-            local = chunk.find(b"\x00")
-            if local >= 0:
-                chunks.append(chunk[:local])
-                null_pos = scanned + local
-                break
-            chunks.append(chunk)
-            scanned = chunk_end
-        if null_pos < 0:
-            raise DecodeError("Text not null-terminated")
-        try:
-            text = b"".join(chunks).decode("utf-8")
-        except UnicodeDecodeError as e:
-            raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+        if data_len <= _TEXT_ONE_SHOT_MAX:
+            # One-shot path: single materialization + C-level find.
+            materialized = bytes(data)
+            null_pos = materialized.find(b"\x00")
+            if null_pos < 0:
+                raise DecodeError("Text not null-terminated")
+            try:
+                text = materialized[:null_pos].decode("utf-8")
+            except UnicodeDecodeError as e:
+                raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+        else:
+            # Chunked fallback for pathologically long text payloads.
+            chunks: list[bytes] = []
+            scanned = 0
+            null_pos = -1
+            while scanned < data_len:
+                chunk_end = min(scanned + _TEXT_SCAN_CHUNK, data_len)
+                chunk = bytes(data[scanned:chunk_end])
+                local = chunk.find(b"\x00")
+                if local >= 0:
+                    chunks.append(chunk[:local])
+                    null_pos = scanned + local
+                    break
+                chunks.append(chunk)
+                scanned = chunk_end
+            if null_pos < 0:
+                raise DecodeError("Text not null-terminated")
+            try:
+                text = b"".join(chunks).decode("utf-8")
+            except UnicodeDecodeError as e:
+                raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
     else:
         try:
             null_pos = data.index(b"\x00")
