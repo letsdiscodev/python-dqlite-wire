@@ -1182,3 +1182,45 @@ class TestMetadataResponse:
         decoded = MetadataResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.failure_domain == 1
         assert decoded.weight == 50
+
+
+class TestShortBodyDecoding:
+    """Fixed-width response decoders must raise ``DecodeError`` on a body
+    shorter than the declared field layout. The primitive helpers
+    (``decode_uint32`` / ``decode_uint64``) already raise on short input —
+    these tests pin the contract at the message-class boundary so a
+    future refactor that swaps a helper for a looser one surfaces here
+    rather than producing silently truncated values.
+    """
+
+    @pytest.mark.parametrize(
+        "cls,min_body",
+        [
+            (FailureResponse, 8),  # uint64 code
+            (WelcomeResponse, 8),  # uint64 heartbeat_timeout
+            (MetadataResponse, 16),  # 2 x uint64
+            (ResultResponse, 16),  # 2 x uint64
+            (DbResponse, 4),  # uint32 db_id
+        ],
+    )
+    def test_decode_body_raises_on_short(self, cls: type, min_body: int) -> None:
+        for length in range(min_body):
+            with pytest.raises(DecodeError):
+                cls.decode_body(b"\x00" * length)
+
+    def test_leader_response_legacy_missing_null_terminator_raises(self) -> None:
+        """``decode_body_legacy`` expects NUL-terminated text; bytes without
+        a NUL must be rejected rather than produce an unterminated string.
+        """
+        with pytest.raises(DecodeError):
+            LeaderResponse.decode_body_legacy(b"abc")
+
+    def test_empty_response_accepts_any_body(self) -> None:
+        """``EmptyResponse`` is documented as having an 8-byte reserved
+        field but its decoder accepts any body length today. Pin the
+        current (lax) behaviour so any future tightening is a deliberate
+        decision — not a silent refactor side-effect.
+        """
+        assert isinstance(EmptyResponse.decode_body(b""), EmptyResponse)
+        assert isinstance(EmptyResponse.decode_body(b"\x00" * 8), EmptyResponse)
+        assert isinstance(EmptyResponse.decode_body(b"\xff" * 64), EmptyResponse)
