@@ -12,10 +12,14 @@ WORD_SIZE = 8
 # Header size in bytes
 HEADER_SIZE = 8
 
-# Row markers — written as full uint64 words on the wire, but detected by
-# checking only the first byte (0xFF = done, 0xEE = part). This matches Go's
-# byte-by-byte detection in columnTypes(). Use ROW_DONE_BYTE/ROW_PART_BYTE
-# for detection logic; use the full markers for encoding.
+# Row markers — written as full uint64 words on the wire. Detection
+# validates all 8 bytes of the sentinel (via ``_ROW_DONE_MARKER`` /
+# ``_ROW_PART_MARKER`` bytes in ``tuples.py``); the original first-byte
+# check was tightened in the ``row-marker-full-word`` fix to close a
+# misclassification window where a legitimate value starting with 0xFF
+# or 0xEE could be confused with a marker. Use the uint64 constants
+# below for encoding and the single-byte constants to build the detection
+# byte sequences.
 ROW_DONE_BYTE = 0xFF
 ROW_PART_BYTE = 0xEE
 ROW_DONE_MARKER = 0xFFFFFFFFFFFFFFFF
