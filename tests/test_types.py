@@ -361,6 +361,20 @@ class TestValue:
         with pytest.raises(EncodeError, match="BOOLEAN"):
             encode_value({"key": "val"}, ValueType.BOOLEAN)
 
+    @pytest.mark.parametrize(
+        "payload",
+        [b"hello", bytearray(b"hello"), memoryview(b"hello")],
+    )
+    def test_blob_roundtrip_bytes_like(self, payload: object) -> None:
+        """ISSUE-106: all three bytes-like inputs encode identically and
+        decode back to ``bytes``."""
+        encoded, vtype = encode_value(payload, ValueType.BLOB)
+        assert vtype == ValueType.BLOB
+        decoded, consumed = decode_value(encoded, ValueType.BLOB)
+        assert decoded == b"hello"
+        assert isinstance(decoded, bytes)
+        assert consumed == len(encoded)
+
     def test_boolean_rejects_arbitrary_int(self) -> None:
         """BOOLEAN requires exact bool or 0/1 — arbitrary ints are rejected.
 
