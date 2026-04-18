@@ -198,12 +198,20 @@ class ExecRequest(Message):
     db_id: int
     stmt_id: int
     params: Sequence[Any] = field(default_factory=list)
+    # Preserves the header schema byte seen on decode so a decode →
+    # re-encode round-trip emits byte-identical output even when the
+    # upstream C client used schema=1 with ≤255 params (which the count
+    # heuristic alone would otherwise downgrade to schema=0). Excluded
+    # from repr/compare so it stays an internal round-trip hint.
+    _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _check_uint32("db_id", self.db_id)
         _check_uint32("stmt_id", self.stmt_id)
 
     def _get_schema(self) -> int:
+        if self._decoded_schema is not None:
+            return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
     def encode_body(self) -> bytes:
@@ -217,7 +225,7 @@ class ExecRequest(Message):
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         params, _ = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
-        return cls(db_id, stmt_id, params)
+        return cls(db_id, stmt_id, params, _decoded_schema=schema)
 
 
 @dataclass
@@ -233,12 +241,15 @@ class QueryRequest(Message):
     db_id: int
     stmt_id: int
     params: Sequence[Any] = field(default_factory=list)
+    _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _check_uint32("db_id", self.db_id)
         _check_uint32("stmt_id", self.stmt_id)
 
     def _get_schema(self) -> int:
+        if self._decoded_schema is not None:
+            return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
     def encode_body(self) -> bytes:
@@ -252,7 +263,7 @@ class QueryRequest(Message):
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         params, _ = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
-        return cls(db_id, stmt_id, params)
+        return cls(db_id, stmt_id, params, _decoded_schema=schema)
 
 
 @dataclass
@@ -294,11 +305,14 @@ class ExecSqlRequest(Message):
     db_id: int
     sql: str
     params: Sequence[Any] = field(default_factory=list)
+    _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _check_uint64("db_id", self.db_id)
 
     def _get_schema(self) -> int:
+        if self._decoded_schema is not None:
+            return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
     def encode_body(self) -> bytes:
@@ -314,7 +328,7 @@ class ExecSqlRequest(Message):
         sql, offset = decode_text(data[8:])
         offset += 8
         params, _ = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
-        return cls(db_id, sql, params)
+        return cls(db_id, sql, params, _decoded_schema=schema)
 
 
 @dataclass
@@ -330,11 +344,14 @@ class QuerySqlRequest(Message):
     db_id: int
     sql: str
     params: Sequence[Any] = field(default_factory=list)
+    _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _check_uint64("db_id", self.db_id)
 
     def _get_schema(self) -> int:
+        if self._decoded_schema is not None:
+            return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
     def encode_body(self) -> bytes:
@@ -350,7 +367,7 @@ class QuerySqlRequest(Message):
         sql, offset = decode_text(data[8:])
         offset += 8
         params, _ = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
-        return cls(db_id, sql, params)
+        return cls(db_id, sql, params, _decoded_schema=schema)
 
 
 @dataclass

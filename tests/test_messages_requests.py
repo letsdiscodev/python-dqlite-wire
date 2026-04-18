@@ -625,3 +625,84 @@ class TestRequestFieldValidation:
 
         with pytest.raises(TypeError, match="client_id must be int"):
             ClientRequest(client_id=True)
+
+
+class TestParamsBodySchemaRoundtrip:
+    """Upstream C clients emit schema=1 for Exec/Query*Request
+    unconditionally, regardless of param count. Decoding a small-param
+    schema=1 body and re-encoding must be byte-identical, so a proxy
+    or mock server that round-trips the bytes faithfully does not
+    downgrade the schema bit seen over the wire.
+    """
+
+    @pytest.mark.parametrize(
+        "cls_name",
+        ["ExecRequest", "QueryRequest"],
+    )
+    def test_prepared_schema_1_small_params_roundtrip(self, cls_name: str) -> None:
+        """ExecRequest / QueryRequest: 4-byte db_id + 4-byte stmt_id +
+        PARAMS32 body with 3 params. Construct with schema=1 explicitly,
+        then verify decode → re-encode == original bytes.
+        """
+        from dqlitewire.codec import encode_message
+        from dqlitewire.messages import ExecRequest, QueryRequest
+
+        classes = {"ExecRequest": ExecRequest, "QueryRequest": QueryRequest}
+        cls = classes[cls_name]
+
+        from dqlitewire.codec import decode_message
+
+        # Manually force schema=1 by setting _decoded_schema on the
+        # source message.
+        original = cls(db_id=1, stmt_id=2, params=[42, "hello", None], _decoded_schema=1)
+        original_bytes = encode_message(original)
+
+        # Header schema byte is the 6th byte (after 4-byte size_words
+        # + 1-byte msg_type). Confirm the wire reflects schema=1.
+        assert original_bytes[5] == 1, "expected schema=1 in the header"
+
+        decoded = decode_message(original_bytes, is_request=True)
+        assert isinstance(decoded, cls)
+        assert list(decoded.params) == list(original.params)
+
+        re_encoded = encode_message(decoded)
+        assert re_encoded == original_bytes
+
+    @pytest.mark.parametrize(
+        "cls_name",
+        ["ExecSqlRequest", "QuerySqlRequest"],
+    )
+    def test_sql_schema_1_small_params_roundtrip(self, cls_name: str) -> None:
+        from dqlitewire.codec import decode_message, encode_message
+        from dqlitewire.messages import ExecSqlRequest, QuerySqlRequest
+
+        classes = {"ExecSqlRequest": ExecSqlRequest, "QuerySqlRequest": QuerySqlRequest}
+        cls = classes[cls_name]
+
+        original = cls(db_id=1, sql="SELECT 1", params=[1, 2, 3], _decoded_schema=1)
+        original_bytes = encode_message(original)
+        assert original_bytes[5] == 1
+
+        decoded = decode_message(original_bytes, is_request=True)
+        assert isinstance(decoded, cls)
+        assert list(decoded.params) == list(original.params)
+        assert decoded.sql == "SELECT 1"
+
+        re_encoded = encode_message(decoded)
+        assert re_encoded == original_bytes
+
+    def test_default_construction_uses_heuristic(self) -> None:
+        """When a caller constructs a fresh ExecRequest without a
+        decoded schema hint, the count heuristic still applies: ≤255
+        params → schema=0.
+        """
+        from dqlitewire.messages import ExecRequest
+
+        msg = ExecRequest(db_id=1, stmt_id=2, params=[1, 2, 3])
+        assert msg._get_schema() == 0
+
+    def test_large_params_force_schema_1_without_hint(self) -> None:
+        from dqlitewire.messages import ExecRequest
+
+        msg = ExecRequest(db_id=1, stmt_id=2, params=list(range(300)))
+        assert msg._get_schema() == 1
