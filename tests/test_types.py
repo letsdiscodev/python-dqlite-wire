@@ -686,3 +686,47 @@ class TestValue:
         encoded, vtype = encode_value(False, ValueType.INTEGER)
         assert vtype == ValueType.INTEGER
         assert decode_int64(encoded) == 0
+
+
+class TestEncodeValueUnsupportedTypes:
+    """Pin the rejection contract for Python types the wire codec does
+    not natively understand. The codec accepts only bool / int / float /
+    str / bytes / None; anything else must surface as ``EncodeError`` so
+    callers see a clear driver-level error rather than a nonsense wire
+    frame. These tests lock the current behaviour so a future refactor
+    that adds implicit Decimal / numpy support is an intentional
+    change — not a silent one.
+    """
+
+    def test_decimal_rejected(self) -> None:
+        from decimal import Decimal
+
+        with pytest.raises(EncodeError, match="Cannot infer wire type"):
+            encode_value(Decimal("3.14"))
+
+    def test_fraction_rejected(self) -> None:
+        from fractions import Fraction
+
+        with pytest.raises(EncodeError, match="Cannot infer wire type"):
+            encode_value(Fraction(1, 3))
+
+    def test_complex_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="Cannot infer wire type"):
+            encode_value(complex(1, 2))
+
+    def test_plain_object_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="Cannot infer wire type"):
+            encode_value(object())
+
+    def test_index_only_class_rejected(self) -> None:
+        """An object with ``__index__`` but no ``__int__`` or bool-ness
+        is NOT treated as int by ``isinstance(value, int)``; confirm
+        rejection so the contract stays tight.
+        """
+
+        class OnlyIndex:
+            def __index__(self) -> int:
+                return 42
+
+        with pytest.raises(EncodeError, match="Cannot infer wire type"):
+            encode_value(OnlyIndex())
