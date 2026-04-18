@@ -614,3 +614,22 @@ class TestParamsTupleMaxCount:
         data = b"\x00" + b"\x00" * 7  # count=0, padded to 8 bytes
         result, _ = decode_params_tuple(data, schema=0)
         assert result == []
+
+
+class TestParamsTupleEncoderMaxCount:
+    """encode_params_tuple should mirror decode_params_tuple's cap."""
+
+    def test_encoder_rejects_excess_count(self) -> None:
+        from dqlitewire.tuples import _MAX_PARAM_COUNT
+
+        params = [0] * (_MAX_PARAM_COUNT + 1)
+        with pytest.raises(EncodeError, match="exceeds maximum"):
+            encode_params_tuple(params, schema=1)
+
+    def test_exec_request_rejects_excess_params(self) -> None:
+        from dqlitewire.messages.requests import ExecRequest
+        from dqlitewire.tuples import _MAX_PARAM_COUNT
+
+        req = ExecRequest(db_id=1, stmt_id=1, params=[0] * (_MAX_PARAM_COUNT + 1))
+        with pytest.raises(EncodeError, match="exceeds maximum"):
+            req.encode()

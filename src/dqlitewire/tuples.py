@@ -52,6 +52,15 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
     if schema not in (0, 1):
         raise EncodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
 
+    # Mirror the decoder's defense-in-depth cap so that a caller who
+    # accidentally passes an enormous params sequence (e.g. from a bug
+    # that builds WHERE IN (?,...) with millions of placeholders) fails
+    # fast with a clear message instead of burning allocations until the
+    # 64 MiB frame cap fires with an opaque "buffer size exceeds maximum"
+    # error.
+    if len(params) > _MAX_PARAM_COUNT:
+        raise EncodeError(f"Parameter count {len(params)} exceeds maximum ({_MAX_PARAM_COUNT})")
+
     if not params:
         # Go writes nothing for empty params
         return b""
