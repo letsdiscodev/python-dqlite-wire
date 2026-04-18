@@ -503,6 +503,25 @@ class TestRowsResponse:
         with pytest.raises(DecodeError, match="end marker"):
             RowsResponse.decode_body(data)
 
+    def test_zero_columns_rejects_torn_done_marker(self) -> None:
+        """Zero-column result with only the first byte of DONE must be
+        rejected — the non-zero-column path rejects the same torn shape
+        via decode_row_header, and both paths should be symmetric."""
+        from dqlitewire.types import encode_uint64
+
+        # column_count=0, followed by 0xff + 7 zero bytes (torn marker).
+        data = encode_uint64(0) + b"\xff" + b"\x00" * 7
+        with pytest.raises(DecodeError, match="marker"):
+            RowsResponse.decode_body(data)
+
+    def test_zero_columns_rejects_torn_part_marker(self) -> None:
+        """Zero-column result with only the first byte of PART must be rejected."""
+        from dqlitewire.types import encode_uint64
+
+        data = encode_uint64(0) + b"\xee" + b"\x00" * 7
+        with pytest.raises(DecodeError, match="marker"):
+            RowsResponse.decode_body(data)
+
     def test_decode_body_rejects_non_list_row_header(self) -> None:
         """decode_body must raise DecodeError if decode_row_header returns unexpected type."""
         from unittest.mock import patch

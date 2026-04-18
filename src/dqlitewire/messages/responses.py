@@ -4,9 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from dqlitewire.constants import (
-    ROW_DONE_BYTE,
     ROW_DONE_MARKER,
-    ROW_PART_BYTE,
     ROW_PART_MARKER,
     WORD_SIZE,
     ResponseType,
@@ -15,6 +13,8 @@ from dqlitewire.constants import (
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import (
+    _ROW_DONE_MARKER,
+    _ROW_PART_MARKER,
     RowMarker,
     decode_row_header,
     decode_row_values,
@@ -369,19 +369,23 @@ class RowsResponse(Message):
 
         # Zero-column results cannot have row data (each row would be zero
         # bytes), so skip the row loop and consume the end marker directly.
+        # Validate the full 8-byte sentinel against DQLITE_RESPONSE_ROWS_DONE
+        # / _PART, matching the non-zero path (which goes through
+        # decode_row_header). A first-byte-only compare would silently accept
+        # torn markers like ``0xff 0x00..``.
         if column_count == 0:
             if offset + WORD_SIZE > len(view):
                 raise DecodeError(
                     "RowsResponse body exhausted without end marker (zero-column result)"
                 )
-            marker_byte = view[offset]
-            if marker_byte == ROW_DONE_BYTE:
+            marker = bytes(view[offset : offset + WORD_SIZE])
+            if marker == _ROW_DONE_MARKER:
                 has_more = False
-            elif marker_byte == ROW_PART_BYTE:
+            elif marker == _ROW_PART_MARKER:
                 has_more = True
             else:
                 raise DecodeError(
-                    f"Expected DONE or PART marker for zero-column result, got 0x{marker_byte:02x}"
+                    f"Expected DONE or PART marker for zero-column result, got 0x{marker.hex()}"
                 )
             return cls(
                 column_names=[],
