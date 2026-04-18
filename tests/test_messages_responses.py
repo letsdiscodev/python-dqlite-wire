@@ -676,6 +676,33 @@ class TestRowsResponseEncodeValidation:
         with pytest.raises(EncodeError, match="row_types\\[0\\] has 1 types, expected 2"):
             resp.encode_body()
 
+    def test_partial_row_types_rejected(self) -> None:
+        """row_types must be empty or exactly match rows one-to-one."""
+        resp = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],  # only one entry, 3 rows
+            rows=[[1], [2], [3]],
+        )
+        with pytest.raises(EncodeError, match="row_types length .* != rows length"):
+            resp.encode_body()
+
+    def test_empty_row_types_with_rows_infers_ok(self) -> None:
+        """Empty row_types is valid — types are inferred per-row."""
+        resp = RowsResponse(
+            column_names=["a"],
+            rows=[[1], [2], [3]],
+        )
+        resp.encode_body()
+
+    def test_full_row_types_matches_rows_ok(self) -> None:
+        resp = RowsResponse(
+            column_names=["a"],
+            row_types=[[ValueType.INTEGER], [ValueType.INTEGER], [ValueType.INTEGER]],
+            rows=[[1], [2], [3]],
+        )
+        resp.encode_body()
+
     def test_empty_column_types_with_rows_ok(self) -> None:
         """Empty column_types is valid — types are inferred from values."""
         resp = RowsResponse(

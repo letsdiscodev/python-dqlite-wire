@@ -300,6 +300,16 @@ class RowsResponse(Message):
                 f"column_types length ({len(self.column_types)}) != "
                 f"column_names length ({col_count})"
             )
+        # ``row_types`` must either be empty (infer per-row from values /
+        # column_types) or exactly match ``rows`` one-to-one. A shorter
+        # list previously fell through to inference silently for the
+        # trailing rows, contradicting the documented invariant.
+        if self.row_types and len(self.row_types) != len(self.rows):
+            raise EncodeError(
+                f"row_types length ({len(self.row_types)}) != "
+                f"rows length ({len(self.rows)}); pass an empty row_types "
+                f"to infer per-row types from the values"
+            )
         # Zero-column rows produce zero bytes per row, so the encoded
         # output is indistinguishable from a zero-row result set — the
         # decoder's zero-column fast path returns no rows. Reject at
