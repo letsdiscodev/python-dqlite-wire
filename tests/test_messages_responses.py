@@ -1082,21 +1082,41 @@ class TestFilesResponse:
         # count(8) + name "a.db\0"(8) + size(8) + content(16) = 40
         assert len(body) == 40
 
-    def test_no_padding_after_content_matches_go(self) -> None:
-        """Go reads file content without padding; encoder must not add padding."""
+    def test_no_padding_between_files_matches_go(self) -> None:
+        """Files are written back-to-back with no padding between
+        entries (upstream gateway.c::dumpFile). Each file's own content
+        must be 8-byte aligned, which matches reality (SQLite pages are
+        always multiples of 512).
+        """
         from dqlitewire.types import encode_text, encode_uint64
 
-        # Manually build Go-format body: no padding after non-aligned content
         body = encode_uint64(2)  # count=2
         body += encode_text("f1")  # filename
-        body += encode_uint64(3)  # size=3
-        body += b"\x01\x02\x03"  # content (not word-aligned, no padding!)
+        body += encode_uint64(8)  # size=8 (one word)
+        body += b"\x01\x02\x03\x04\x05\x06\x07\x08"  # aligned content
         body += encode_text("f2")  # next filename immediately after
-        body += encode_uint64(1)  # size=1
-        body += b"\xff"  # content
+        body += encode_uint64(8)  # size=8
+        body += b"\xff" * 8  # content
         decoded = FilesResponse.decode_body(body)
-        assert decoded.files["f1"] == b"\x01\x02\x03"
-        assert decoded.files["f2"] == b"\xff"
+        assert decoded.files["f1"] == b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        assert decoded.files["f2"] == b"\xff" * 8
+
+    def test_decode_rejects_non_aligned_content(self) -> None:
+        """Symmetric with the encode-side alignment check: a peer that
+        claims a non-multiple-of-8 content size is producing bytes the
+        real C server could never emit.
+        """
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(1)  # count=1
+        body += encode_text("f1")
+        body += encode_uint64(3)  # size=3, non-aligned
+        body += b"\x01\x02\x03"
+        with pytest.raises(DecodeError, match="8-byte aligned"):
+            FilesResponse.decode_body(body)
 
     def test_bogus_file_count_raises(self) -> None:
         """A file count larger than remaining data should raise DecodeError early."""

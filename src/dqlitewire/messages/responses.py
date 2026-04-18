@@ -532,6 +532,15 @@ class FilesResponse(Message):
             offset += consumed
             size = decode_uint64(view[offset:])
             offset += 8
+            # Mirror of the encode-side invariant: upstream
+            # gateway.c::dumpFile asserts ``len % 8 == 0`` for every
+            # file's content. Reject non-aligned payloads on decode too
+            # so a mock / malicious peer cannot produce bytes the real
+            # C server would not emit.
+            if size % 8 != 0:
+                raise DecodeError(
+                    f"FilesResponse content for {name!r} must be 8-byte aligned (got {size} bytes)"
+                )
             if offset + size > len(view):
                 raise DecodeError(
                     f"FilesResponse file content truncated: expected {size} bytes "
