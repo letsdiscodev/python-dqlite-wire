@@ -442,8 +442,8 @@ class TestClusterRequest:
         assert msg.format == 1
 
     def test_format_v0_rejected(self) -> None:
-        """120: V0 cluster format not supported by ServersResponse decoder."""
-        with pytest.raises(ValueError, match="format=0.*not supported"):
+        """120: V0 cluster format not implemented by ServersResponse decoder."""
+        with pytest.raises(ValueError, match="format=0.*not implemented"):
             ClusterRequest(format=0)
 
     def test_decode_format_v0_raises_decode_error(self) -> None:
@@ -452,7 +452,7 @@ class TestClusterRequest:
         from dqlitewire.types import encode_uint64
 
         body = encode_uint64(0)  # format=0
-        with pytest.raises(DecodeError, match="format=0.*not supported"):
+        with pytest.raises(DecodeError, match="format=0.*not implemented"):
             ClusterRequest.decode_body(body)
 
 

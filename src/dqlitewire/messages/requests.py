@@ -514,6 +514,12 @@ class ClusterRequest(Message):
     """Request cluster information.
 
     Body: uint64 format
+
+    Note: format=0 (V0: id+address only, no role) IS a valid upstream
+    dqlite wire format. This Python library chooses not to implement it
+    because :class:`ServersResponse` only decodes V1 (id+address+role).
+    Callers that need V0 compatibility should decode :class:`ServersResponse`
+    themselves. Use ``format=1`` for the default path.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CLUSTER
@@ -524,9 +530,9 @@ class ClusterRequest(Message):
         _check_uint64("format", self.format)
         if self.format == 0:
             raise ValueError(
-                "ClusterRequest format=0 (V0) is not supported. "
-                "ServersResponse only decodes V1 format (with node role fields). "
-                "Use format=1."
+                "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
+                "not implemented in this Python library: ServersResponse only "
+                "decodes V1 (with node role fields). Use format=1."
             )
 
     def encode_body(self) -> bytes:
@@ -537,8 +543,9 @@ class ClusterRequest(Message):
         format_val = decode_uint64(data)
         if format_val == 0:
             raise DecodeError(
-                "ClusterRequest format=0 (V0) is not supported. "
-                "ServersResponse only decodes V1 format (with node role fields)."
+                "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
+                "not implemented in this Python library: ServersResponse only "
+                "decodes V1 (with node role fields)."
             )
         return cls(format_val)
 
