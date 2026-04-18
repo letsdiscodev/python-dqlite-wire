@@ -17,6 +17,12 @@ from dqlitewire.types import decode_value, encode_value, pad_to_word
 # Valid ValueType codes as integers, for fast membership testing in hot paths.
 _VALID_TYPE_CODES = frozenset(int(v) for v in ValueType)
 
+# Full 8-byte sentinels matching DQLITE_RESPONSE_ROWS_DONE/PART. Used to
+# reject torn/corrupt row markers instead of accepting any 8 bytes that
+# happen to start with 0xff/0xee (ISSUE-63).
+_ROW_DONE_MARKER = bytes([ROW_DONE_BYTE]) * 8
+_ROW_PART_MARKER = bytes([ROW_PART_BYTE]) * 8
+
 # Defense-in-depth cap on parameter count, matching the pattern used by
 # _MAX_COLUMN_COUNT, _MAX_FILE_COUNT, and _MAX_NODE_COUNT in responses.py.
 # SQLite's default limit is 999 (compile-time max 32766).
@@ -221,16 +227,22 @@ def decode_row_header(
     before validating header size, matching the Go reference implementation.
     Returns (types_or_marker, bytes_consumed).
     """
-    # Check for markers first — markers are always exactly one 8-byte word,
-    # regardless of column count. Must check before header size validation
-    # because for large column counts the header would be >8 bytes.
-    # Go checks the first byte (0xFF -> DONE, 0xEE -> PART); we match that
-    # behavior so non-uniform markers are also detected.
+    # Check for markers first — markers are always exactly one 8-byte word
+    # of a repeated sentinel byte, regardless of column count. Must check
+    # before header size validation because for large column counts the
+    # header would be >8 bytes.
+    #
+    # Upstream C uses the full uint64 sentinel (DQLITE_RESPONSE_ROWS_DONE
+    # = 0xff..ff, _PART = 0xee..ee). Go's reference client checks only the
+    # first byte; we validate all 8 bytes so torn/corrupt markers like
+    # ``0xff 0x00..`` are rejected as malformed rather than silently
+    # truncating the result stream (ISSUE-63). This is strictly tighter
+    # than the Go behavior.
     if len(data) >= 8:
-        first_byte = data[0]
-        if first_byte == ROW_DONE_BYTE:
+        marker = bytes(data[:8]) if isinstance(data, memoryview) else data[:8]
+        if marker == _ROW_DONE_MARKER:
             return RowMarker.DONE, 8
-        if first_byte == ROW_PART_BYTE:
+        if marker == _ROW_PART_MARKER:
             return RowMarker.PART, 8
 
     # Calculate bytes needed: 2 types per byte, rounded up

@@ -354,12 +354,37 @@ class TestValue:
         """encode_value with explicit BOOLEAN should reject non-bool/int types."""
         import pytest
 
-        with pytest.raises(EncodeError, match="[Bb]ool"):
+        with pytest.raises(EncodeError, match="BOOLEAN"):
             encode_value("hello", ValueType.BOOLEAN)
-        with pytest.raises(EncodeError, match="[Bb]ool"):
+        with pytest.raises(EncodeError, match="BOOLEAN"):
             encode_value([1, 2], ValueType.BOOLEAN)
-        with pytest.raises(EncodeError, match="[Bb]ool"):
+        with pytest.raises(EncodeError, match="BOOLEAN"):
             encode_value({"key": "val"}, ValueType.BOOLEAN)
+
+    def test_boolean_rejects_arbitrary_int(self) -> None:
+        """BOOLEAN requires exact bool or 0/1 — arbitrary ints are rejected.
+
+        Previously any truthy int was silently coerced to True via
+        ``1 if value else 0``. That made the round-trip lossy: encode(5,
+        BOOLEAN) → wire 1 → decode → True. Callers that mean "store the
+        integer 5" should use INTEGER; callers that mean "bool" should
+        pass bool (ISSUE-60).
+        """
+        import pytest
+
+        with pytest.raises(EncodeError, match="BOOLEAN"):
+            encode_value(5, ValueType.BOOLEAN)
+        with pytest.raises(EncodeError, match="BOOLEAN"):
+            encode_value(-1, ValueType.BOOLEAN)
+        with pytest.raises(EncodeError, match="BOOLEAN"):
+            encode_value(2, ValueType.BOOLEAN)
+
+        # 0 and 1 remain acceptable as a pragmatic escape for callers
+        # working with raw column values.
+        encoded_zero, _ = encode_value(0, ValueType.BOOLEAN)
+        encoded_one, _ = encode_value(1, ValueType.BOOLEAN)
+        assert decode_uint64(encoded_zero) == 0
+        assert decode_uint64(encoded_one) == 1
 
     def test_decode_integer(self) -> None:
         value, consumed = decode_value(encode_int64(42), ValueType.INTEGER)

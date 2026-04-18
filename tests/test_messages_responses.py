@@ -184,6 +184,35 @@ class TestRowsResponseAliasing:
     The fix copies both lists on construction via ``__post_init__``.
     """
 
+    def test_constructor_copies_row_types_and_rows(self) -> None:
+        """Caller-supplied lists must be independent from the message
+        after construction (ISSUE-61). Applies uniformly to column_names,
+        column_types, row_types (outer + inner), and rows (outer + inner).
+        """
+        supplied_row_types = [[ValueType.INTEGER, ValueType.TEXT]]
+        supplied_rows = [[1, "alice"]]
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            row_types=supplied_row_types,
+            rows=supplied_rows,
+            has_more=False,
+        )
+
+        # Outer-list copies: mutating the supplied list does not affect
+        # the message.
+        supplied_row_types.append([ValueType.NULL])
+        supplied_rows.append([99, "mallory"])
+        assert len(msg.row_types) == 1
+        assert len(msg.rows) == 1
+
+        # Inner-list copies: mutating the supplied inner list does not
+        # affect the message's inner copies.
+        supplied_row_types[0][0] = ValueType.NULL
+        supplied_rows[0][0] = 999
+        assert msg.row_types[0][0] == ValueType.INTEGER
+        assert msg.rows[0][0] == 1
+
     def test_column_types_is_not_aliased_to_row_types_first(self) -> None:
         """After decoding, ``column_types`` must be a distinct list
         object from ``row_types[0]`` so mutation of one does not
@@ -897,7 +926,7 @@ class TestFilesResponse:
         """Body must start with uint64 file count per Go wire protocol."""
         from dqlitewire.types import decode_uint64
 
-        msg = FilesResponse(files={"test.db": b"data"})
+        msg = FilesResponse(files={"test.db": b"datadata"})  # 8 bytes (ISSUE-59)
         body = msg.encode_body()
         count = decode_uint64(body[:8])
         assert count == 1
@@ -917,17 +946,18 @@ class TestFilesResponse:
         assert size == len(content)
 
     def test_roundtrip(self) -> None:
-        msg = FilesResponse(files={"db.sqlite": b"database content", "wal": b"wal data"})
+        # 16 and 8 bytes — word-aligned per upstream C's dumpFile assert.
+        msg = FilesResponse(files={"db.sqlite": b"databasecontent!", "wal": b"wal data"})
         encoded = msg.encode()
         decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.files["db.sqlite"] == b"database content"
+        assert decoded.files["db.sqlite"] == b"databasecontent!"
         assert decoded.files["wal"] == b"wal data"
 
     def test_roundtrip_single_file(self) -> None:
-        msg = FilesResponse(files={"main.db": b"\x00\x01\x02\x03"})
+        msg = FilesResponse(files={"main.db": b"\x00\x01\x02\x03\x04\x05\x06\x07"})
         encoded = msg.encode()
         decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.files["main.db"] == b"\x00\x01\x02\x03"
+        assert decoded.files["main.db"] == b"\x00\x01\x02\x03\x04\x05\x06\x07"
 
     def test_roundtrip_aligned_content(self) -> None:
         """Real dqlite content is always word-aligned (SQLite pages are multiples of 512)."""
@@ -943,23 +973,22 @@ class TestFilesResponse:
         assert decoded.files["main.db"] == page
         assert decoded.files["wal.db"] == page + page
 
-    def test_roundtrip_non_aligned_content(self) -> None:
-        """Non-aligned content roundtrips correctly without padding.
+    def test_encode_rejects_non_aligned_content(self) -> None:
+        """Content whose length is not a multiple of 8 is rejected at encode.
 
-        The C server asserts content is always word-aligned. Neither Go nor
-        Python adds padding after file content. This test verifies that
-        non-aligned content still works for encode/decode symmetry.
+        ISSUE-59: the upstream C server (gateway.c::dumpFile) asserts
+        ``len % 8 == 0``. We enforce the same invariant on the encoder
+        side so mock-server frames cannot diverge from real C output.
         """
-        msg = FilesResponse(
-            files={
-                "file1.db": b"\x01\x02\x03",  # 3 bytes, needs 5 padding
-                "file2.db": b"\x04\x05\x06\x07\x08\x09\x0a",  # 7 bytes, needs 1 padding
-            }
-        )
-        encoded = msg.encode()
-        decoded = FilesResponse.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.files["file1.db"] == b"\x01\x02\x03"
-        assert decoded.files["file2.db"] == b"\x04\x05\x06\x07\x08\x09\x0a"
+        from dqlitewire.exceptions import EncodeError
+
+        msg = FilesResponse(files={"file1.db": b"\x01\x02\x03"})  # 3 bytes
+        with pytest.raises(EncodeError, match="8-byte aligned"):
+            msg.encode_body()
+
+        msg = FilesResponse(files={"file2.db": b"\x04\x05\x06\x07\x08\x09\x0a"})  # 7
+        with pytest.raises(EncodeError, match="8-byte aligned"):
+            msg.encode_body()
 
     def test_roundtrip_empty_content(self) -> None:
         """116: zero-length file content must round-trip correctly."""
@@ -969,12 +998,15 @@ class TestFilesResponse:
         assert decoded.files == {"empty.db": b""}
 
     def test_roundtrip_mixed_empty_and_nonempty(self) -> None:
-        """116: empty and non-empty files in the same response."""
+        """116: empty and non-empty files in the same response.
+
+        All non-empty content must be 8-byte aligned (ISSUE-59).
+        """
         msg = FilesResponse(
             files={
-                "main.db": b"data",
+                "main.db": b"datadata",
                 "empty.db": b"",
-                "wal.db": b"more data",
+                "wal.db": b"moredata",
             }
         )
         encoded = msg.encode()

@@ -246,8 +246,8 @@ class RowsResponse(Message):
     has_more: bool = False
 
     def __post_init__(self) -> None:
-        # Defensive copies (issue 042). Two sources of aliasing
-        # motivate this:
+        # Defensive copies (issue 042, ISSUE-61). Two sources of
+        # aliasing motivate this:
         #
         # 1. ``decode_body`` stores ``column_types = types`` where
         #    ``types`` is also stored as ``all_row_types[0]``, so
@@ -257,11 +257,14 @@ class RowsResponse(Message):
         # 2. User code constructing ``RowsResponse`` directly with a
         #    list they intend to keep mutating elsewhere.
         #
-        # Copying here catches both sites uniformly and survives
-        # future construction sites. The cost is two list allocations
-        # per response — negligible compared to the row payload.
+        # Copy all list-valued fields uniformly. ``row_types`` is a
+        # list-of-lists so it needs both outer and inner copies; the
+        # same for ``rows``. Cost is O(n) on the row dimension —
+        # dominated by the row payload itself, so negligible.
         self.column_names = list(self.column_names)
         self.column_types = list(self.column_types)
+        self.row_types = [list(t) for t in self.row_types]
+        self.rows = [list(r) for r in self.rows]
 
     def _get_row_types(self, row_idx: int, row: list[Any]) -> list[ValueType]:
         """Get types for a row: from row_types, column_types, or inferred.
@@ -467,12 +470,21 @@ class FilesResponse(Message):
     def encode_body(self) -> bytes:
         result = encode_uint64(len(self.files))
         for name, content in self.files.items():
+            # The upstream C server (gateway.c::dumpFile) asserts
+            # ``len % 8 == 0`` for every file's content, because per-file
+            # entries are written back-to-back with no explicit padding
+            # and SQLite pages are always 8-byte aligned multiples of
+            # 512. Validate here so a Python-encoded mock-server frame
+            # cannot diverge from what a real C peer produces (ISSUE-59).
+            if len(content) % 8 != 0:
+                raise EncodeError(
+                    f"FilesResponse content for {name!r} must be 8-byte aligned "
+                    f"(got {len(content)} bytes); dqlite file entries carry no "
+                    "per-file padding"
+                )
             result += encode_text(name)
             result += encode_uint64(len(content))
             result += content
-            # No padding after content — matches Go's byte-by-byte read.
-            # The C server only produces word-aligned content (SQLite pages
-            # are multiples of 512), so padding is never needed in practice.
         return result
 
     @classmethod

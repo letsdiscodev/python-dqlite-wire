@@ -242,9 +242,19 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             )
 
     if value_type == ValueType.BOOLEAN:
-        if not isinstance(value, (bool, int)):
-            raise EncodeError(f"Expected bool or int for BOOLEAN, got {type(value).__name__}")
-        return encode_uint64(1 if value else 0), value_type
+        # Accept bool directly; allow the exact ints 0 and 1 as a
+        # pragmatic escape for callers working with raw column values.
+        # Reject arbitrary ints — the previous ``1 if value else 0``
+        # coercion silently mapped values like ``5`` or ``-1`` to True,
+        # which round-trips as the bool True and loses the caller's
+        # original value (ISSUE-60).
+        if isinstance(value, bool):
+            return encode_uint64(1 if value else 0), value_type
+        if isinstance(value, int) and value in (0, 1):
+            return encode_uint64(value), value_type
+        raise EncodeError(
+            f"BOOLEAN requires bool (or exactly 0/1), got {type(value).__name__}={value!r}"
+        )
     elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
         # Note: UNIXTIME is a server-to-client-only type (the C server's
         # tuple_decoder has no inbound case for DQLITE_UNIXTIME). Explicit

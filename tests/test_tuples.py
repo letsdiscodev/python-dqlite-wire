@@ -357,18 +357,27 @@ class TestRowHeader:
         assert decode_row_header(b"\xff" * 8, 1) == (RowMarker.DONE, 8)
         assert decode_row_header(b"\xee" * 8, 1) == (RowMarker.PART, 8)
 
-    def test_first_byte_marker_detection(self) -> None:
-        """Marker detection uses first byte, matching Go's byte-by-byte check.
+    def test_non_uniform_marker_rejected(self) -> None:
+        """Non-uniform markers are rejected as corrupt (ISSUE-63).
 
-        Go checks the first byte (0xFF -> DONE, 0xEE -> PART). A non-uniform
-        marker where only the first byte matches must still be detected.
+        Upstream C uses the full uint64 sentinel (DQLITE_RESPONSE_ROWS_DONE
+        = 0xff..ff, _PART = 0xee..ee). Go's reference client accepts any
+        8 bytes starting with 0xff/0xee as a marker; we validate all 8
+        bytes so torn/corrupt frames are rejected rather than silently
+        truncating results.
+
+        ValueType max is 11 (0xb) — a real row-header byte can never be
+        0xff or 0xee — so the "strictly C-aligned" check and the
+        "ValueType rejection on nibble 0xf/0xe" arrive at the same
+        outcome from different angles.
         """
-        # Non-uniform marker: first byte 0xFF, rest different
-        data = b"\xff\x00\x00\x00\x00\x00\x00\x00"
-        assert decode_row_header(data, 1) == (RowMarker.DONE, 8)
+        # First byte 0xff, remaining zero → falls through to ValueType
+        # nibble decode, which rejects 0xf.
+        with pytest.raises(DecodeError, match="Invalid value type code"):
+            decode_row_header(b"\xff\x00\x00\x00\x00\x00\x00\x00", 1)
 
-        data = b"\xee\x00\x00\x00\x00\x00\x00\x00"
-        assert decode_row_header(data, 1) == (RowMarker.PART, 8)
+        with pytest.raises(DecodeError, match="Invalid value type code"):
+            decode_row_header(b"\xee\x00\x00\x00\x00\x00\x00\x00", 1)
 
     def test_marker_sentinel_bytes_match_full_constants(self) -> None:
         """ROW_DONE_BYTE/ROW_PART_BYTE must match the first byte of the full marker words.
