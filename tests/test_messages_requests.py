@@ -71,6 +71,33 @@ class TestLeaderRequest:
         decoded = LeaderRequest.decode_body(encoded[HEADER_SIZE:])
         assert isinstance(decoded, LeaderRequest)
 
+    def test_decode_rejects_short_body(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="must be 8 bytes"):
+            LeaderRequest.decode_body(b"")
+        with pytest.raises(DecodeError, match="must be 8 bytes"):
+            LeaderRequest.decode_body(b"\x00" * 7)
+
+    def test_decode_rejects_extended_body(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="must be 8 bytes"):
+            LeaderRequest.decode_body(b"\x00" * 16)
+
+    def test_decode_rejects_nonzero_reserved(self) -> None:
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        with pytest.raises(DecodeError, match="reserved field must be 0"):
+            LeaderRequest.decode_body(encode_uint64(1))
+
 
 class TestClientRequest:
     def test_encode(self) -> None:

@@ -46,6 +46,15 @@ class LeaderRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderRequest":
+        # Strict decode symmetric with ``encode_body``: the body is
+        # exactly one uint64 reserved word, defined as 0 by upstream.
+        # Reject truncated/extended bodies and non-zero reserved values
+        # rather than silently accepting them.
+        if len(data) != 8:
+            raise DecodeError(f"LeaderRequest body must be 8 bytes, got {len(data)}")
+        reserved = decode_uint64(data)
+        if reserved != 0:
+            raise DecodeError(f"LeaderRequest reserved field must be 0, got {reserved}")
         return cls()
 
 
