@@ -346,7 +346,7 @@ class TestGoldenBlobEncoding:
 
 
 class TestGoldenRequestsPriority1:
-    """Golden byte tests for high-priority request messages (issue 204)."""
+    """Golden byte tests for high-priority request messages."""
 
     def test_prepare_request(self) -> None:
         """PrepareRequest(db_id=1, sql="SELECT 1"): type=4, schema=0.
@@ -451,7 +451,7 @@ class TestGoldenRequestsPriority1:
 
 
 class TestGoldenResponsesPriority1:
-    """Golden byte tests for high-priority response messages (issue 204)."""
+    """Golden byte tests for high-priority response messages."""
 
     def test_leader_response(self) -> None:
         """LeaderResponse(node_id=1, address="127.0.0.1:9001"): type=1.

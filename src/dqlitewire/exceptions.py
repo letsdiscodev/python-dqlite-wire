@@ -71,7 +71,7 @@ class ServerFailure(ProtocolError):
     state is disturbed. This exception is raised only from
     ``decode_continuation()`` when FAILURE arrives mid-stream during
     a multi-part ``RowsResponse``. In that path the buffer is also
-    poisoned (see issue 083): the remaining continuation frames the
+    poisoned: the remaining continuation frames the
     caller was expecting will never arrive, and the next decode must
     start fresh. Callers catching ``ServerFailure`` in that path
     should treat the decoder as requiring ``reset()`` and reconnect.

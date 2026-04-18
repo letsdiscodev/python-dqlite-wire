@@ -122,7 +122,7 @@ class TestOversizedErrorMessageUsesHex:
     """
 
     def test_read_message_error_uses_hex_for_size(self) -> None:
-        """read_message() is the consume-side raise site after issue 025."""
+        """read_message() is the consume-side raise site for oversized headers."""
         import struct
 
         from dqlitewire.buffer import ReadBuffer
@@ -137,8 +137,8 @@ class TestOversizedErrorMessageUsesHex:
         assert "0x" in str(excinfo.value)
 
     def test_peek_header_error_uses_hex_for_size(self) -> None:
-        """peek_header() raises immediately for oversized headers
-        (issue 028 contract); it must also use hex formatting.
+        """peek_header() raises immediately for oversized headers;
+        it must also use hex formatting.
         """
         import struct
 
@@ -156,7 +156,7 @@ class TestOversizedErrorMessageUsesHex:
     def test_decode_error_message_formats_pathological_bigint(self) -> None:
         """Directly synthesize a DecodeError message with a pathological bigint
         to prove the format string would not raise even on an impossible value.
-        Defends against the failure mode in issue 033 where a torn slice under
+        Defends against the failure mode where a torn slice under
         free-threading produced a multi-thousand-digit size.
         """
         # Simulate what has_message/read_message would format. The package's

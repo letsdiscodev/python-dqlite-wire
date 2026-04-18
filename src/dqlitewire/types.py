@@ -28,7 +28,7 @@ def decode_uint64(data: bytes | memoryview) -> int:
     """Decode an unsigned 64-bit integer (little-endian).
 
     Accepts ``bytes`` or ``memoryview`` so hot-path body decoders
-    (issue 228) can pass memoryview slices without copying.
+    can pass memoryview slices without copying.
     """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for uint64, got {len(data)}")
@@ -46,7 +46,7 @@ def encode_int64(value: int) -> bytes:
 def decode_int64(data: bytes | memoryview) -> int:
     """Decode a signed 64-bit integer (little-endian).
 
-    Accepts ``bytes`` or ``memoryview`` (issue 228).
+    Accepts ``bytes`` or ``memoryview``.
     """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for int64, got {len(data)}")
@@ -64,7 +64,7 @@ def encode_uint32(value: int) -> bytes:
 def decode_uint32(data: bytes | memoryview) -> int:
     """Decode an unsigned 32-bit integer (little-endian).
 
-    Accepts ``bytes`` or ``memoryview`` (issue 228).
+    Accepts ``bytes`` or ``memoryview``.
     """
     if len(data) < 4:
         raise DecodeError(f"Need 4 bytes for uint32, got {len(data)}")
@@ -86,7 +86,7 @@ def decode_double(data: bytes | memoryview) -> float:
 
     All IEEE 754 values are accepted, including NaN and infinity,
     matching the Go reference implementation behavior. Accepts
-    ``bytes`` or ``memoryview`` (issue 228).
+    ``bytes`` or ``memoryview``.
     """
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for double, got {len(data)}")
@@ -122,7 +122,7 @@ def encode_text(value: str) -> bytes:
 # Threshold below which we materialize a memoryview to bytes in one
 # shot (one allocation + one ``bytes.find``) instead of the chunked
 # scan. Row text payloads are almost always well under 64 KiB, so the
-# one-shot path dominates the common case (ISSUE-65). Above the
+# one-shot path dominates the common case. Above the
 # threshold we fall back to chunked scanning to bound peak memory for
 # pathologically long texts.
 _TEXT_ONE_SHOT_MAX = 65_536
@@ -137,14 +137,14 @@ def decode_text(data: bytes | memoryview) -> tuple[str, int]:
 
     The decoder's hot body loops (RowsResponse, FilesResponse,
     ServersResponse) wrap the body in a ``memoryview`` so
-    per-iteration slices are O(1) rather than O(remaining) — see
-    issue 228. ``bytes`` inputs use zero-copy ``.index(b"\\x00")``.
+    per-iteration slices are O(1) rather than O(remaining).
+    ``bytes`` inputs use zero-copy ``.index(b"\\x00")``.
 
     ``memoryview`` inputs use a single ``bytes(mv).find(b"\\x00")``
     when the remaining buffer is small (< 64 KiB). This is one
     allocation and one C-level scan, matching the hot-path cost of the
     ``bytes`` branch. For larger buffers we fall back to a chunked
-    scan so peak memory stays bounded (ISSUE-65).
+    scan so peak memory stays bounded.
     """
     if isinstance(data, memoryview):
         data_len = len(data)
@@ -263,7 +263,7 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
         # Reject arbitrary ints — the previous ``1 if value else 0``
         # coercion silently mapped values like ``5`` or ``-1`` to True,
         # which round-trips as the bool True and loses the caller's
-        # original value (ISSUE-60).
+        # original value.
         if isinstance(value, bool):
             return encode_uint64(1 if value else 0), value_type
         if isinstance(value, int) and value in (0, 1):
@@ -320,7 +320,7 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[Any, 
         # Return raw int64 to preserve round-trip identity at the wire level.
         # Higher-level clients (like the dqlite DBAPI) turn this into a
         # datetime, matching what Go's Rows.Next() does in the database/sql
-        # driver layer. See issue 006.
+        # driver layer.
         return decode_int64(data), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8

@@ -358,7 +358,7 @@ class TestRowHeader:
         assert decode_row_header(b"\xee" * 8, 1) == (RowMarker.PART, 8)
 
     def test_non_uniform_marker_rejected(self) -> None:
-        """Non-uniform markers are rejected as corrupt (ISSUE-63).
+        """Non-uniform markers are rejected as corrupt.
 
         Upstream C uses the full uint64 sentinel (DQLITE_RESPONSE_ROWS_DONE
         = 0xff..ff, _PART = 0xee..ee). Go's reference client accepts any

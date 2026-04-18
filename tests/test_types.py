@@ -366,8 +366,8 @@ class TestValue:
         [b"hello", bytearray(b"hello"), memoryview(b"hello")],
     )
     def test_blob_roundtrip_bytes_like(self, payload: object) -> None:
-        """ISSUE-106: all three bytes-like inputs encode identically and
-        decode back to ``bytes``."""
+        """All three bytes-like inputs encode identically and decode
+        back to ``bytes``."""
         encoded, vtype = encode_value(payload, ValueType.BLOB)
         assert vtype == ValueType.BLOB
         decoded, consumed = decode_value(encoded, ValueType.BLOB)
@@ -382,7 +382,7 @@ class TestValue:
         ``1 if value else 0``. That made the round-trip lossy: encode(5,
         BOOLEAN) → wire 1 → decode → True. Callers that mean "store the
         integer 5" should use INTEGER; callers that mean "bool" should
-        pass bool (ISSUE-60).
+        pass bool.
         """
         import pytest
 

@@ -29,7 +29,7 @@ from dqlitewire.messages.requests import (
 
 
 class TestHeaderReservedField:
-    """Pin the header's reserved/extra uint16 to zero (ISSUE-62).
+    """Pin the header's reserved/extra uint16 to zero.
 
     Upstream C (``message.h``) names this field ``extra`` and reserves it
     for future protocol extensions. All current upstream servers send 0.

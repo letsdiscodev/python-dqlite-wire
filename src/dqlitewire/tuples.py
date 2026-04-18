@@ -19,7 +19,7 @@ _VALID_TYPE_CODES = frozenset(int(v) for v in ValueType)
 
 # Full 8-byte sentinels matching DQLITE_RESPONSE_ROWS_DONE/PART. Used to
 # reject torn/corrupt row markers instead of accepting any 8 bytes that
-# happen to start with 0xff/0xee (ISSUE-63).
+# happen to start with 0xff/0xee.
 _ROW_DONE_MARKER = bytes([ROW_DONE_BYTE]) * 8
 _ROW_PART_MARKER = bytes([ROW_PART_BYTE]) * 8
 
@@ -236,7 +236,7 @@ def decode_row_header(
     # = 0xff..ff, _PART = 0xee..ee). Go's reference client checks only the
     # first byte; we validate all 8 bytes so torn/corrupt markers like
     # ``0xff 0x00..`` are rejected as malformed rather than silently
-    # truncating the result stream (ISSUE-63). This is strictly tighter
+    # truncating the result stream. This is strictly tighter
     # than the Go behavior.
     if len(data) >= 8:
         marker = bytes(data[:8]) if isinstance(data, memoryview) else data[:8]

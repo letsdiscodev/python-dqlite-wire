@@ -1125,9 +1125,9 @@ class TestDecoderContinuation:
         The exception must be a ServerFailure (subclass of ProtocolError)
         carrying structured ``code`` and ``message`` attributes — NOT a
         DecodeError (which would mean the failure body was misinterpreted
-        as row data) and NOT a bare ProtocolError (issue 230 — callers
-        need to distinguish recoverable server errors from fatal stream
-        desync).
+        as row data) and NOT a bare ProtocolError — callers need to
+        distinguish recoverable server errors from fatal stream
+        desync.
         """
         from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse
@@ -1160,7 +1160,7 @@ class TestDecoderContinuation:
 
 
 class TestDecoderContinuationExpected:
-    """Regression tests for issue 058.
+    """Regression tests for the continuation-expected state machine.
 
     When ``decode()`` returns a ``RowsResponse`` with ``has_more=True``,
     the decoder enters a "continuation expected" state. Calling ``decode()``
@@ -1302,13 +1302,14 @@ class TestDecoderContinuationExpected:
 
 
 class TestContinuationFlagCompleteness:
-    """Regression tests for issues 063 and 064.
+    """Regression tests for continuation-flag completeness.
 
-    Issue 058 added the ``_continuation_expected`` flag and made
-    ``decode()`` check it. Issues 063 and 064 complete the state
-    machine: ``decode_continuation()`` must refuse when the flag is
-    False (no continuation in progress), and ``skip_message()`` must
-    refuse when the flag is True (continuation in progress).
+    The ``_continuation_expected`` flag was added so ``decode()``
+    could refuse to run on a frame that is actually a continuation.
+    The state machine is complete only when
+    ``decode_continuation()`` also refuses when the flag is False
+    (no continuation in progress), and ``skip_message()`` refuses
+    when the flag is True (continuation in progress).
     """
 
     def test_decode_continuation_raises_when_not_expected(self) -> None:
@@ -1369,7 +1370,7 @@ class TestDecoderSkipMessage:
         assert hasattr(decoder, "is_skipping")
 
     def test_skip_oversized_poisons_after_capped_skip(self) -> None:
-        """After a capped oversized skip, buffer is poisoned (issue 121)."""
+        """After a capped oversized skip, buffer is poisoned."""
         import struct
 
         from dqlitewire.exceptions import DecodeError, ProtocolError
@@ -1431,7 +1432,7 @@ class TestDecoderPoisonedState:
         assert decoder.is_poisoned is True
 
         # Subsequent operations fail fast with a ProtocolError from poisoning.
-        # Per issue 038, every mutating/consuming entry point on the buffer
+        # Per the poison-gate contract, every mutating/consuming entry point on the buffer
         # and decoder — including feed() — refuses to run on a poisoned
         # buffer. Recovery requires reset().
         with pytest.raises(ProtocolError, match="poisoned"):
@@ -1475,7 +1476,7 @@ class TestDecoderPoisonedState:
         bytes have not yet been consumed from the buffer.
 
         After a capped skip completes, the buffer IS poisoned because the
-        stream is desynchronized (issue 121).
+        stream is desynchronized.
         """
         import struct
 
@@ -1525,7 +1526,7 @@ class TestDecoderPoisonedState:
         # Subsequent decode() must raise poisoned, even though decode_bytes
         # is monkey-patched. Restore the real decode_bytes first to make
         # sure the poison check fires before any decode_bytes call.
-        # Per issue 038, feed() on a poisoned buffer also raises, so we
+        # Per the poison-gate contract, feed() on a poisoned buffer also raises, so we
         # cannot push more bytes through without a reset — the poison
         # check fires directly on decode().
         del decoder.decode_bytes  # type: ignore[attr-defined]
@@ -1557,7 +1558,7 @@ class TestDecoderPoisonedState:
             decoder.decode()
 
     def test_decode_bytes_honors_poison(self) -> None:
-        """Regression for issue 039.
+        """Regression: decode_bytes must honor the poison flag.
 
         ``MessageDecoder.decode_bytes`` is a public method that parses a
         single caller-supplied bytes object. ``decode()`` goes through a
@@ -1980,7 +1981,7 @@ class TestReadmeExample:
 
 
 class TestPicklePrevention:
-    """Issue 227: core classes must not be picklable."""
+    """Core classes must not be picklable."""
 
     def test_message_decoder_pickle_raises(self) -> None:
         import pickle

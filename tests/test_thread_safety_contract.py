@@ -1,12 +1,12 @@
-"""Regression tests for issue 050: single-owner contract documentation.
+"""Regression tests for single-owner contract documentation.
 
-Issue 050 documented that the prior thread-safety analysis (issue 021)
-+ poison mechanism (issue 026) created a misleading impression that
-concurrent misuse would always surface as ``ProtocolError``. Empirical
-fuzz testing confirmed it does not — under threaded contention,
-``ReadBuffer`` produces duplicate messages and corrupt (garbage) bytes
-with ``is_poisoned`` remaining ``False``, because torn reads often
-yield valid-looking slices that decode cleanly.
+Earlier documentation of the thread-safety analysis plus the poison
+mechanism created a misleading impression that concurrent misuse
+would always surface as ``ProtocolError``. Empirical fuzz testing
+confirmed it does not — under threaded contention, ``ReadBuffer``
+produces duplicate messages and corrupt (garbage) bytes with
+``is_poisoned`` remaining ``False``, because torn reads often yield
+valid-looking slices that decode cleanly.
 
 The remediation is documentation, not code: the docstrings on
 ``ReadBuffer``, ``WriteBuffer``, ``MessageDecoder``, and
@@ -38,7 +38,7 @@ class TestThreadSafetyContractDocumented:
     3. The poison mechanism does NOT detect concurrent misuse.
 
     Any docstring-reformat that drops one of these silently
-    undoes issue 050's documentation fix.
+    undoes the documentation fix.
     """
 
     def test_readbuffer_docstring_warns_about_thread_safety(self) -> None:

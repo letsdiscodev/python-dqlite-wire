@@ -1,4 +1,4 @@
-"""Signal-safety tests for ReadBuffer (issues 037, 041, 045).
+"""Signal-safety tests for ReadBuffer.
 
 These tests use ``sys.settrace`` to inject a ``KeyboardInterrupt`` at a
 specific source line transition, which is the most reliable way to
@@ -59,7 +59,7 @@ def _raise_on_source_match(
 
 
 class TestMaybeCompactSignalSafety:
-    """Regression tests for issue 037.
+    """Regression tests for signal-delivery inside _maybe_compact.
 
     ``ReadBuffer._maybe_compact`` used to be two separate ``STORE_ATTR``
     bytecodes:
@@ -103,7 +103,7 @@ class TestMaybeCompactSignalSafety:
         # The old (broken) behaviour returned available() == -3998.
         if buf.is_poisoned:
             # Exact recovery semantics at the public-API layer are
-            # covered by issue 038's tests; here we only require that
+            # covered by the public-API poison tests; here we only require that
             # the buffer knows it is torn. Inspect _check_poisoned
             # directly, which is the single source of truth for the
             # poison gate.
@@ -215,7 +215,7 @@ def test_decode_error_is_still_recoverable_without_poison() -> None:
 
 
 class TestFeedSignalSafety:
-    """Regression tests for issue 048.
+    """Regression tests for signal-delivery inside feed.
 
     ``ReadBuffer.feed`` used to mutate state (``_skip_remaining``,
     ``_data``) without any try/except wrapper. A BaseException leaking
@@ -229,10 +229,9 @@ class TestFeedSignalSafety:
     with a gap.
 
     The fix wraps the mutation block in ``try/except BaseException``
-    analogous to ``_maybe_compact``'s own fix from issue 037, while
-    leaving the oversized-``DecodeError`` size check OUTSIDE the try
-    block so the non-poisoning "recoverable via drain/reset" contract
-    is preserved.
+    analogous to ``_maybe_compact``'s own fix, while leaving the
+    oversized-``DecodeError`` size check OUTSIDE the try block so the
+    non-poisoning "recoverable via drain/reset" contract is preserved.
     """
 
     def test_torn_feed_extend_leaves_buffer_poisoned(self) -> None:
@@ -273,7 +272,7 @@ class TestFeedSignalSafety:
     def test_torn_feed_poison_cause_is_recorded(self) -> None:
         """The poison cause must be a real exception that surfaces in
         the ProtocolError ``__cause__`` chain, matching the
-        well-formed-poison contract from issue 037.
+        well-formed-poison contract established by _maybe_compact.
         """
         buf = ReadBuffer()
         buf.feed(b"\x00" * 32)
@@ -341,8 +340,8 @@ class _TornSizeBytearray(bytearray):
     ``\\xff`` bytes. ``int.from_bytes(..., "little")`` on that
     produces a value whose low 32 bits match the wire size field
     but whose total is > ``0xFFFFFFFF``, which is the structurally
-    impossible condition that issue 051's sanity check is meant to
-    detect.
+    impossible condition that the header-size sanity check is meant
+    to detect.
     """
 
     def __getitem__(self, key: Any) -> Any:
@@ -355,7 +354,7 @@ class _TornSizeBytearray(bytearray):
 
 
 class TestTornHeaderSizeSanityCheck:
-    """Regression tests for issue 051.
+    """Regression tests for the torn header-size sanity check.
 
     On free-threaded CPython, concurrent misuse of a ``ReadBuffer``
     can cause the 4-byte header-size slice to observably return more
@@ -363,7 +362,7 @@ class TestTornHeaderSizeSanityCheck:
     ``int.from_bytes`` value is a Python bigint wider than 32 bits —
     structurally impossible for a wire-legal ``size_words`` field
     (which is uint32 little-endian). The package already knew about
-    this (issue 033 added hex formatting to avoid the
+    this (hex formatting in the error path avoids the
     bigint-to-decimal cap), but the torn-read case was routed
     through the non-poisoning ``DecodeError`` path meant for
     legitimate oversized server messages, leaving the caller free to
@@ -432,7 +431,7 @@ class TestTornHeaderSizeSanityCheck:
 
 
 class TestConsumeMethodSignalSafety:
-    """Regression tests for issue 061.
+    """Regression tests for signal-delivery inside consume methods.
 
     ``read_message()``, ``skip_message()``, and ``read_bytes()`` each
     advance ``_pos`` and then call ``_maybe_compact()``. The CALL to
@@ -443,8 +442,7 @@ class TestConsumeMethodSignalSafety:
     fires. The return value is lost with the unwinding frame.
 
     The fix wraps the mutation block in ``try/except BaseException``
-    matching the template from issues 037 (``_maybe_compact``) and
-    048 (``feed``).
+    matching the template used in ``_maybe_compact`` and ``feed``.
     """
 
     def test_torn_read_message_leaves_buffer_poisoned(self) -> None:

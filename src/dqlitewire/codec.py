@@ -113,8 +113,7 @@ class MessageEncoder:
     at a time. The encoder is effectively stateless after
     construction (it only caches a protocol ``_version``), but the
     single-owner contract matches the rest of the package — see
-    issue 021 and the class docstring on ``MessageDecoder`` /
-    ``ReadBuffer``.
+    the class docstring on ``MessageDecoder`` / ``ReadBuffer``.
     """
 
     def __reduce__(self) -> None:  # type: ignore[override]
@@ -156,8 +155,7 @@ class MessageDecoder:
     Thread-safety: NOT thread-safe. A single ``MessageDecoder``
     instance must be owned by one thread (or one asyncio coroutine)
     at a time. The single-owner contract matches Go's
-    ``driver.Conn`` layer in go-dqlite; see issue 021 for the full
-    analysis.
+    ``driver.Conn`` layer in go-dqlite.
 
     Concurrent misuse from multiple threads produces **silent data
     corruption**, not exceptions. The underlying ``ReadBuffer``
@@ -165,15 +163,15 @@ class MessageDecoder:
     ``_data``/``_pos`` snapshots across ``_maybe_compact()``
     calls; these produce valid-looking byte slices that decode
     cleanly to wrong (or duplicated) messages. Fuzz testing
-    (issue 050) confirms this reliably on every trial.
+    confirms this reliably on every trial.
 
     The ``is_poisoned`` flag does NOT detect concurrent misuse.
     Poison is designed to catch single-owner torn state from
-    interrupted signal delivery (see issues 037, 041, 045). It
-    cannot observe lost-update races or torn reads that produce
-    valid-looking output. If you need concurrent access, wrap every
-    call site in an ``asyncio.Lock`` or ``threading.Lock`` at the
-    layer that owns the socket.
+    interrupted signal delivery. It cannot observe lost-update
+    races or torn reads that produce valid-looking output. If you
+    need concurrent access, wrap every call site in an
+    ``asyncio.Lock`` or ``threading.Lock`` at the layer that owns
+    the socket.
     """
 
     def __reduce__(self) -> None:  # type: ignore[override]
@@ -389,8 +387,7 @@ class MessageDecoder:
         # Bytes have been consumed. ANY failure now leaves the buffer
         # at an unknown offset; poison so subsequent calls fail fast.
         # Catch BaseException so that signal-delivered
-        # KeyboardInterrupt (issue 045) also poisons before
-        # propagating. `decode_body` implementations can raise
+        # KeyboardInterrupt also poisons before propagating. `decode_body` implementations can raise
         # struct.error, ValueError, UnicodeDecodeError, IndexError,
         # etc., and all of them mean the stream is desynchronized.
         try:
@@ -401,7 +398,7 @@ class MessageDecoder:
             # between the successful decode and the flag store would
             # otherwise leave the stream desynchronized without
             # poisoning — the next ``decode()`` would mis-frame the
-            # continuation frame as a top-level message (issue 233).
+            # continuation frame as a top-level message.
             if isinstance(msg, RowsResponse) and msg.has_more:
                 self._continuation_expected = True
         except BaseException as e:
@@ -480,7 +477,7 @@ class MessageDecoder:
         buffer untouched so that a retry is deterministic (same bytes, same
         error) rather than silently consuming the next 8 bytes of real data.
 
-        Signal-safety (issue 041): the commit order is
+        Signal-safety: the commit order is
         ``_version``/``_handshake_done`` FIRST, then ``read_bytes(8)``.
         If an async exception (``KeyboardInterrupt``) lands between the
         state commit and the buffer consume, the except block reverts

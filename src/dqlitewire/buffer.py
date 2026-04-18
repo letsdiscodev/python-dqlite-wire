@@ -12,10 +12,9 @@ class WriteBuffer:
     Thread-safety: NOT thread-safe. A single ``WriteBuffer``
     instance must be owned by one thread (or one asyncio
     coroutine) at a time. The single-owner contract matches Go's
-    ``driver.Conn`` layer in go-dqlite; see issue 021 for the full
-    analysis. ``write_padded`` guards against the specific
-    torn-payload/pad interleave described in issue 034, but that is
-    a narrow defense, not a general thread-safety guarantee.
+    ``driver.Conn`` layer in go-dqlite. ``write_padded`` guards
+    against a specific torn-payload/pad interleave, but that is a
+    narrow defense, not a general thread-safety guarantee.
     """
 
     def __reduce__(self) -> None:  # type: ignore[override]
@@ -36,8 +35,8 @@ class WriteBuffer:
 
         The padded bytes are built locally and emitted via a single
         ``bytearray.extend`` so that under accidental concurrent misuse
-        (see issue 021 for the single-owner contract) two threads'
-        payloads and padding cannot interleave. This still does not make
+        two threads' payloads and padding cannot interleave. This
+        still does not make
         ``WriteBuffer`` thread-safe in any strong sense, but it removes
         the torn payload/pad split that used to be visible to callers.
         """
@@ -67,7 +66,7 @@ class ReadBuffer:
     Thread-safety: NOT thread-safe. A single ``ReadBuffer`` instance
     must be owned by one thread (or one asyncio coroutine) at a
     time. The single-owner contract matches Go's ``driver.Conn``
-    layer in go-dqlite; see issue 021 for the full analysis.
+    layer in go-dqlite.
 
     Concurrent misuse from multiple threads produces **silent data
     corruption**, not exceptions. Specifically:
@@ -81,10 +80,9 @@ class ReadBuffer:
 
     The ``poison()`` mechanism does NOT and CANNOT detect this
     class of failure. Poison is designed to catch single-owner
-    torn state from interrupted signal delivery (see issues 037,
-    041, 045). It cannot observe lost-update races or torn reads
-    that produce valid-looking output. See issue 050 for
-    reproduction details.
+    torn state from interrupted signal delivery. It cannot observe
+    lost-update races or torn reads that produce valid-looking
+    output.
 
     If you need concurrent access to a single wire stream, wrap
     every call site in an ``asyncio.Lock`` (for coroutines) or
@@ -167,7 +165,7 @@ class ReadBuffer:
         ``reset()``/``clear()``) if the resulting buffer size would
         exceed ``max_message_size``.
 
-        Signal-safety note (issue 048): the mutation block below is
+        Signal-safety note: the mutation block below is
         wrapped in ``try/except BaseException`` so that any async
         exception leaking out — most notably between the
         ``_maybe_compact()`` return and the subsequent
@@ -235,7 +233,7 @@ class ReadBuffer:
 
         # Read size from header (first 4 bytes = size in words)
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
-        # Torn-read sanity (issue 051): if the slice was widened by
+        # Torn-read sanity: if the slice was widened by
         # a concurrent realloc, report "something to consume" so the
         # caller's while-loop proceeds to read_message(), which then
         # poisons. has_message() itself is a total predicate and
@@ -280,7 +278,7 @@ class ReadBuffer:
         self._check_torn_size(size_words)
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
         if total_size > self._max_message_size:
-            # Format size in hex: under concurrent misuse (see issue 033)
+            # Format size in hex: under concurrent misuse
             # `total_size` can be a torn bigint whose decimal form exceeds
             # CPython's 4300-digit int-to-str limit, which would make this
             # f-string itself raise ValueError. Hex formatting has no cap.
@@ -311,7 +309,7 @@ class ReadBuffer:
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
-            # Format size in hex: under concurrent misuse (see issue 033)
+            # Format size in hex: under concurrent misuse
             # `total_size` can be a torn bigint whose decimal form exceeds
             # CPython's 4300-digit int-to-str limit, which would make this
             # f-string itself raise ValueError. Hex formatting has no cap.
@@ -458,7 +456,7 @@ class ReadBuffer:
     def _maybe_compact(self) -> None:
         """Compact buffer if we've consumed a lot.
 
-        Signal-safety note (issue 037): this method mutates two
+        Signal-safety note: this method mutates two
         attributes — ``_data`` and ``_pos`` — which compile to two
         ``STORE_ATTR`` bytecodes. CPython checks for pending signals
         at bytecode line transitions, so a ``KeyboardInterrupt`` (or
@@ -507,11 +505,11 @@ class ReadBuffer:
         """Clear buffer state and un-poison.
 
         Equivalent to ``reset()``. Kept as a convenience alias because
-        ``clear()`` predates the poison concept (issue 026) and was
-        briefly inconsistent with ``reset()`` — it used to leave the
+        ``clear()`` predates the poison concept and was briefly
+        inconsistent with ``reset()`` — it used to leave the
         ``_poisoned`` flag intact, which meant a caller who reached
         for ``clear()`` as a recovery primitive got a half-fresh
         buffer that still raised ``ProtocolError`` on the next
-        operation (issue 040).
+        operation.
         """
         self.reset()

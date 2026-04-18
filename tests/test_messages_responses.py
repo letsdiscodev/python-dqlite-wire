@@ -171,7 +171,7 @@ class TestResultResponse:
 
 
 class TestRowsResponseAliasing:
-    """Regression tests for issue 042.
+    """Regression tests for caller-list aliasing in RowsResponse.
 
     ``RowsResponse`` used to store caller-supplied ``column_names`` and
     ``column_types`` lists by reference, creating silent aliasing:
@@ -186,7 +186,7 @@ class TestRowsResponseAliasing:
 
     def test_constructor_copies_row_types_and_rows(self) -> None:
         """Caller-supplied lists must be independent from the message
-        after construction (ISSUE-61). Applies uniformly to column_names,
+        after construction. Applies uniformly to column_names,
         column_types, row_types (outer + inner), and rows (outer + inner).
         """
         supplied_row_types = [[ValueType.INTEGER, ValueType.TEXT]]
@@ -274,7 +274,7 @@ class TestRowsResponseAliasing:
         )
 
     def test_get_row_types_does_not_alias_column_types(self) -> None:
-        """Regression for issue 052.
+        """Regression: _get_row_types must not alias column_types.
 
         ``__post_init__`` defensively copies ``column_types`` so that
         mutation of a caller-supplied or decoder-supplied list cannot
@@ -306,15 +306,15 @@ class TestRowsResponseAliasing:
         row_types.append(ValueType.BLOB)
         assert msg.column_types == [ValueType.INTEGER], (
             "mutating the _get_row_types return value must not affect "
-            "msg.column_types (issue 042 invariant)"
+            "msg.column_types (no-aliasing invariant)"
         )
 
     def test_get_row_types_does_not_alias_row_types(self) -> None:
-        """Regression for issue 059.
+        """Regression: _get_row_types must not alias row_types[i].
 
         The ``row_types`` branch of ``_get_row_types`` used to return
         ``self.row_types[row_idx]`` by reference — the same aliasing
-        pattern that issue 052 fixed for the ``column_types`` fallback.
+        pattern already fixed for the ``column_types`` fallback.
         A caller who captured the return value and mutated it would
         silently rewrite the message's internal ``row_types[i]`` list.
         """
@@ -335,7 +335,7 @@ class TestRowsResponseAliasing:
         row_types.append(ValueType.BLOB)
         assert msg.row_types[0] == [ValueType.INTEGER], (
             "mutating the _get_row_types return value must not affect "
-            "msg.row_types[i] (issue 042 invariant)"
+            "msg.row_types[i] (no-aliasing invariant)"
         )
 
 
@@ -617,7 +617,7 @@ class TestRowsResponse:
             return body
 
         # Exactly max_rows rows should raise — message must say "reached",
-        # not "exceeds", because len(rows) == max_rows (issue 178)
+        # not "exceeds", because len(rows) == max_rows
         with pytest.raises(DecodeError, match="reached maximum"):
             RowsResponse.decode_body(build_body(3), max_rows=3)
 
@@ -926,7 +926,7 @@ class TestFilesResponse:
         """Body must start with uint64 file count per Go wire protocol."""
         from dqlitewire.types import decode_uint64
 
-        msg = FilesResponse(files={"test.db": b"datadata"})  # 8 bytes (ISSUE-59)
+        msg = FilesResponse(files={"test.db": b"datadata"})  # 8 bytes
         body = msg.encode_body()
         count = decode_uint64(body[:8])
         assert count == 1
@@ -976,7 +976,7 @@ class TestFilesResponse:
     def test_encode_rejects_non_aligned_content(self) -> None:
         """Content whose length is not a multiple of 8 is rejected at encode.
 
-        ISSUE-59: the upstream C server (gateway.c::dumpFile) asserts
+        The upstream C server (gateway.c::dumpFile) asserts
         ``len % 8 == 0``. We enforce the same invariant on the encoder
         side so mock-server frames cannot diverge from real C output.
         """
@@ -1000,7 +1000,7 @@ class TestFilesResponse:
     def test_roundtrip_mixed_empty_and_nonempty(self) -> None:
         """116: empty and non-empty files in the same response.
 
-        All non-empty content must be 8-byte aligned (ISSUE-59).
+        All non-empty content must be 8-byte aligned.
         """
         msg = FilesResponse(
             files={

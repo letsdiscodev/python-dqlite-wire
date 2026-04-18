@@ -1,4 +1,4 @@
-"""Signal-safety tests for MessageDecoder (issues 041 and 045).
+"""Signal-safety tests for MessageDecoder.
 
 ``MessageDecoder.decode()`` and ``decode_continuation()`` both consume
 bytes from the buffer via ``read_message()`` and then parse them via
@@ -98,8 +98,8 @@ def _tracer_raising_in_after_call(
 
 
 class TestDecodeSignalSafety:
-    """Regression tests for issue 045 (consumed-but-unpoisoned window
-    in ``decode()`` / ``decode_continuation()``).
+    """Regression tests for the consumed-but-unpoisoned window in
+    ``decode()`` / ``decode_continuation()``.
     """
 
     def test_keyboard_interrupt_inside_parse_leaves_decoder_poisoned(self) -> None:
@@ -243,8 +243,8 @@ def test_db_response_decodes_cleanly_without_interrupt() -> None:
 
 
 class TestDecodeHandshakeSignalSafety:
-    """Regression tests for issue 041 (hazard 2: single-threaded signal
-    split inside ``decode_handshake``).
+    """Regression tests for the single-threaded signal split inside
+    ``decode_handshake``.
 
     The pre-fix ``decode_handshake`` committed via three separate
     statements:
@@ -340,9 +340,9 @@ class TestDecodeHandshakeSignalSafety:
         assert dec._version == PROTOCOL_VERSION
 
     def test_unsupported_version_does_not_consume_bytes(self) -> None:
-        """Counter-test for issues 027 and 041: an unsupported version
-        must leave the 8 peeked bytes in the buffer so that retry
-        semantics remain deterministic.
+        """Counter-test: an unsupported version must leave the 8
+        peeked bytes in the buffer so that retry semantics remain
+        deterministic.
         """
         dec = MessageDecoder(is_request=True)
         bogus = (0xDEADBEEF).to_bytes(8, "little")

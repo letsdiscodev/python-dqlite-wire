@@ -246,7 +246,7 @@ class RowsResponse(Message):
     has_more: bool = False
 
     def __post_init__(self) -> None:
-        # Defensive copies (issue 042, ISSUE-61). Two sources of
+        # Defensive copies. Two sources of
         # aliasing motivate this:
         #
         # 1. ``decode_body`` stores ``column_types = types`` where
@@ -273,11 +273,11 @@ class RowsResponse(Message):
         ``self.column_types`` itself, so that a caller who mutates the
         return value cannot silently rewrite the message's private
         copy. This preserves the aliasing invariant that
-        ``__post_init__`` establishes (issue 042, issue 052).
+        ``__post_init__`` establishes.
 
         None values override the declared type to NULL, matching Go's
         per-row type header behavior where the nibble reflects the actual
-        value, not the column schema (issue 137).
+        value, not the column schema.
         """
         if self.row_types and row_idx < len(self.row_types):
             types = list(self.row_types[row_idx])
@@ -334,7 +334,7 @@ class RowsResponse(Message):
     ) -> "RowsResponse":
         # Wrap in memoryview so per-iteration slices are O(1) rather
         # than O(remaining). Without this, a body with many small rows
-        # triggers quadratic-time decode (issue 228): each
+        # triggers quadratic-time decode: each
         # ``data[offset:]`` allocates a fresh ``bytes`` copy of the
         # tail. Memoryview slicing is a view, so slicing is free.
         view = memoryview(data)
@@ -475,7 +475,7 @@ class FilesResponse(Message):
             # entries are written back-to-back with no explicit padding
             # and SQLite pages are always 8-byte aligned multiples of
             # 512. Validate here so a Python-encoded mock-server frame
-            # cannot diverge from what a real C peer produces (ISSUE-59).
+            # cannot diverge from what a real C peer produces.
             if len(content) % 8 != 0:
                 raise EncodeError(
                     f"FilesResponse content for {name!r} must be 8-byte aligned "
@@ -489,7 +489,7 @@ class FilesResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
-        # Memoryview for O(1) slicing in the per-file loop (issue 228).
+        # Memoryview for O(1) slicing in the per-file loop.
         view = memoryview(data)
         files: dict[str, bytes] = {}
         offset = 0
@@ -551,7 +551,7 @@ class ServersResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ServersResponse":
-        # Memoryview for O(1) slicing in the per-node loop (issue 228).
+        # Memoryview for O(1) slicing in the per-node loop.
         view = memoryview(data)
         nodes: list[NodeInfo] = []
         offset = 0

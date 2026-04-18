@@ -1,4 +1,4 @@
-"""Tests for the exception hierarchy (issue 230).
+"""Tests for the exception hierarchy.
 
 ``ProtocolError`` was previously raised for six qualitatively different
 failure conditions, forcing callers to string-match to distinguish

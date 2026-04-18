@@ -1,4 +1,4 @@
-"""Performance regression tests for decode paths (issue 228).
+"""Performance regression tests for decode paths.
 
 The body decoders in ``responses.py`` and ``tuples.py`` used to slice
 the body bytes with ``data[offset:]`` inside per-row / per-column
@@ -32,7 +32,7 @@ def _build_rows(n: int) -> bytes:
 
 
 def _time_decode(body: bytes, max_rows: int) -> float:
-    # max_rows cap triggers at ``>=`` (issue 178), so pass a value
+    # max_rows cap triggers at ``>=``, so pass a value
     # larger than the actual row count.
     start = time.perf_counter()
     RowsResponse.decode_body(body, max_rows=max_rows + 1)
@@ -89,7 +89,7 @@ class TestRowsDecodePerformance:
 
 class TestDecodeTextLongValues:
     """Regression guard: ``decode_text`` must support arbitrarily long
-    text values when reading from a memoryview (issue 228).
+    text values when reading from a memoryview.
 
     A prior iteration of the fix capped the scan window at 4 KiB, which
     broke legitimate SQLite TEXT column values (e.g. JSON documents or

@@ -9,8 +9,7 @@ import sys as _sys
 # C-level atomicity for bytearray.extend(), slicing, and attribute rebinding
 # inside _maybe_compact(). Under a free-threaded build, concurrent access
 # produces SIGSEGV in the read path and a process-level hang in the write
-# path (see issues/033-free-threaded-segfault-in-readbuffer.md for the full
-# reproduction and rationale). The single-owner-per-instance contract alone
+# path. The single-owner-per-instance contract alone
 # is not enough to keep users safe, because "share across threads" is an
 # easy mistake and the failure mode is an interpreter crash rather than a
 # Python exception.
@@ -24,8 +23,7 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
             "dqlitewire does not support free-threaded Python "
             "(python3.13t / no-GIL). The ReadBuffer and WriteBuffer classes "
             "rely on bytearray mutation semantics that cause SIGSEGV and "
-            "process hangs under free-threading. See "
-            "issues/033-free-threaded-segfault-in-readbuffer.md. "
+            "process hangs under free-threading. "
             "To override at your own risk, set "
             "DQLITEWIRE_ALLOW_FREE_THREADED=1."
         )

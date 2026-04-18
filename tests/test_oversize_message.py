@@ -1,4 +1,4 @@
-"""Pin the oversize-message rejection boundary (ISSUE-105).
+"""Pin the oversize-message rejection boundary.
 
 ``max_message_size`` caps the total envelope size of a single wire
 frame. Realistic triggers in production are dynamically-generated SQL:
@@ -7,7 +7,7 @@ with thousands of placeholders. The encoder must reject at construction
 time with a clear error rather than silently truncate or produce bytes
 the server will refuse.
 
-Pre-ISSUE-105, no test pinned this boundary. Changes to the envelope
+Previously no test pinned this boundary. Changes to the envelope
 cap behavior would go undetected.
 """
 

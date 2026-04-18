@@ -46,7 +46,7 @@ class TestWriteBuffer:
         assert buf.getvalue() == b""
 
     def test_write_padded_no_interleaved_tearing_under_contention(self) -> None:
-        """Regression for issue 034.
+        """Regression for the torn write_padded interleave.
 
         ``write_padded`` used to do two separate ``bytearray.extend`` calls
         (one for the payload, one for the NUL padding). Under concurrent
@@ -91,7 +91,7 @@ class TestWriteBuffer:
             sys.setswitchinterval(old_interval)
 
     def test_pickle_raises_typeerror(self) -> None:
-        """WriteBuffer must not be picklable (issue 227)."""
+        """WriteBuffer must not be picklable."""
         buf = WriteBuffer()
         buf.write(b"data")
         with pytest.raises(TypeError, match="cannot be pickled"):
@@ -220,12 +220,12 @@ class TestReadBuffer:
         assert buf.available() == 0
 
     def test_clear_also_unpoisons(self) -> None:
-        """Regression for issue 040.
+        """Regression: clear() must also un-poison.
 
         ``ReadBuffer`` has two very similar methods: ``clear()`` and
-        ``reset()``. ``reset()`` was introduced by issue 026 as the
-        recovery primitive for the poison flag. ``clear()`` predates
-        the poison concept and was never updated — it still resets
+        ``reset()``. ``reset()`` was introduced alongside the poison
+        flag as its recovery primitive. ``clear()`` predates the
+        poison concept and was never updated — it still resets
         ``_data``/``_pos``/``_skip_remaining`` but leaves
         ``_poisoned`` intact. A caller who reaches for ``clear()``
         expecting it to be "the simpler recovery method" gets a
@@ -249,9 +249,9 @@ class TestReadBuffer:
         assert buf.available() == 8
 
     def test_public_api_honors_poison(self) -> None:
-        """Regression for issue 038.
+        """Regression: poison flag must be honored by the public API.
 
-        Issue 026 introduced the poison flag so that once a decode
+        The poison flag was introduced so that once a decode
         error has desynchronized the stream, subsequent operations
         fail fast with ``ProtocolError`` instead of silently reading
         from an unknown offset. The check was wired into
@@ -447,7 +447,7 @@ class TestReadBuffer:
 
     def test_skip_message_poisons_after_capped_oversized(self) -> None:
         """After a capped oversized skip, stream is desynchronized and
-        the buffer must be poisoned (issue 121).
+        the buffer must be poisoned.
 
         skip_message caps _skip_remaining to max_message_size to prevent
         amplification attacks. Since the peer sent more bytes than the cap,
@@ -554,7 +554,7 @@ class TestReadBuffer:
             buf.read_message()
 
     def test_skip_oversized_across_multiple_feeds_poisons(self) -> None:
-        """Oversized skip across multiple feeds poisons when complete (issue 121).
+        """Oversized skip across multiple feeds poisons when complete.
 
         skip_message caps _skip_remaining to max_message_size, so only that
         many bytes are discarded. Once the capped skip completes, the buffer
@@ -771,7 +771,7 @@ class TestReadBuffer:
         assert buf.has_message()
 
     def test_pickle_raises_typeerror(self) -> None:
-        """ReadBuffer must not be picklable (issue 227)."""
+        """ReadBuffer must not be picklable."""
         buf = ReadBuffer()
         buf.feed(b"\x00" * 16)
         with pytest.raises(TypeError, match="cannot be pickled"):
