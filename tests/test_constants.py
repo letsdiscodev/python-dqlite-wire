@@ -175,3 +175,49 @@ class TestTypeDictCompleteness:
             assert member.value in RESPONSE_TYPES, (
                 f"ResponseType.{member.name} ({member.value}) has no entry in RESPONSE_TYPES"
             )
+
+
+class TestLeaderErrorCodes:
+    """Pin the SQLite extended error codes that signal leader changes."""
+
+    def test_sqlite_ioerr_base(self) -> None:
+        from dqlitewire.constants import SQLITE_IOERR
+
+        assert SQLITE_IOERR == 10
+
+    def test_not_leader_code_value(self) -> None:
+        from dqlitewire.constants import SQLITE_IOERR, SQLITE_IOERR_NOT_LEADER
+
+        assert SQLITE_IOERR_NOT_LEADER == 10250
+        assert SQLITE_IOERR_NOT_LEADER == SQLITE_IOERR | (40 << 8)
+
+    def test_leadership_lost_code_value(self) -> None:
+        from dqlitewire.constants import SQLITE_IOERR, SQLITE_IOERR_LEADERSHIP_LOST
+
+        assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
+        assert SQLITE_IOERR_LEADERSHIP_LOST == SQLITE_IOERR | (41 << 8)
+
+    def test_leader_error_codes_is_a_frozenset_of_both(self) -> None:
+        from dqlitewire.constants import (
+            LEADER_ERROR_CODES,
+            SQLITE_IOERR_LEADERSHIP_LOST,
+            SQLITE_IOERR_NOT_LEADER,
+        )
+
+        assert isinstance(LEADER_ERROR_CODES, frozenset)
+        expected = frozenset({SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST})
+        assert expected == LEADER_ERROR_CODES
+
+    def test_leader_error_codes_importable_from_top_level(self) -> None:
+        from dqlitewire import (
+            LEADER_ERROR_CODES,
+            SQLITE_IOERR,
+            SQLITE_IOERR_LEADERSHIP_LOST,
+            SQLITE_IOERR_NOT_LEADER,
+        )
+
+        assert SQLITE_IOERR == 10
+        assert SQLITE_IOERR_NOT_LEADER == 10250
+        assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
+        expected = frozenset({10250, 10506})
+        assert expected == LEADER_ERROR_CODES

@@ -97,3 +97,20 @@ class NodeRole(IntEnum):
     VOTER = 0
     STANDBY = 1
     SPARE = 2
+
+
+# SQLite extended error codes that signal leader changes in a dqlite
+# cluster. Upstream definitions in ``dqlite-upstream/include/dqlite.h``:
+#
+#     #define SQLITE_IOERR_NOT_LEADER       (SQLITE_IOERR | (40 << 8))
+#     #define SQLITE_IOERR_LEADERSHIP_LOST  (SQLITE_IOERR | (41 << 8))
+#
+# where ``SQLITE_IOERR = 10``. Callers (``dqliteclient`` and
+# ``sqlalchemy-dqlite``) import these to decide whether to invalidate a
+# connection and retry against a fresh leader.
+SQLITE_IOERR = 10
+SQLITE_IOERR_NOT_LEADER = SQLITE_IOERR | (40 << 8)  # 10250
+SQLITE_IOERR_LEADERSHIP_LOST = SQLITE_IOERR | (41 << 8)  # 10506
+LEADER_ERROR_CODES: frozenset[int] = frozenset(
+    {SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST}
+)
