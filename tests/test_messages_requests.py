@@ -28,6 +28,29 @@ from dqlitewire.messages.requests import (
 )
 
 
+class TestHeaderReservedField:
+    """Pin the header's reserved/extra uint16 to zero (ISSUE-62).
+
+    Upstream C (``message.h``) names this field ``extra`` and reserves it
+    for future protocol extensions. All current upstream servers send 0.
+    If upstream ever repurposes the field (compression flag, extended
+    schema, etc.), this test fails — forcing a conscious decision rather
+    than silent mis-decode.
+    """
+
+    def test_encoded_reserved_is_zero(self) -> None:
+        cases = [LeaderRequest(), HeartbeatRequest(timestamp=0), OpenRequest(name="db")]
+        for msg in cases:
+            encoded = msg.encode()
+            header = Header.decode(encoded[:HEADER_SIZE])
+            assert header.reserved == 0, f"{type(msg).__name__} emitted non-zero reserved"
+
+    def test_decoded_reserved_is_zero_after_encode_decode(self) -> None:
+        msg = LeaderRequest()
+        header = Header.decode(msg.encode()[:HEADER_SIZE])
+        assert header.reserved == 0
+
+
 class TestLeaderRequest:
     def test_encode_has_body(self) -> None:
         """LeaderRequest body must contain a reserved uint64 per Go spec."""

@@ -72,9 +72,16 @@ class ValueType(IntEnum):
     BLOB = 4
     NULL = 5
     # Unix time (deprecated, maps to INTEGER).
-    # Server-to-client ONLY: the C server's tuple_decoder has no inbound
-    # case for DQLITE_UNIXTIME, so this tag must never appear on outgoing
-    # parameters. encode_params_tuple enforces this defensively.
+    # Server-to-client ONLY: the upstream C server emits UNIXTIME from
+    # ``query.c`` for DATETIME columns, but the upstream C tuple_decoder
+    # (``tuple.c``) has no inbound case for DQLITE_UNIXTIME and rejects
+    # it with DQLITE_PARSE. This Python decoder is strictly more
+    # permissive than the C client — it accepts UNIXTIME on incoming row
+    # values and returns int64 seconds-since-epoch. Mock servers built
+    # on this encoder must NOT send UNIXTIME to real C clients.
+    # ``encode_params_tuple`` additionally enforces that this tag never
+    # appears on outgoing parameters (the server's parameter parser
+    # rejects it too).
     UNIXTIME = 9
     ISO8601 = 10  # ISO8601 string (maps to TEXT)
     BOOLEAN = 11  # Boolean (maps to INTEGER)

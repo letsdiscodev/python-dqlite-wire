@@ -153,6 +153,13 @@ class StmtResponse(Message):
     V0 body: uint32 db_id, uint32 stmt_id, uint64 num_params
     V1 body: uint32 db_id, uint32 stmt_id, uint64 num_params, uint64 tail_offset
 
+    Schema selection: ``_get_schema()`` derives the header schema byte from
+    ``tail_offset``. ``tail_offset=None`` (default) → schema=0 (V0 body);
+    ``tail_offset`` set to any int (including ``0``) → schema=1 (V1 body).
+    Mock-server authors must match this to the schema byte of the inbound
+    :class:`PrepareRequest`, since upstream dqlite servers dispatch on the
+    request's schema byte, not on any reply-side field.
+
     Note: V1 tail_offset is not present in the canonical Go client
     (go-dqlite). The Go EncodePrepare always uses schema=0 and DecodeStmt
     does not read tail_offset. This feature may be supported by the C

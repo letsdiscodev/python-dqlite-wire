@@ -108,6 +108,12 @@ class OpenRequest(Message):
     """Open a database.
 
     Body: text name, uint64 flags, text vfs
+
+    Note: the upstream dqlite server (``gateway.c``/``handle_open``)
+    currently IGNORES both ``flags`` and ``vfs`` fields. They are encoded
+    on the wire for protocol compatibility but have no server-side effect.
+    Keep the defaults (flags=0, vfs="") unless you're intentionally
+    exercising a future server version or building a mock server.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.OPEN
