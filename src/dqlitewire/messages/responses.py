@@ -300,6 +300,15 @@ class RowsResponse(Message):
                 f"column_types length ({len(self.column_types)}) != "
                 f"column_names length ({col_count})"
             )
+        # Zero-column rows produce zero bytes per row, so the encoded
+        # output is indistinguishable from a zero-row result set — the
+        # decoder's zero-column fast path returns no rows. Reject at
+        # encode time rather than silently lose row count.
+        if col_count == 0 and self.rows:
+            raise EncodeError(
+                f"RowsResponse with zero columns cannot carry rows "
+                f"(got {len(self.rows)} empty row(s))"
+            )
         for i, row in enumerate(self.rows):
             if len(row) != col_count:
                 raise EncodeError(f"Row {i} has {len(row)} values, expected {col_count}")

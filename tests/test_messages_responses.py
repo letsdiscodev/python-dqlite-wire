@@ -686,6 +686,21 @@ class TestRowsResponseEncodeValidation:
         decoded = RowsResponse.decode_body(encoded)
         assert decoded.rows == [[42]]
 
+    def test_zero_columns_with_rows_raises(self) -> None:
+        """Zero-column rows are nonsensical: each row emits 0 bytes, so
+        the encoded message is indistinguishable from a zero-row result
+        set. Reject at encode time so the encoder is symmetric with the
+        decoder's zero-column fast path (it returns no rows).
+        """
+        resp = RowsResponse(
+            column_names=[],
+            column_types=[],
+            row_types=[],
+            rows=[[]],
+        )
+        with pytest.raises(EncodeError, match=r"zero columns.*1 empty row"):
+            resp.encode_body()
+
 
 class TestRowsResponseNullInTypedColumn:
     """137: None values in rows with explicit column types must encode correctly."""
