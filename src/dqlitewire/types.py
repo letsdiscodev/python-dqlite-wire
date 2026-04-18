@@ -2,9 +2,14 @@
 
 All multi-byte integers are little-endian.
 Text is null-terminated UTF-8, padded to 8-byte boundary.
+
+The codec deals only in wire primitives (int, float, str, bool, bytes, None).
+Higher-level conversions — like ``DQLITE_ISO8601`` → ``datetime.datetime`` or
+``DQLITE_UNIXTIME`` → epoch-based ``datetime.datetime`` — belong in the
+driver/DBAPI layer, matching the split used by the C reference client and
+by Go's ``database/sql`` driver.
 """
 
-import datetime
 import struct
 from typing import Any
 
@@ -203,39 +208,6 @@ def decode_blob(data: bytes | memoryview) -> tuple[bytes, int]:
     return bytes(data[8 : 8 + length]), total_size
 
 
-def _format_datetime_iso8601(value: datetime.datetime) -> str:
-    """Format a datetime to an ISO 8601 string compatible with Go's
-    space-separated layout and with Python's datetime.fromisoformat.
-
-    - Space separator between date and time (matches Go's layout so values
-      written by Go clients can be compared byte-for-byte).
-    - Full 6-digit microseconds (no rstrip): otherwise ``.100000`` became
-      ``.1`` which was ambiguous between ``0.1 s`` and ``100000 µs`` to
-      lenient parsers and broke direct string equality with
-      ``datetime.isoformat(" ")``.
-    - Naive datetimes (tzinfo is None) are rejected: silently assuming UTC
-      hides real bugs in callers that used ``datetime.now()``/``utcnow()``
-      in a local-time context.
-    """
-    if value.tzinfo is None:
-        raise EncodeError(
-            "Naive datetime has no timezone; pass an aware datetime "
-            "(e.g. datetime.now(datetime.UTC) or "
-            "dt.replace(tzinfo=datetime.UTC))."
-        )
-    formatted = f"{value.year:04d}" + value.strftime("-%m-%d %H:%M:%S")
-    if value.microsecond:
-        formatted += f".{value.microsecond:06d}"
-    utcoffset = value.utcoffset()
-    assert utcoffset is not None  # noqa: S101 - guarded above
-    total_seconds = int(utcoffset.total_seconds())
-    sign = "+" if total_seconds >= 0 else "-"
-    hours, remainder = divmod(abs(total_seconds), 3600)
-    minutes = remainder // 60
-    formatted += f"{sign}{hours:02d}:{minutes:02d}"
-    return formatted
-
-
 def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes, ValueType]:
     """Encode a Python value to wire format.
 
@@ -257,19 +229,17 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             value_type = ValueType.INTEGER
         elif isinstance(value, float):
             value_type = ValueType.FLOAT
-        elif isinstance(value, datetime.datetime):
-            value_type = ValueType.ISO8601
-            value = _format_datetime_iso8601(value)
-        elif isinstance(value, datetime.date):
-            # Must come after datetime.datetime check (datetime is a subclass of date)
-            value_type = ValueType.ISO8601
-            value = value.isoformat()
         elif isinstance(value, str):
             value_type = ValueType.TEXT
         elif isinstance(value, bytes):
             value_type = ValueType.BLOB
         else:
-            raise EncodeError(f"Cannot infer type for value: {type(value)}")
+            raise EncodeError(
+                f"Cannot infer wire type for value of type {type(value).__name__!r}. "
+                f"The wire codec only accepts bool, int, float, str, bytes, or None. "
+                f"Callers passing datetime/date/etc. must convert to str (for ISO8601) "
+                f"or int (for UNIXTIME) at the driver layer."
+            )
 
     if value_type == ValueType.BOOLEAN:
         if not isinstance(value, (bool, int)):
@@ -293,13 +263,6 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             raise EncodeError(f"Expected int or float for FLOAT, got {type(value).__name__}")
         return encode_double(float(value)), value_type
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
-        # ISO8601 accepts datetime objects and converts them to string.
-        # This is needed when encode_row_values passes a datetime with
-        # explicit ISO8601 type (the auto-inference path converts earlier).
-        if value_type == ValueType.ISO8601 and isinstance(value, datetime.datetime):
-            value = _format_datetime_iso8601(value)
-        elif value_type == ValueType.ISO8601 and isinstance(value, datetime.date):
-            value = value.isoformat()
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
         return encode_text(value), value_type
@@ -318,37 +281,6 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
         raise EncodeError(f"Unknown value type: {value_type}")
 
 
-def _parse_iso8601(text: str) -> datetime.datetime:
-    """Parse an ISO 8601 datetime string, trying multiple formats.
-
-    Matches Go's iso8601Formats parsing which tries 9 patterns including
-    with/without timezone, with/without fractional seconds, T vs space
-    separator, and date-only.
-    """
-    # Strip trailing Z (Go does this before parsing)
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-
-    # Try Python's fromisoformat first — handles most formats since Python 3.11
-    try:
-        dt = datetime.datetime.fromisoformat(text)
-        # Go parses all formats without explicit timezone in UTC
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.UTC)
-        return dt
-    except ValueError:
-        pass
-
-    # Fallback: date-only format
-    try:
-        d = datetime.date.fromisoformat(text)
-        return datetime.datetime(d.year, d.month, d.day, tzinfo=datetime.UTC)
-    except ValueError:
-        pass
-
-    raise DecodeError(f"Cannot parse ISO 8601 datetime: {text!r}")
-
-
 def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[Any, int]:
     """Decode a value from wire format.
 
@@ -360,21 +292,18 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[Any, 
         return decode_int64(data), 8
     elif value_type == ValueType.UNIXTIME:
         # Return raw int64 to preserve round-trip identity at the wire level.
-        # Previously returned datetime.datetime, which caused type-changing
-        # re-encode (UNIXTIME → ISO8601). See issue 006.
-        # Note: Go's Rows.Next() converts this to time.Time, but that
-        # conversion belongs in a higher-level client layer, not the wire
-        # protocol codec.
+        # Higher-level clients (like the dqlite DBAPI) turn this into a
+        # datetime, matching what Go's Rows.Next() does in the database/sql
+        # driver layer. See issue 006.
         return decode_int64(data), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
-    elif value_type == ValueType.TEXT:
+    elif value_type in (ValueType.TEXT, ValueType.ISO8601):
+        # ISO8601 is treated as text at the wire level — the C reference
+        # uses text__encode / text__decode for DQLITE_ISO8601 (see dqlite
+        # src/tuple.c) and Go returns the raw string from the codec.
+        # Parsing to datetime belongs in the driver/DBAPI layer.
         return decode_text(data)
-    elif value_type == ValueType.ISO8601:
-        text, consumed = decode_text(data)
-        if not text:
-            return None, consumed
-        return _parse_iso8601(text), consumed
     elif value_type == ValueType.BLOB:
         return decode_blob(data)
     elif value_type == ValueType.NULL:

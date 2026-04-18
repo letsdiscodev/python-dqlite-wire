@@ -772,18 +772,16 @@ class TestRowsResponseValueTypes:
         assert decoded.column_types == [ValueType.UNIXTIME]
 
     def test_iso8601_column(self) -> None:
-        """ISO8601 values go through _parse_iso8601 on decode."""
-        from datetime import UTC, datetime
-
-        dt = datetime(2024, 6, 15, 10, 30, 0, tzinfo=UTC)
+        """ISO8601 values round-trip as raw text at the wire level."""
+        iso = "2024-06-15 10:30:00+00:00"
         resp = RowsResponse(
             column_names=["ts"],
             column_types=[ValueType.ISO8601],
-            rows=[[dt]],
+            rows=[[iso]],
         )
         data = resp.encode()
         decoded = RowsResponse.decode_body(data[HEADER_SIZE:])
-        assert decoded.rows[0][0] == dt
+        assert decoded.rows[0][0] == iso
 
     def test_blob_column(self) -> None:
         """BLOB has variable-length encoding with padding in row context."""
@@ -798,9 +796,7 @@ class TestRowsResponseValueTypes:
 
     def test_mixed_all_types(self) -> None:
         """Every value type in a single row exercises full encoding path."""
-        from datetime import UTC, datetime
-
-        dt = datetime(2024, 1, 1, tzinfo=UTC)
+        iso = "2024-01-01 00:00:00+00:00"
         resp = RowsResponse(
             column_names=["i", "f", "t", "b", "n", "ut", "iso", "bo"],
             column_types=[
@@ -826,7 +822,7 @@ class TestRowsResponseValueTypes:
                 ]
             ],
             rows=[
-                [42, 3.14, "hello", b"\x00\x01", None, 1700000000, dt, True],
+                [42, 3.14, "hello", b"\x00\x01", None, 1700000000, iso, True],
             ],
         )
         data = resp.encode()
@@ -838,7 +834,7 @@ class TestRowsResponseValueTypes:
         assert row[3] == b"\x00\x01"
         assert row[4] is None
         assert row[5] == 1700000000
-        assert row[6] == dt
+        assert row[6] == iso
         assert row[7] is True
 
     def test_blob_multiple_sizes(self) -> None:
