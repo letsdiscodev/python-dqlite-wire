@@ -106,6 +106,18 @@ class TestWelcomeResponse:
         decoded = WelcomeResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.heartbeat_timeout == 15000
 
+    @pytest.mark.parametrize("heartbeat", [0, 1, 2**64 - 1])
+    def test_roundtrip_heartbeat_boundaries(self, heartbeat: int) -> None:
+        """heartbeat_timeout is uint64 on the wire. Existing tests
+        already cover 10_000 / 15_000 / 15_000_000_000 (larger than
+        uint32); this pins the uint64 extremes so a narrowing refactor
+        would surface here, not in a heartbeat-tied latency regression
+        far downstream."""
+        msg = WelcomeResponse(heartbeat_timeout=heartbeat)
+        encoded = msg.encode()
+        decoded = WelcomeResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.heartbeat_timeout == heartbeat
+
 
 class TestDbResponse:
     def test_roundtrip(self) -> None:
@@ -1303,6 +1315,25 @@ class TestMetadataResponse:
         decoded = MetadataResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.failure_domain == 1
         assert decoded.weight == 50
+
+    @pytest.mark.parametrize(
+        "failure_domain,weight",
+        [
+            (2**32 - 1, 2**32 - 1),
+            (2**63, 2**63 + 1),
+            (2**64 - 1, 2**64 - 1),
+        ],
+    )
+    def test_roundtrip_uint64_boundaries(self, failure_domain: int, weight: int) -> None:
+        """Both fields are declared uint64 on the wire. Pinning the high
+        bits protects against a future refactor that narrows either
+        field to int32 / int64 — a single happy-path test would still
+        pass with (1, 50)."""
+        msg = MetadataResponse(failure_domain=failure_domain, weight=weight)
+        encoded = msg.encode()
+        decoded = MetadataResponse.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.failure_domain == failure_domain
+        assert decoded.weight == weight
 
 
 class TestShortBodyDecoding:
