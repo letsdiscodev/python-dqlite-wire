@@ -16,6 +16,16 @@ from typing import Any
 from dqlitewire.constants import WORD_SIZE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 
+# Per-BLOB byte cap. The overall frame-size cap in ``buffer.py`` (64 MiB)
+# already bounds any single message, but a hostile or buggy peer can
+# otherwise pack a single BLOB field that consumes the whole frame. The
+# cap is a defensive ceiling — real applications do not send
+# multi-megabyte blobs over the wire — and keeps the decoder fast-failing
+# well before large allocations or arithmetic on attacker-controlled
+# lengths. Sits beside ``_MAX_PARAM_COUNT`` / ``_MAX_COLUMN_COUNT`` /
+# ``_MAX_FILE_COUNT`` / ``_MAX_NODE_COUNT`` in spirit.
+_MAX_BLOB_SIZE = 16 * 1024 * 1024  # 16 MiB
+
 
 def encode_uint64(value: int) -> bytes:
     """Encode an unsigned 64-bit integer (little-endian)."""
@@ -202,6 +212,8 @@ def encode_blob(value: bytes) -> bytes:
     Format: uint64 length + data + padding
     """
     length = len(value)
+    if length > _MAX_BLOB_SIZE:
+        raise EncodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
     padding = pad_to_word(length)
     return encode_uint64(length) + value + (b"\x00" * padding)
 
@@ -216,6 +228,8 @@ def decode_blob(data: bytes | memoryview) -> tuple[bytes, int]:
         raise DecodeError("Not enough data for blob length")
 
     length = decode_uint64(data[:8])
+    if length > _MAX_BLOB_SIZE:
+        raise DecodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
     total_size = 8 + length + pad_to_word(length)
 
     if len(data) < total_size:

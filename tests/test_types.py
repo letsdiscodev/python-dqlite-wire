@@ -7,6 +7,7 @@ import pytest
 from dqlitewire.constants import ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.types import (
+    _MAX_BLOB_SIZE,
     decode_blob,
     decode_double,
     decode_int64,
@@ -303,6 +304,30 @@ class TestBlob:
         data = encode_uint64(100) + b"\x00" * 10  # claims 100 bytes, only has 10
         with pytest.raises(DecodeError, match="Not enough data for blob"):
             decode_blob(data)
+
+    def test_decode_blob_rejects_length_beyond_cap(self) -> None:
+        """Crafted buffer claiming a length beyond the per-field cap must be
+        rejected before the decoder allocates or does total-size arithmetic
+        with the attacker-controlled length."""
+        oversized = _MAX_BLOB_SIZE + 1
+        data = encode_uint64(oversized)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            decode_blob(data)
+
+    def test_decode_blob_accepts_length_at_cap(self) -> None:
+        """Length exactly at the cap is still accepted; the body check is
+        what fires on a truncated buffer."""
+        # Claim exactly the cap but provide a short buffer. The cap check
+        # must pass; the later "not enough data" check is what rejects.
+        data = encode_uint64(_MAX_BLOB_SIZE) + b"\x00" * 8
+        with pytest.raises(DecodeError, match="Not enough data for blob"):
+            decode_blob(data)
+
+    def test_encode_blob_rejects_oversize(self) -> None:
+        """encode_blob mirrors the decode cap so callers fail fast on an
+        accidental giant bytes input instead of burning allocations."""
+        with pytest.raises(EncodeError, match="exceeds maximum"):
+            encode_blob(b"\x00" * (_MAX_BLOB_SIZE + 1))
 
 
 class TestValue:
