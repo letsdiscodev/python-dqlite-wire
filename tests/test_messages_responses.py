@@ -1311,6 +1311,81 @@ class TestShortBodyDecoding:
             LeaderResponse.decode_body_legacy(b"abc")
 
 
+class TestServerTextSanitization:
+    """Server-supplied strings that flow into exception messages and
+    logs must have C0 control characters and DEL replaced with '?' so a
+    malicious server cannot inject ANSI escape sequences, CR/LF
+    log-forgery, or NUL bytes into operator-facing output.
+
+    Tab (0x09) and LF (0x0A) are preserved so multi-line diagnostics
+    render as real newlines. CR (0x0D) is dropped because it is the
+    log-injection vector.
+    """
+
+    def test_failure_response_sanitizes_ansi(self) -> None:
+        # Encode bytes directly because encode_text(str) stringifies.
+        from dqlitewire.types import encode_text, encode_uint64
+
+        payload = encode_uint64(42) + encode_text("\x1b[2J\x1b[Hwiped!")
+        decoded = FailureResponse.decode_body(payload)
+        assert decoded.message == "?[2J?[Hwiped!"
+
+    def test_failure_response_sanitizes_cr(self) -> None:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        payload = encode_uint64(1) + encode_text("ok\r\nFAKE log line")
+        decoded = FailureResponse.decode_body(payload)
+        # LF preserved; CR replaced with '?' so it cannot forge a log line.
+        assert decoded.message == "ok?\nFAKE log line"
+
+    def test_failure_response_sanitizes_raw_nul(self) -> None:
+        # Construct a body whose text field contains a raw NUL byte
+        # *before* the real NUL terminator. The legitimate encoder
+        # rejects this, so hand-build the body to model a malicious
+        # peer that bypasses encode_text.
+        from dqlitewire.types import encode_uint64
+
+        # uint64 code (8 bytes) + raw "ab\x01cd" + NUL terminator + pad.
+        body = encode_uint64(1) + b"ab\x01cd\x00\x00\x00"
+        decoded = FailureResponse.decode_body(body)
+        assert decoded.message == "ab?cd"
+
+    def test_failure_response_preserves_tab_and_lf(self) -> None:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        payload = encode_uint64(1) + encode_text("line1\nline2\tkey=val")
+        decoded = FailureResponse.decode_body(payload)
+        assert decoded.message == "line1\nline2\tkey=val"
+
+    def test_leader_response_sanitizes_address(self) -> None:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        payload = encode_uint64(5) + encode_text("evil.com:9001\r\nHost: x")
+        decoded = LeaderResponse.decode_body(payload)
+        assert decoded.address == "evil.com:9001?\nHost: x"
+
+    def test_leader_response_legacy_sanitizes(self) -> None:
+        from dqlitewire.types import encode_text
+
+        payload = encode_text("\x1b[31mred\x1b[0m")
+        decoded = LeaderResponse.decode_body_legacy(payload)
+        assert decoded.address == "?[31mred?[0m"
+
+    def test_servers_response_sanitizes_node_addresses(self) -> None:
+        # Build a SERVERS body with a single node whose address contains
+        # an ANSI clear-screen sequence.
+        from dqlitewire.constants import NodeRole
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(1)
+        body += encode_uint64(1)
+        body += encode_text("node1\x1b[2J:9001")
+        body += encode_uint64(NodeRole.VOTER)
+        decoded = ServersResponse.decode_body(body)
+        assert len(decoded.nodes) == 1
+        assert decoded.nodes[0].address == "node1?[2J:9001"
+
+
 class TestReservedFieldValidation:
     """Non-zero reserved bytes must fail to decode across all message
     types that declare a reserved field, matching LeaderRequest's

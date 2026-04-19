@@ -1,5 +1,6 @@
 """Server to client response messages."""
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -39,6 +40,29 @@ _MAX_COLUMN_COUNT = 10_000
 _MAX_FILE_COUNT = 100
 _MAX_NODE_COUNT = 10_000
 
+# Sanitize server-supplied text destined for exception messages and
+# logs. The C server promises UTF-8 but makes no promise about terminal
+# escapes or log-injection characters: a malicious or compromised peer
+# can embed ANSI colour/clear sequences, CR/LF to forge log lines, or
+# NUL bytes that upset some log backends. Replace C0 controls (except
+# tab 0x09 and LF 0x0A) and DEL (0x7F) with a literal "?". CR (0x0D) is
+# dropped — it is the log-injection vector alongside LF, and LF alone
+# is enough to represent legitimate multi-line server messages in
+# journald / file handlers.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _sanitize_server_text(s: str) -> str:
+    """Replace C0 control characters and DEL with '?' in server strings.
+
+    Applied at the decoder boundary for text fields that flow directly
+    into exception messages and logs (FailureResponse.message,
+    LeaderResponse.address, ServersResponse.nodes[*].address). Leaves
+    tab and LF untouched so multi-line server diagnostics render
+    correctly.
+    """
+    return _CONTROL_CHARS_RE.sub("?", s)
+
 
 @dataclass
 class FailureResponse(Message):
@@ -66,7 +90,7 @@ class FailureResponse(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         code = decode_uint64(data)
         message, _ = decode_text(data[8:])
-        return cls(code, message)
+        return cls(code, _sanitize_server_text(message))
 
 
 @dataclass
@@ -94,7 +118,7 @@ class LeaderResponse(Message):
         """
         node_id = decode_uint64(data)
         address, _ = decode_text(data[8:])
-        return cls(node_id, address)
+        return cls(node_id, _sanitize_server_text(address))
 
     @classmethod
     def decode_body_legacy(cls, data: bytes) -> "LeaderResponse":
@@ -104,7 +128,7 @@ class LeaderResponse(Message):
         Go reference: DecodeNodeLegacy in internal/protocol/message.go.
         """
         address, _ = decode_text(data)
-        return cls(node_id=0, address=address)
+        return cls(node_id=0, address=_sanitize_server_text(address))
 
 
 @dataclass
@@ -613,6 +637,7 @@ class ServersResponse(Message):
             node_id = decode_uint64(view[offset:])
             offset += 8
             address, consumed = decode_text(view[offset:])
+            address = _sanitize_server_text(address)
             offset += consumed
             raw_role = decode_uint64(view[offset:])
             offset += 8
