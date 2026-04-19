@@ -6,6 +6,7 @@ from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
+    _MAX_FAILURE_MESSAGE_SIZE,
     DbResponse,
     EmptyResponse,
     FailureResponse,
@@ -19,6 +20,7 @@ from dqlitewire.messages.responses import (
     StmtResponse,
     WelcomeResponse,
 )
+from dqlitewire.types import encode_text, encode_uint64
 
 
 class TestFailureResponse:
@@ -41,6 +43,31 @@ class TestFailureResponse:
         decoded = FailureResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.code == 0
         assert decoded.message == ""
+
+    def test_decode_rejects_oversize_message(self) -> None:
+        """A peer claiming a multi-megabyte error message can force a large
+        allocation and full-string scan through _sanitize_server_text. Cap
+        the decoded message at _MAX_FAILURE_MESSAGE_SIZE so the decoder
+        fails fast before the sanitize scan runs."""
+        oversize = "a" * (_MAX_FAILURE_MESSAGE_SIZE + 1)
+        body = encode_uint64(1) + encode_text(oversize)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            FailureResponse.decode_body(body)
+
+    def test_decode_accepts_message_at_cap(self) -> None:
+        """Exactly-cap message must still decode."""
+        at_cap = "a" * _MAX_FAILURE_MESSAGE_SIZE
+        body = encode_uint64(1) + encode_text(at_cap)
+        decoded = FailureResponse.decode_body(body)
+        assert decoded.code == 1
+        assert len(decoded.message) == _MAX_FAILURE_MESSAGE_SIZE
+
+    def test_encode_rejects_oversize_message(self) -> None:
+        """Encoder mirrors the decode cap so callers fail fast on an
+        accidentally-huge message string."""
+        msg = FailureResponse(code=1, message="a" * (_MAX_FAILURE_MESSAGE_SIZE + 1))
+        with pytest.raises(EncodeError, match="exceeds maximum"):
+            msg.encode_body()
 
 
 class TestLeaderResponse:

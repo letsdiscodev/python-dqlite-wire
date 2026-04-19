@@ -40,6 +40,13 @@ _MAX_COLUMN_COUNT = 10_000
 _MAX_FILE_COUNT = 100
 _MAX_NODE_COUNT = 10_000
 
+# Per-field cap on ``FailureResponse.message``. The frame-size cap
+# in ``buffer.py`` (64 MiB) bounds total bytes, but error messages in
+# practice are short (SQLite's own error strings are under ~200 chars).
+# A peer sending megabytes of text is malicious or broken; cap well
+# above any realistic message so legitimate cases are never clipped.
+_MAX_FAILURE_MESSAGE_SIZE = 64 * 1024
+
 # Sanitize server-supplied text destined for exception messages and
 # logs. The C server promises UTF-8 but makes no promise about terminal
 # escapes or log-injection characters: a malicious or compromised peer
@@ -84,12 +91,21 @@ class FailureResponse(Message):
     message: str
 
     def encode_body(self) -> bytes:
+        if len(self.message) > _MAX_FAILURE_MESSAGE_SIZE:
+            raise EncodeError(
+                f"Failure message length {len(self.message)} "
+                f"exceeds maximum {_MAX_FAILURE_MESSAGE_SIZE}"
+            )
         return encode_uint64(self.code) + encode_text(self.message)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         code = decode_uint64(data)
         message, _ = decode_text(data[8:])
+        if len(message) > _MAX_FAILURE_MESSAGE_SIZE:
+            raise DecodeError(
+                f"Failure message length {len(message)} exceeds maximum {_MAX_FAILURE_MESSAGE_SIZE}"
+            )
         return cls(code, _sanitize_server_text(message))
 
 
