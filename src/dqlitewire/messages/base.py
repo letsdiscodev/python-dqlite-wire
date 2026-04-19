@@ -47,6 +47,13 @@ class Header:
             size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
         except struct.error as e:
             raise DecodeError(f"Failed to decode header: {e}") from e
+        # Upstream C (message.h) reserves the trailing uint16 and every
+        # current server writes 0. Reject non-zero values so peer
+        # corruption or a future schema extension surfaces as a clean
+        # DecodeError instead of silently carrying bits we cannot
+        # re-emit. Matches LeaderRequest.decode_body's strict check.
+        if reserved != 0:
+            raise DecodeError(f"Header reserved field must be 0, got {reserved}")
         return cls(size_words, msg_type, schema, reserved)
 
     @property

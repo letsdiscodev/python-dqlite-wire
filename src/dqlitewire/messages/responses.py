@@ -143,7 +143,12 @@ class DbResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DbResponse":
+        if len(data) < 8:
+            raise DecodeError(f"DbResponse body must be 8 bytes, got {len(data)}")
         db_id = decode_uint32(data)
+        reserved = decode_uint32(data[4:])
+        if reserved != 0:
+            raise DecodeError(f"DbResponse reserved field must be 0, got {reserved}")
         return cls(db_id)
 
 
@@ -472,6 +477,11 @@ class EmptyResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "EmptyResponse":
+        if len(data) < 8:
+            raise DecodeError(f"EmptyResponse body must be 8 bytes, got {len(data)}")
+        reserved = decode_uint64(data)
+        if reserved != 0:
+            raise DecodeError(f"EmptyResponse reserved field must be 0, got {reserved}")
         return cls()
 
 

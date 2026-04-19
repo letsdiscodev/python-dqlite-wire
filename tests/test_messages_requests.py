@@ -50,6 +50,25 @@ class TestHeaderReservedField:
         header = Header.decode(msg.encode()[:HEADER_SIZE])
         assert header.reserved == 0
 
+    def test_decode_rejects_nonzero_reserved(self) -> None:
+        """Header.decode must reject non-zero reserved bytes.
+
+        The protocol spec pins the trailing uint16 at 0; a non-zero value
+        signals peer corruption, a buggy encoder, or a future schema
+        extension we do not understand. Reject it cleanly rather than
+        silently carrying it past a boundary that can never re-emit it.
+        """
+        import struct
+
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+
+        # size_words=1, msg_type=0x42 (arbitrary), schema=0, reserved=0xBEEF
+        encoded = struct.pack("<IBBH", 1, 0x42, 0, 0xBEEF)
+        with pytest.raises(DecodeError, match="reserved field must be 0"):
+            Header.decode(encoded)
+
 
 class TestLeaderRequest:
     def test_encode_has_body(self) -> None:
