@@ -8,6 +8,7 @@ from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
     _MAX_COLUMN_NAME_SIZE,
     _MAX_FAILURE_MESSAGE_SIZE,
+    _MAX_FILENAME_SIZE,
     DbResponse,
     EmptyResponse,
     FailureResponse,
@@ -1223,6 +1224,32 @@ class TestFilesResponse:
         body += b"\x00" * 100  # but only 100 bytes available
         with pytest.raises(DecodeError, match="truncated"):
             FilesResponse.decode_body(body)
+
+
+class TestFilesResponseFilenameSize:
+    """Per-filename length cap in FilesResponse decode.
+
+    The outer 64 MiB frame cap bounds total bytes, but a peer can still
+    pack a giant filename in a frame-legal FilesResponse. Cap each
+    filename at ``_MAX_FILENAME_SIZE`` (POSIX PATH_MAX convention).
+    """
+
+    def _build_body(self, name: str) -> bytes:
+        # Single entry with word-aligned content.
+        content = b"\x00" * 8
+        return encode_uint64(1) + encode_text(name) + encode_uint64(len(content)) + content
+
+    def test_decode_rejects_oversize_filename(self) -> None:
+        oversize = "a" * (_MAX_FILENAME_SIZE + 1)
+        body = self._build_body(oversize)
+        with pytest.raises(DecodeError, match="filename"):
+            FilesResponse.decode_body(body)
+
+    def test_decode_accepts_filename_at_cap(self) -> None:
+        at_cap = "a" * _MAX_FILENAME_SIZE
+        body = self._build_body(at_cap)
+        decoded = FilesResponse.decode_body(body)
+        assert at_cap in decoded.files
 
 
 class TestServersResponse:

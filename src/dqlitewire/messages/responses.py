@@ -53,6 +53,11 @@ _MAX_FAILURE_MESSAGE_SIZE = 64 * 1024
 # defense-in-depth policy as ``_MAX_FAILURE_MESSAGE_SIZE``.
 _MAX_COLUMN_NAME_SIZE = 4096
 
+# Per-filename cap on ``FilesResponse``. dqlite file entries are the
+# on-disk page-backed database files (``main``, ``wal``, etc.); POSIX
+# PATH_MAX is 4 KiB and mirrors the column-name cap.
+_MAX_FILENAME_SIZE = 4096
+
 # Sanitize server-supplied text destined for exception messages and
 # logs. The C server promises UTF-8 but makes no promise about terminal
 # escapes or log-injection characters: a malicious or compromised peer
@@ -590,6 +595,10 @@ class FilesResponse(Message):
             )
         for _ in range(count):
             name, consumed = decode_text(view[offset:])
+            if len(name) > _MAX_FILENAME_SIZE:
+                raise DecodeError(
+                    f"filename length {len(name)} exceeds maximum {_MAX_FILENAME_SIZE}"
+                )
             offset += consumed
             size = decode_uint64(view[offset:])
             offset += 8
