@@ -12,7 +12,7 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Create virtual environment and install dependencies
-uv sync --group dev
+uv sync --extra dev
 ```
 
 ## Development Tools
