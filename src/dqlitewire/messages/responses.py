@@ -7,6 +7,7 @@ from dqlitewire.constants import (
     ROW_DONE_MARKER,
     ROW_PART_MARKER,
     WORD_SIZE,
+    NodeRole,
     ResponseType,
     ValueType,
 )
@@ -559,7 +560,7 @@ class NodeInfo:
 
     node_id: int
     address: str
-    role: int
+    role: NodeRole
 
 
 @dataclass
@@ -603,8 +604,15 @@ class ServersResponse(Message):
             offset += 8
             address, consumed = decode_text(view[offset:])
             offset += consumed
-            role = decode_uint64(view[offset:])
+            raw_role = decode_uint64(view[offset:])
             offset += 8
+            try:
+                role = NodeRole(raw_role)
+            except ValueError as exc:
+                valid = sorted(r.value for r in NodeRole)
+                raise DecodeError(
+                    f"Invalid node role {raw_role} at offset {offset - 8}; expected one of {valid}"
+                ) from exc
             nodes.append(NodeInfo(node_id, address, role))
         return cls(nodes)
 

@@ -1221,6 +1221,53 @@ class TestServersResponse:
         with pytest.raises(DecodeError, match="Node count.*exceeds maximum"):
             ServersResponse.decode_body(body)
 
+    def test_decode_rejects_unknown_role(self) -> None:
+        """An unknown ``role`` value must raise DecodeError at the wire seam.
+
+        Upstream C (``src/roles.c``) only ever emits VOTER/STANDBY/SPARE
+        (0/1/2). A server that sends anything else is either buggy or
+        hostile; either way we refuse to build a NodeInfo with an
+        unvalidated enum value — the failure must surface at the wire
+        boundary, not silently propagate.
+        """
+        import pytest
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = (
+            encode_uint64(1)  # count = 1
+            + encode_uint64(7)  # node_id
+            + encode_text("n1:9001")
+            + encode_uint64(999)  # role = invalid
+        )
+        with pytest.raises(DecodeError, match="Invalid node role 999"):
+            ServersResponse.decode_body(body)
+
+    def test_roundtrip_preserves_noderole_type(self) -> None:
+        """Decoded role must be a NodeRole member, not a bare int."""
+        from dqlitewire.constants import NodeRole
+
+        nodes = [
+            NodeInfo(node_id=1, address="n1:9001", role=NodeRole.VOTER),
+            NodeInfo(node_id=2, address="n2:9002", role=NodeRole.STANDBY),
+        ]
+        encoded = ServersResponse(nodes=nodes).encode()
+        decoded = ServersResponse.decode_body(encoded[HEADER_SIZE:])
+        assert [n.role for n in decoded.nodes] == [NodeRole.VOTER, NodeRole.STANDBY]
+        assert all(isinstance(n.role, NodeRole) for n in decoded.nodes)
+
+    def test_int_equality_survives_enum_typing(self) -> None:
+        """Downstream code compares ``role == 0`` / ``== 1``; IntEnum
+        subclassing of int must keep those comparisons true even after
+        we tightened the type annotation.
+        """
+        from dqlitewire.constants import NodeRole
+
+        info = NodeInfo(node_id=1, address="n1:9001", role=NodeRole.VOTER)
+        assert info.role == 0
+        assert info.role == NodeRole.VOTER
+
 
 class TestMetadataResponse:
     def test_roundtrip(self) -> None:
