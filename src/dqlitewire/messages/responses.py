@@ -58,6 +58,14 @@ _MAX_COLUMN_NAME_SIZE = 4096
 # PATH_MAX is 4 KiB and mirrors the column-name cap.
 _MAX_FILENAME_SIZE = 4096
 
+# Per-address cap on ``LeaderResponse`` / ``ServersResponse`` (and their
+# legacy variants). Legitimate cluster addresses are small (hostname
+# + port, or IPv6 literal in brackets + port); RFC 1035 sets domain
+# names at ≤253 bytes and 256 leaves margin for the port. A multi-MB
+# "address" is malicious or broken and would amplify through log /
+# exception messages even after ``_sanitize_server_text``.
+_MAX_ADDRESS_SIZE = 256
+
 # Sanitize server-supplied text destined for exception messages and
 # logs. The C server promises UTF-8 but makes no promise about terminal
 # escapes or log-injection characters: a malicious or compromised peer
@@ -145,6 +153,10 @@ class LeaderResponse(Message):
         """
         node_id = decode_uint64(data)
         address, _ = decode_text(data[8:])
+        if len(address) > _MAX_ADDRESS_SIZE:
+            raise DecodeError(
+                f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+            )
         return cls(node_id, _sanitize_server_text(address))
 
     @classmethod
@@ -155,6 +167,10 @@ class LeaderResponse(Message):
         Go reference: DecodeNodeLegacy in internal/protocol/message.go.
         """
         address, _ = decode_text(data)
+        if len(address) > _MAX_ADDRESS_SIZE:
+            raise DecodeError(
+                f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+            )
         return cls(node_id=0, address=_sanitize_server_text(address))
 
 
@@ -672,6 +688,10 @@ class ServersResponse(Message):
             node_id = decode_uint64(view[offset:])
             offset += 8
             address, consumed = decode_text(view[offset:])
+            if len(address) > _MAX_ADDRESS_SIZE:
+                raise DecodeError(
+                    f"server address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+                )
             address = _sanitize_server_text(address)
             offset += consumed
             raw_role = decode_uint64(view[offset:])

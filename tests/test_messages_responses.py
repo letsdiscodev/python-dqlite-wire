@@ -6,6 +6,7 @@ from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
+    _MAX_ADDRESS_SIZE,
     _MAX_COLUMN_NAME_SIZE,
     _MAX_FAILURE_MESSAGE_SIZE,
     _MAX_FILENAME_SIZE,
@@ -99,6 +100,34 @@ class TestLeaderResponse:
         decoded = LeaderResponse.decode_body_legacy(legacy_body)
         assert decoded.node_id == 0
         assert decoded.address == "192.168.1.1:9001"
+
+
+class TestLeaderResponseAddressSize:
+    """Per-address length cap applies to modern and legacy decoders.
+
+    Legitimate addresses are short (hostname + port, or IPv6 literal
+    in brackets + port). Cap at ``_MAX_ADDRESS_SIZE`` so an oversize
+    peer-supplied string cannot amplify through logs / exception
+    messages even after sanitization.
+    """
+
+    def test_decode_rejects_oversize_address(self) -> None:
+        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        body = encode_uint64(1) + encode_text(oversize)
+        with pytest.raises(DecodeError, match="leader address"):
+            LeaderResponse.decode_body(body)
+
+    def test_decode_accepts_address_at_cap(self) -> None:
+        at_cap = "a" * _MAX_ADDRESS_SIZE
+        body = encode_uint64(1) + encode_text(at_cap)
+        decoded = LeaderResponse.decode_body(body)
+        assert decoded.address == at_cap
+
+    def test_decode_body_legacy_rejects_oversize_address(self) -> None:
+        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        body = encode_text(oversize)
+        with pytest.raises(DecodeError, match="leader address"):
+            LeaderResponse.decode_body_legacy(body)
 
 
 class TestWelcomeResponse:
@@ -1224,6 +1253,29 @@ class TestFilesResponse:
         body += b"\x00" * 100  # but only 100 bytes available
         with pytest.raises(DecodeError, match="truncated"):
             FilesResponse.decode_body(body)
+
+
+class TestServersResponseAddressSize:
+    """Per-node address length cap in ServersResponse decode."""
+
+    def _build_body(self, address: str) -> bytes:
+        # One node: uint64 id, text address, uint64 role.
+        return (
+            encode_uint64(1)
+            + encode_uint64(1)
+            + encode_text(address)
+            + encode_uint64(2)  # NodeRole.VOTER
+        )
+
+    def test_decode_rejects_oversize_address(self) -> None:
+        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        with pytest.raises(DecodeError, match="server address"):
+            ServersResponse.decode_body(self._build_body(oversize))
+
+    def test_decode_accepts_address_at_cap(self) -> None:
+        at_cap = "a" * _MAX_ADDRESS_SIZE
+        decoded = ServersResponse.decode_body(self._build_body(at_cap))
+        assert decoded.nodes[0].address == at_cap
 
 
 class TestFilesResponseFilenameSize:
