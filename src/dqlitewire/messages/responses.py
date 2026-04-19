@@ -47,6 +47,12 @@ _MAX_NODE_COUNT = 10_000
 # above any realistic message so legitimate cases are never clipped.
 _MAX_FAILURE_MESSAGE_SIZE = 64 * 1024
 
+# Per-column-name cap on ``RowsResponse``. SQLite column-name identifiers
+# are short by any realistic standard; 4 KiB is orders of magnitude above
+# legitimate use and well below any memory-exhaustion concern. Same
+# defense-in-depth policy as ``_MAX_FAILURE_MESSAGE_SIZE``.
+_MAX_COLUMN_NAME_SIZE = 4096
+
 # Sanitize server-supplied text destined for exception messages and
 # logs. The C server promises UTF-8 but makes no promise about terminal
 # escapes or log-injection characters: a malicious or compromised peer
@@ -424,6 +430,10 @@ class RowsResponse(Message):
         column_names: list[str] = []
         for _ in range(column_count):
             name, consumed = decode_text(view[offset:])
+            if len(name) > _MAX_COLUMN_NAME_SIZE:
+                raise DecodeError(
+                    f"column name length {len(name)} exceeds maximum {_MAX_COLUMN_NAME_SIZE}"
+                )
             column_names.append(name)
             offset += consumed
 

@@ -6,6 +6,7 @@ from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
+    _MAX_COLUMN_NAME_SIZE,
     _MAX_FAILURE_MESSAGE_SIZE,
     DbResponse,
     EmptyResponse,
@@ -766,6 +767,35 @@ class TestRowsResponseEncodeValidation:
         )
         with pytest.raises(EncodeError, match=r"zero columns.*1 empty row"):
             resp.encode_body()
+
+
+class TestRowsResponseColumnNameSize:
+    """Per-column-name length cap in RowsResponse decode.
+
+    The outer 64 MiB frame cap is the ultimate backstop, but a peer can
+    still pack a single giant column name inside a frame-legal response
+    and force the client to allocate it as a Python string. Cap each
+    column name at ``_MAX_COLUMN_NAME_SIZE`` (same policy as
+    ``_MAX_FAILURE_MESSAGE_SIZE``).
+    """
+
+    def _build_body(self, name: str) -> bytes:
+        # One-column RowsResponse, no rows, DONE marker.
+        from dqlitewire.constants import ROW_DONE_MARKER
+
+        return encode_uint64(1) + encode_text(name) + encode_uint64(ROW_DONE_MARKER)
+
+    def test_decode_rejects_oversize_column_name(self) -> None:
+        oversize = "a" * (_MAX_COLUMN_NAME_SIZE + 1)
+        body = self._build_body(oversize)
+        with pytest.raises(DecodeError, match="column name"):
+            RowsResponse.decode_body(body)
+
+    def test_decode_accepts_column_name_at_cap(self) -> None:
+        at_cap = "a" * _MAX_COLUMN_NAME_SIZE
+        body = self._build_body(at_cap)
+        decoded = RowsResponse.decode_body(body)
+        assert decoded.column_names == [at_cap]
 
 
 class TestRowsResponseNullInTypedColumn:
