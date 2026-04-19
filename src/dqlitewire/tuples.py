@@ -185,8 +185,8 @@ def decode_params_tuple(
         raw_type = data[count_size + i]
         try:
             types.append(ValueType(raw_type))
-        except ValueError:
-            raise DecodeError(f"Invalid value type code {raw_type} at param index {i}") from None
+        except ValueError as e:
+            raise DecodeError(f"Invalid value type code {raw_type} at param index {i}") from e
     offset = padded_header_len
 
     # Read values
@@ -267,8 +267,8 @@ def decode_row_header(
         nibble = data[byte_idx] & 0x0F if i % 2 == 0 else (data[byte_idx] >> 4) & 0x0F
         try:
             types.append(ValueType(nibble))
-        except ValueError:
-            raise DecodeError(f"Invalid value type code {nibble} at column index {i}") from None
+        except ValueError as e:
+            raise DecodeError(f"Invalid value type code {nibble} at column index {i}") from e
 
     return types, header_size
 

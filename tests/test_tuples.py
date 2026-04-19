@@ -409,8 +409,11 @@ class TestRowHeader:
 
         # Byte 0x00 means both nibbles are 0, which is not a valid ValueType
         data = b"\x00" * 8
-        with pytest.raises(DecodeError, match="Invalid value type"):
+        with pytest.raises(DecodeError, match="Invalid value type") as exc_info:
             decode_row_header(data, 1)
+        # Chain preserves the underlying ValueError so log backends show
+        # "the above exception was the direct cause" with the enum name.
+        assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 class TestParamsTupleInvalidType:
@@ -422,8 +425,11 @@ class TestParamsTupleInvalidType:
 
         # count=1, type=0 (invalid), padding to 8 bytes
         data = b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"\x00" * 8
-        with pytest.raises(DecodeError, match="Invalid value type"):
+        with pytest.raises(DecodeError, match="Invalid value type") as exc_info:
             decode_params_tuple(data)
+        # Chain preserves the underlying ValueError so log backends show
+        # "the above exception was the direct cause" with the enum name.
+        assert isinstance(exc_info.value.__cause__, ValueError)
 
 
 class TestParamsTupleSchemaValidation:
