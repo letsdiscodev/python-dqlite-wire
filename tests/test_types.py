@@ -435,6 +435,23 @@ class TestValue:
         assert value is True
         assert consumed == 8
 
+    def test_decode_boolean_zero(self) -> None:
+        value, consumed = decode_value(encode_int64(0), ValueType.BOOLEAN)
+        assert value is False
+        assert consumed == 8
+
+    def test_decode_boolean_rejects_non_bit(self) -> None:
+        """Decoder is symmetric with encoder: only {0, 1} are valid BOOLEAN
+        wire values. Silently coercing any uint64 via ``bool(...)`` would
+        make round-trips lossy (e.g., uint64=2 → True → re-encodes as 1)
+        and would mask protocol violations that we want to surface.
+        """
+        from dqlitewire.exceptions import DecodeError
+
+        for bad in (2, 3, 255, 2**63 - 1):
+            with pytest.raises(DecodeError, match="BOOLEAN"):
+                decode_value(encode_int64(bad), ValueType.BOOLEAN)
+
     def test_encode_decode_iso8601_roundtrips_as_text(self) -> None:
         """ISO8601 is stored as text at the wire level — datetime conversion
         lives in the driver/DBAPI layer, matching C and Go's split.
