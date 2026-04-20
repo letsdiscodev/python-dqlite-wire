@@ -69,6 +69,7 @@ from dqlitewire.exceptions import (
 
 __all__ = [
     "ContinuationError",
+    "__version__",
     "DecodeError",
     "EncodeError",
     "HandshakeError",
