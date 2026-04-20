@@ -15,6 +15,7 @@ from dqlitewire.constants import (
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import (
+    _MAX_PARAM_COUNT,
     _ROW_DONE_MARKER,
     _ROW_PART_MARKER,
     RowMarker,
@@ -267,6 +268,15 @@ class StmtResponse(Message):
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
+        # Parity with the encoder cap in tuples.py: a server declaring a
+        # prepared-statement parameter count above _MAX_PARAM_COUNT is
+        # either malicious or corrupt. Other count-bearing decode paths
+        # (_MAX_COLUMN_COUNT, _MAX_FILE_COUNT, _MAX_NODE_COUNT) already
+        # enforce their own caps; this closes the matching gap.
+        if num_params > _MAX_PARAM_COUNT:
+            raise DecodeError(
+                f"StmtResponse num_params {num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
+            )
         tail_offset = decode_uint64(data[16:]) if schema >= 1 else None
         return cls(db_id, stmt_id, num_params, tail_offset)
 

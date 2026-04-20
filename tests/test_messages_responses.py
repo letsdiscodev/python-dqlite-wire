@@ -221,6 +221,23 @@ class TestStmtResponse:
         with pytest.raises(DecodeError, match="requires at least 24 bytes"):
             StmtResponse.decode_body(v0_body, schema=1)
 
+    def test_rejects_oversized_num_params(self) -> None:
+        """Defense-in-depth: cap server-declared num_params to match the
+        encoder-side _MAX_PARAM_COUNT. A malicious or corrupt server
+        returning num_params=2**63-1 produces a clean DecodeError, not
+        an unchecked value that a cautious caller could trust.
+        """
+        # Build a schema=0 body with num_params = 2**63 - 1.
+        import struct
+
+        body = (
+            struct.pack("<I", 1)  # db_id
+            + struct.pack("<I", 2)  # stmt_id
+            + struct.pack("<Q", 2**63 - 1)  # num_params (bogus)
+        )
+        with pytest.raises(DecodeError, match="num_params"):
+            StmtResponse.decode_body(body, schema=0)
+
 
 class TestResultResponse:
     def test_roundtrip(self) -> None:
