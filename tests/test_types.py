@@ -84,6 +84,35 @@ class TestInt64:
         with pytest.raises(EncodeError):
             encode_int64(-(2**63) - 1)
 
+    def test_encode_overflow_error_message_is_bounded(self) -> None:
+        """A pathologically large int must not produce a multi-kB error
+        message. Parity with _truncate_error in client.cluster and the
+        failure-response cap in responses.py: attacker-or-bug-controlled
+        input should surface a bounded diagnostic, not a kilobyte of
+        digits.
+        """
+        huge = 10**500
+        with pytest.raises(EncodeError) as exc_info:
+            encode_int64(huge)
+        assert len(str(exc_info.value)) < 256
+        assert "out of range for int64" in str(exc_info.value)
+
+
+class TestOverflowMessageBounds:
+    """Cross-encoder parity for bounded overflow error messages."""
+
+    def test_uint64_overflow_message_bounded(self) -> None:
+        with pytest.raises(EncodeError) as exc_info:
+            encode_uint64(10**500)
+        assert len(str(exc_info.value)) < 256
+        assert "out of range for uint64" in str(exc_info.value)
+
+    def test_uint32_overflow_message_bounded(self) -> None:
+        with pytest.raises(EncodeError) as exc_info:
+            encode_uint32(10**500)
+        assert len(str(exc_info.value)) < 256
+        assert "out of range for uint32" in str(exc_info.value)
+
 
 class TestUint32:
     def test_encode_zero(self) -> None:

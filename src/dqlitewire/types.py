@@ -26,11 +26,26 @@ from dqlitewire.exceptions import DecodeError, EncodeError
 # ``_MAX_FILE_COUNT`` / ``_MAX_NODE_COUNT`` in spirit.
 _MAX_BLOB_SIZE = 16 * 1024 * 1024  # 16 MiB
 
+# Cap on the stringified representation of an out-of-range integer in
+# EncodeError messages. A hostile or buggy caller passing ``10 ** 500``
+# would otherwise bake a kilobyte of digits into the error text (and
+# every log line / traceback that quotes it). Parity with
+# ``_truncate_error`` in the client layer and ``_MAX_FAILURE_MESSAGE_SIZE``
+# on the decode side.
+_MAX_VALUE_REPR = 64
+
+
+def _bounded_repr(value: int) -> str:
+    s = str(value)
+    if len(s) <= _MAX_VALUE_REPR:
+        return s
+    return f"{s[:_MAX_VALUE_REPR]}... [{len(s)} digits]"
+
 
 def encode_uint64(value: int) -> bytes:
     """Encode an unsigned 64-bit integer (little-endian)."""
     if not 0 <= value < 2**64:
-        raise EncodeError(f"Value {value} out of range for uint64")
+        raise EncodeError(f"Value {_bounded_repr(value)} out of range for uint64")
     return struct.pack("<Q", value)
 
 
@@ -49,7 +64,7 @@ def decode_uint64(data: bytes | memoryview) -> int:
 def encode_int64(value: int) -> bytes:
     """Encode a signed 64-bit integer (little-endian)."""
     if not -(2**63) <= value < 2**63:
-        raise EncodeError(f"Value {value} out of range for int64")
+        raise EncodeError(f"Value {_bounded_repr(value)} out of range for int64")
     return struct.pack("<q", value)
 
 
@@ -67,7 +82,7 @@ def decode_int64(data: bytes | memoryview) -> int:
 def encode_uint32(value: int) -> bytes:
     """Encode an unsigned 32-bit integer (little-endian)."""
     if not 0 <= value < 2**32:
-        raise EncodeError(f"Value {value} out of range for uint32")
+        raise EncodeError(f"Value {_bounded_repr(value)} out of range for uint32")
     return struct.pack("<I", value)
 
 
