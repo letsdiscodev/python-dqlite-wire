@@ -24,7 +24,10 @@ from dqlitewire.messages import (
     ExecRequest,
     ExecSqlRequest,
     FailureResponse,
+    FilesResponse,
     FinalizeRequest,
+    HeartbeatRequest,
+    InterruptRequest,
     LeaderRequest,
     LeaderResponse,
     MetadataResponse,
@@ -117,6 +120,36 @@ class TestGoldenRequests:
         assert isinstance(msg, FinalizeRequest)
         assert msg.db_id == 1
         assert msg.stmt_id == 2
+
+    def test_heartbeat_request(self) -> None:
+        """HeartbeatRequest(timestamp=1_700_000_000): type=2, body=uint64.
+
+        The C server currently does not dispatch HEARTBEAT, but the wire
+        layout is still shipped as part of the public message surface;
+        pin it here so an encoder refactor cannot drift the byte shape
+        symmetrically with the decoder.
+        """
+        ts = 1_700_000_000
+        expected = _header(1, 2) + _u64(ts)
+        assert encode_message(HeartbeatRequest(timestamp=ts)) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, HeartbeatRequest)
+        assert msg.timestamp == ts
+
+    def test_interrupt_request(self) -> None:
+        """InterruptRequest(db_id=0x1234567890ABCDEF): type=10.
+
+        Body: uint64(db_id). Single-field message, easy to misencode
+        LE-vs-BE on a refactor; golden pin catches it immediately.
+        """
+        db_id = 0x1234567890ABCDEF
+        expected = _header(1, 10) + _u64(db_id)
+        assert encode_message(InterruptRequest(db_id=db_id)) == expected
+
+        msg = decode_message(expected, is_request=True)
+        assert isinstance(msg, InterruptRequest)
+        assert msg.db_id == db_id
 
     def test_exec_request_with_params(self) -> None:
         """ExecRequest(db_id=1, stmt_id=2, params=[42, "hello"]): type=5, schema=0.
@@ -266,6 +299,36 @@ class TestGoldenResponses:
         body = msg.encode_body()
         # Last 8 bytes should be the PART marker
         assert body[-8:] == part_marker
+
+    def test_files_response(self) -> None:
+        """FilesResponse with two files: type=9.
+
+        Body layout: uint64(count), then for each file
+          text(name)    — null-terminated, padded to 8-byte boundary
+          uint64(size)  — must be 8-byte aligned (no per-file padding)
+          raw content   — ``size`` bytes, 8-byte aligned
+
+        File 1: name="db" → b"db\\0\\0\\0\\0\\0\\0" (8 bytes), 8 bytes of content.
+        File 2: name="main.db" → b"main.db\\0" (exact word), 16 bytes of content.
+
+        Total body = 8 (count) + 8+8+8 (f1) + 8+8+16 (f2) = 64 bytes = 8 words.
+        """
+        count = _u64(2)
+        f1_name = _text("db")  # 8 bytes
+        f1_size = _u64(8)
+        f1_content = b"pageonep"  # exactly 8 bytes
+        f2_name = _text("main.db")  # 8 bytes
+        f2_size = _u64(16)
+        f2_content = b"pageone_pagetwo_"  # exactly 16 bytes
+        expected_body = count + f1_name + f1_size + f1_content + f2_name + f2_size + f2_content
+        expected = _header(len(expected_body) // 8, 9) + expected_body
+
+        msg = FilesResponse(files={"db": f1_content, "main.db": f2_content})
+        assert encode_message(msg) == expected
+
+        decoded = decode_message(expected, is_request=False)
+        assert isinstance(decoded, FilesResponse)
+        assert decoded.files == {"db": f1_content, "main.db": f2_content}
 
 
 class TestGoldenHandshake:
