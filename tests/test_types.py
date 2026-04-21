@@ -701,6 +701,21 @@ class TestValue:
         decoded, _ = decode_value(encoded, ValueType.BLOB)
         assert decoded == b"\x03\x04"
 
+    def test_encode_value_infers_blob_from_bytearray(self) -> None:
+        """Inference path must accept every bytes-like the explicit BLOB
+        branch accepts, otherwise zero-copy / mutation-built payloads
+        hit EncodeError on pure inference paths."""
+        encoded, vtype = encode_value(bytearray(b"\x01\x02\x03"))
+        assert vtype == ValueType.BLOB
+        decoded, _ = decode_value(encoded, ValueType.BLOB)
+        assert decoded == b"\x01\x02\x03"
+
+    def test_encode_value_infers_blob_from_memoryview(self) -> None:
+        encoded, vtype = encode_value(memoryview(b"\x04\x05\x06\x07"))
+        assert vtype == ValueType.BLOB
+        decoded, _ = decode_value(encoded, ValueType.BLOB)
+        assert decoded == b"\x04\x05\x06\x07"
+
     def test_decode_int64_short_data(self) -> None:
         with pytest.raises(DecodeError):
             decode_int64(b"\x00" * 7)
@@ -823,3 +838,66 @@ class TestEncodeValueUnsupportedTypes:
 
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
             encode_value(OnlyIndex())
+
+
+class TestWireTypeAliases:
+    """Pin the public WireInput / WireValue type aliases so an
+    accidental widening to ``Any`` or narrowing that drops a supported
+    runtime type is caught by the test suite.
+    """
+
+    def test_wire_input_matches_runtime_accepted_types(self) -> None:
+        """WireInput is the documented set of types ``encode_value``
+        accepts. Drift it and a downstream caller would believe their
+        bound parameter is acceptable when it isn't (or vice-versa).
+        """
+        import typing
+
+        from dqlitewire.types import WireInput
+
+        # PEP 695 ``type X = Union`` produces a TypeAliasType; the
+        # underlying union is reachable via ``__value__``.
+        expected_members = {
+            bool,
+            int,
+            float,
+            str,
+            bytes,
+            bytearray,
+            memoryview,
+            type(None),
+        }
+        assert set(typing.get_args(WireInput.__value__)) == expected_members
+
+    def test_encode_value_parameter_is_wire_input(self) -> None:
+        import typing
+
+        from dqlitewire.types import WireInput, encode_value
+
+        hints = typing.get_type_hints(encode_value)
+        assert hints["value"] is WireInput
+
+    def test_wire_value_matches_runtime_decoded_types(self) -> None:
+        """WireValue is the union of possible first-element returns of
+        ``decode_value``. The decoder never produces bytearray/memoryview
+        (it always returns ``bytes``), so this alias is narrower than
+        WireInput.
+        """
+        import typing
+
+        from dqlitewire.types import WireValue
+
+        expected_members = {bool, int, float, str, bytes, type(None)}
+        assert set(typing.get_args(WireValue.__value__)) == expected_members
+
+    def test_decode_value_return_is_wire_value(self) -> None:
+        import typing
+
+        from dqlitewire.types import WireValue, decode_value
+
+        hints = typing.get_type_hints(decode_value)
+        # Return is tuple[WireValue, int] — verify the first arg is
+        # exactly the alias (identity), not a structural copy.
+        return_args = typing.get_args(hints["return"])
+        assert return_args[0] is WireValue
+        assert return_args[1] is int

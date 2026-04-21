@@ -11,10 +11,23 @@ by Go's ``database/sql`` driver.
 """
 
 import struct
-from typing import Any
 
 from dqlitewire.constants import WORD_SIZE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
+
+# Exact set of Python types ``encode_value`` accepts. Callers see a
+# type-checker error if they pass something else, instead of a runtime
+# EncodeError at the first wire round-trip. ``bytes``-like siblings
+# (``bytearray``, ``memoryview``) are accepted because the BLOB encoder
+# normalises them through ``bytes(value)``; the inference path maps
+# them to ValueType.BLOB for the same reason stdlib ``sqlite3`` does.
+type WireInput = bool | int | float | str | bytes | bytearray | memoryview | None
+
+# Exact set of Python types ``decode_value`` may return (first element
+# of the ``(value, consumed)`` tuple). Narrower than ``Any`` — wire
+# values are always one of these primitives, and the driver layer
+# widens to ``Any`` only at the PEP 249 row-tuple boundary.
+type WireValue = bool | int | float | str | bytes | None
 
 # Per-BLOB byte cap. The overall frame-size cap in ``buffer.py`` (64 MiB)
 # already bounds any single message, but a hostile or buggy peer can
@@ -258,7 +271,7 @@ def decode_blob(data: bytes | memoryview) -> tuple[bytes, int]:
     return bytes(data[8 : 8 + length]), total_size
 
 
-def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes, ValueType]:
+def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple[bytes, ValueType]:
     """Encode a Python value to wire format.
 
     If value_type is not provided, it's inferred from the Python type.
@@ -281,14 +294,19 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
             value_type = ValueType.FLOAT
         elif isinstance(value, str):
             value_type = ValueType.TEXT
-        elif isinstance(value, bytes):
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            # Parity with the explicit BLOB branch and with stdlib
+            # ``sqlite3``: all three bytes-like types infer to BLOB.
+            # Callers building payloads via mutation (bytearray) or
+            # zero-copy slicing (memoryview) no longer need to wrap
+            # values in ``bytes(...)`` before passing them here.
             value_type = ValueType.BLOB
         else:
             raise EncodeError(
                 f"Cannot infer wire type for value of type {type(value).__name__!r}. "
-                f"The wire codec only accepts bool, int, float, str, bytes, or None. "
-                f"Callers passing datetime/date/etc. must convert to str (for ISO8601) "
-                f"or int (for UNIXTIME) at the driver layer."
+                f"The wire codec only accepts bool, int, float, str, bytes-like, "
+                f"or None. Callers passing datetime/date/etc. must convert to str "
+                f"(for ISO8601) or int (for UNIXTIME) at the driver layer."
             )
 
     if value_type == ValueType.BOOLEAN:
@@ -351,7 +369,7 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
         raise EncodeError(f"Unknown value type: {value_type}")
 
 
-def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[Any, int]:
+def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireValue, int]:
     """Decode a value from wire format.
 
     Returns (value, bytes_consumed).
