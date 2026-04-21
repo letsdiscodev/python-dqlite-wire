@@ -77,6 +77,8 @@ class ClientRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClientRequest":
+        if len(data) != 8:
+            raise DecodeError(f"ClientRequest body must be 8 bytes, got {len(data)}")
         client_id = decode_uint64(data)
         return cls(client_id)
 
@@ -108,6 +110,8 @@ class HeartbeatRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "HeartbeatRequest":
+        if len(data) != 8:
+            raise DecodeError(f"HeartbeatRequest body must be 8 bytes, got {len(data)}")
         timestamp = decode_uint64(data)
         return cls(timestamp)
 
@@ -145,7 +149,10 @@ class OpenRequest(Message):
         name, offset = decode_text(data)
         flags = decode_uint64(data[offset:])
         offset += 8
-        vfs, _ = decode_text(data[offset:])
+        vfs, consumed = decode_text(data[offset:])
+        offset += consumed
+        if offset != len(data):
+            raise DecodeError(f"OpenRequest has {len(data) - offset} trailing bytes")
         return cls(name, flags, vfs)
 
 
@@ -181,7 +188,10 @@ class PrepareRequest(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
         db_id = decode_uint64(data)
-        sql, _ = decode_text(data[8:])
+        sql, consumed = decode_text(data[8:])
+        offset = 8 + consumed
+        if offset != len(data):
+            raise DecodeError(f"PrepareRequest has {len(data) - offset} trailing bytes")
         return cls(db_id, sql, schema=schema)
 
 
@@ -224,7 +234,10 @@ class ExecRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecRequest":
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
+        params, consumed = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
+        offset = 8 + consumed
+        if offset != len(data):
+            raise DecodeError(f"ExecRequest has {len(data) - offset} trailing bytes")
         return cls(db_id, stmt_id, params, _decoded_schema=schema)
 
 
@@ -262,7 +275,10 @@ class QueryRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "QueryRequest":
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
-        params, _ = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
+        params, consumed = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
+        offset = 8 + consumed
+        if offset != len(data):
+            raise DecodeError(f"QueryRequest has {len(data) - offset} trailing bytes")
         return cls(db_id, stmt_id, params, _decoded_schema=schema)
 
 
@@ -287,6 +303,8 @@ class FinalizeRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FinalizeRequest":
+        if len(data) != 8:
+            raise DecodeError(f"FinalizeRequest body must be 8 bytes, got {len(data)}")
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         return cls(db_id, stmt_id)
@@ -327,7 +345,10 @@ class ExecSqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
+        params, consumed = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
+        offset += consumed
+        if offset != len(data):
+            raise DecodeError(f"ExecSqlRequest has {len(data) - offset} trailing bytes")
         return cls(db_id, sql, params, _decoded_schema=schema)
 
 
@@ -366,7 +387,10 @@ class QuerySqlRequest(Message):
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
-        params, _ = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
+        params, consumed = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
+        offset += consumed
+        if offset != len(data):
+            raise DecodeError(f"QuerySqlRequest has {len(data) - offset} trailing bytes")
         return cls(db_id, sql, params, _decoded_schema=schema)
 
 
@@ -389,6 +413,8 @@ class InterruptRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "InterruptRequest":
+        if len(data) != 8:
+            raise DecodeError(f"InterruptRequest body must be 8 bytes, got {len(data)}")
         db_id = decode_uint64(data)
         return cls(db_id)
 
@@ -419,7 +445,10 @@ class ConnectRequest(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ConnectRequest":
         node_id = decode_uint64(data)
-        address, _ = decode_text(data[8:])
+        address, consumed = decode_text(data[8:])
+        offset = 8 + consumed
+        if offset != len(data):
+            raise DecodeError(f"ConnectRequest has {len(data) - offset} trailing bytes")
         return cls(node_id, address)
 
 
@@ -444,7 +473,10 @@ class AddRequest(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "AddRequest":
         node_id = decode_uint64(data)
-        address, _ = decode_text(data[8:])
+        address, consumed = decode_text(data[8:])
+        offset = 8 + consumed
+        if offset != len(data):
+            raise DecodeError(f"AddRequest has {len(data) - offset} trailing bytes")
         return cls(node_id, address)
 
 
@@ -485,11 +517,19 @@ class AssignRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "AssignRequest":
-        node_id = decode_uint64(data)
-        role: int | None = None
-        if len(data) >= 16:
+        # Upstream emits bodies of exactly 8 (PROMOTE) or 16 (ASSIGN)
+        # bytes. Reject anything else rather than silently dropping
+        # trailing bytes — parity with the C cursor-cap semantics.
+        if len(data) == 8:
+            node_id = decode_uint64(data)
+            return cls(node_id, None)
+        if len(data) == 16:
+            node_id = decode_uint64(data)
             role = decode_uint64(data[8:])
-        return cls(node_id, role)
+            return cls(node_id, role)
+        raise DecodeError(
+            f"AssignRequest body must be 8 (PROMOTE) or 16 (ASSIGN) bytes, got {len(data)}"
+        )
 
 
 @dataclass
@@ -511,6 +551,8 @@ class RemoveRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "RemoveRequest":
+        if len(data) != 8:
+            raise DecodeError(f"RemoveRequest body must be 8 bytes, got {len(data)}")
         node_id = decode_uint64(data)
         return cls(node_id)
 
@@ -531,7 +573,9 @@ class DumpRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
-        name, _ = decode_text(data)
+        name, consumed = decode_text(data)
+        if consumed != len(data):
+            raise DecodeError(f"DumpRequest has {len(data) - consumed} trailing bytes")
         return cls(name)
 
 
@@ -566,6 +610,8 @@ class ClusterRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
+        if len(data) != 8:
+            raise DecodeError(f"ClusterRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
         if format_val == 0:
             raise DecodeError(
@@ -595,6 +641,8 @@ class TransferRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "TransferRequest":
+        if len(data) != 8:
+            raise DecodeError(f"TransferRequest body must be 8 bytes, got {len(data)}")
         target_node_id = decode_uint64(data)
         return cls(target_node_id)
 
@@ -604,6 +652,11 @@ class DescribeRequest(Message):
     """Request database schema description.
 
     Body: uint64 format
+
+    Upstream defines only ``DQLITE_REQUEST_DESCRIBE_FORMAT_V0 = 0``
+    (``gateway.c`` rejects anything else with ``SQLITE_PROTOCOL``).
+    Reject unknown formats client-side so callers get a local
+    ``ValueError`` instead of a confusing server failure.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.DESCRIBE
@@ -612,13 +665,22 @@ class DescribeRequest(Message):
 
     def __post_init__(self) -> None:
         _check_uint64("format", self.format)
+        if self.format != 0:
+            raise ValueError(
+                f"DescribeRequest format must be 0 (V0); upstream rejects "
+                f"anything else with SQLITE_PROTOCOL. Got {self.format}."
+            )
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DescribeRequest":
+        if len(data) != 8:
+            raise DecodeError(f"DescribeRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
+        if format_val != 0:
+            raise DecodeError(f"DescribeRequest format must be 0 (V0); got {format_val}")
         return cls(format_val)
 
 
@@ -641,5 +703,7 @@ class WeightRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "WeightRequest":
+        if len(data) != 8:
+            raise DecodeError(f"WeightRequest body must be 8 bytes, got {len(data)}")
         weight = decode_uint64(data)
         return cls(weight)

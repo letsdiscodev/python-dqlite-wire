@@ -495,6 +495,15 @@ class RowsResponse(Message):
                 raise DecodeError(
                     f"Expected DONE or PART marker for zero-column result, got 0x{marker.hex()}"
                 )
+            # The zero-column fast path is Python-specific (upstream C never
+            # emits zero-column result sets); enforce buffer exhaustion to
+            # match the strict-decode pattern used by every sibling decoder.
+            end = offset + WORD_SIZE
+            if end != len(view):
+                raise DecodeError(
+                    f"RowsResponse zero-column body has {len(view) - end} "
+                    "trailing bytes after DONE/PART marker"
+                )
             return cls(
                 column_names=[],
                 column_types=[],
@@ -648,6 +657,14 @@ class FilesResponse(Message):
             # No padding after content — matches Go's byte-by-byte read.
             offset += size
             files[name] = content
+        # Upstream client enforces `cursor.cap == fs[i].size` at each
+        # iteration; on the last file that amounts to "body must be
+        # exhausted." Mirror the strictness so corrupt / malicious
+        # trailing bytes cannot vanish silently.
+        if offset != len(view):
+            raise DecodeError(
+                f"FilesResponse has {len(view) - offset} trailing bytes after last file"
+            )
         return cls(files)
 
 
