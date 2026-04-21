@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from dqlitewire.exceptions import DecodeError
-from dqlitewire.messages.responses import DbResponse, EmptyResponse, ResultResponse
+from dqlitewire.messages.responses import DbResponse, EmptyResponse, ResultResponse, StmtResponse
 
 
 class TestEmptyResponseStrictLength:
@@ -78,3 +78,61 @@ class TestResultResponseStrictLength:
     def test_trailing_bytes_rejected(self) -> None:
         with pytest.raises(DecodeError, match="ResultResponse body must be exactly 16 bytes"):
             ResultResponse.decode_body(b"\x00" * 17)
+
+
+class TestStmtResponseStrictLength:
+    """StmtResponse carries db_id + stmt_id + num_params (+ optional
+    tail_offset for schema>=1). Body is exactly 16 bytes (schema 0) or
+    24 bytes (schema 1). Trailing bytes had been silently accepted;
+    sibling responses reject them.
+    """
+
+    @staticmethod
+    def _body_schema0(db_id: int = 1, stmt_id: int = 42, num_params: int = 3) -> bytes:
+        return (
+            db_id.to_bytes(4, "little")
+            + stmt_id.to_bytes(4, "little")
+            + num_params.to_bytes(8, "little")
+        )
+
+    @staticmethod
+    def _body_schema1(
+        db_id: int = 1, stmt_id: int = 42, num_params: int = 3, tail_offset: int = 0
+    ) -> bytes:
+        return TestStmtResponseStrictLength._body_schema0(
+            db_id, stmt_id, num_params
+        ) + tail_offset.to_bytes(8, "little")
+
+    def test_short_body_rejected_schema0(self) -> None:
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=0 body must be exactly 16"):
+            StmtResponse.decode_body(b"\x00" * 15, schema=0)
+
+    def test_exact_length_accepted_schema0(self) -> None:
+        msg = StmtResponse.decode_body(self._body_schema0(), schema=0)
+        assert msg.db_id == 1
+        assert msg.stmt_id == 42
+        assert msg.num_params == 3
+        assert msg.tail_offset is None
+
+    def test_trailing_bytes_rejected_schema0(self) -> None:
+        """Previous decoder silently accepted extra bytes; must now
+        raise so a conforming StmtResponse round-trips exactly."""
+        body = self._body_schema0() + b"\x01"
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=0 body must be exactly 16"):
+            StmtResponse.decode_body(body, schema=0)
+
+    def test_short_body_rejected_schema1(self) -> None:
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=1 body must be exactly 24"):
+            StmtResponse.decode_body(b"\x00" * 23, schema=1)
+
+    def test_exact_length_accepted_schema1(self) -> None:
+        msg = StmtResponse.decode_body(self._body_schema1(tail_offset=7), schema=1)
+        assert msg.db_id == 1
+        assert msg.stmt_id == 42
+        assert msg.num_params == 3
+        assert msg.tail_offset == 7
+
+    def test_trailing_bytes_rejected_schema1(self) -> None:
+        body = self._body_schema1() + b"\x02"
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=1 body must be exactly 24"):
+            StmtResponse.decode_body(body, schema=1)

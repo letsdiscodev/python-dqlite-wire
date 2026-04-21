@@ -205,8 +205,8 @@ class TestStmtResponse:
         assert decoded.tail_offset is None
 
     def test_schema_0_rejects_short_body(self) -> None:
-        """235: Schema=0 body must be at least 16 bytes."""
-        with pytest.raises(DecodeError, match="requires at least 16 bytes"):
+        """235: Schema=0 body must be exactly 16 bytes."""
+        with pytest.raises(DecodeError, match=r"schema=0 body must be exactly 16 bytes"):
             StmtResponse.decode_body(b"\x00" * 8, schema=0)
 
     def test_schema_1_rejects_v0_length_body(self) -> None:
@@ -218,7 +218,7 @@ class TestStmtResponse:
         """
         v0_body = b"\x01\x00\x00\x00" + b"\x02\x00\x00\x00" + b"\x03" + b"\x00" * 7
         assert len(v0_body) == 16
-        with pytest.raises(DecodeError, match="requires at least 24 bytes"):
+        with pytest.raises(DecodeError, match=r"schema=1 body must be exactly 24 bytes"):
             StmtResponse.decode_body(v0_body, schema=1)
 
     def test_rejects_oversized_num_params(self) -> None:

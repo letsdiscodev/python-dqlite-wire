@@ -999,20 +999,25 @@ class TestRoundTrip:
         assert isinstance(decoded, ClientRequest)
         assert decoded.client_id == 2**64 - 1
 
-    def test_stmt_response_v0_with_trailing_data_not_detected_as_v1(self) -> None:
-        """StmtResponse V0 with trailing bytes must not be misdetected as V1."""
+    def test_stmt_response_v0_with_trailing_data_rejected(self) -> None:
+        """StmtResponse V0 with trailing bytes must be rejected outright.
+
+        Previously the schema-aware decode only prevented mis-detection
+        as V1 (tail_offset was forced None). Under strict-length semantics
+        a 24-byte body under schema=0 is itself invalid — the Go/C
+        servers never emit trailing padding on fixed-body responses, and
+        accepting it silently is the same "two states collapsed into one"
+        bug that schema-awareness was meant to fix.
+        """
+        from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.base import Header
         from dqlitewire.types import encode_uint32, encode_uint64
 
-        # Build a V0 body (16 bytes) + 8 extra trailing bytes (total 24)
-        # Without schema awareness, len >= 24 triggers V1 decode reading garbage tail_offset
         body = encode_uint32(1) + encode_uint32(2) + encode_uint64(3) + b"\x00" * 8
         header = Header(size_words=3, msg_type=5, schema=0)
         data = header.encode() + body
-        decoded = decode_message(data, is_request=False)
-        assert isinstance(decoded, StmtResponse)
-        # With schema=0 in header, tail_offset should NOT be decoded
-        assert decoded.tail_offset is None
+        with pytest.raises(DecodeError, match=r"schema=0 body must be exactly 16 bytes"):
+            decode_message(data, is_request=False)
 
 
 class TestDecoderContinuation:

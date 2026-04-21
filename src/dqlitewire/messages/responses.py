@@ -261,9 +261,10 @@ class StmtResponse(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
         expected = 24 if schema >= 1 else 16
-        if len(data) < expected:
+        if len(data) != expected:
             raise DecodeError(
-                f"StmtResponse schema={schema} requires at least {expected} bytes, got {len(data)}"
+                f"StmtResponse schema={schema} body must be exactly {expected} bytes, "
+                f"got {len(data)}"
             )
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
