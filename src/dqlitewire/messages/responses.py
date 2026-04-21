@@ -121,10 +121,17 @@ class FailureResponse(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         code = decode_uint64(data)
-        message, _ = decode_text(data[8:])
+        message, consumed = decode_text(data[8:])
         if len(message) > _MAX_FAILURE_MESSAGE_SIZE:
             raise DecodeError(
                 f"Failure message length {len(message)} exceeds maximum {_MAX_FAILURE_MESSAGE_SIZE}"
+            )
+        offset = 8 + consumed
+        if offset != len(data):
+            # Strict-decode parity with sibling decoders: conforming
+            # Go/C servers never emit trailing padding on this body.
+            raise DecodeError(
+                f"FailureResponse has {len(data) - offset} trailing bytes after message"
             )
         return cls(code, _sanitize_server_text(message))
 

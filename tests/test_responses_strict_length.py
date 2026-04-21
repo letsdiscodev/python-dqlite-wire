@@ -235,6 +235,38 @@ class TestServersResponseStrictLength:
             ServersResponse.decode_body(body)
 
 
+class TestFailureResponseStrictLength:
+    """Body: uint64 code + padded text message. Trailing bytes after
+    the padded message had been silently accepted."""
+
+    @staticmethod
+    def _body(code: int = 5, message: str = "database is locked") -> bytes:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        return encode_uint64(code) + encode_text(message)
+
+    def test_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import FailureResponse
+
+        msg = FailureResponse.decode_body(self._body())
+        assert msg.code == 5
+        assert msg.message == "database is locked"
+
+    def test_trailing_byte_rejected(self) -> None:
+        from dqlitewire.messages.responses import FailureResponse
+
+        body = self._body() + b"\x01"
+        with pytest.raises(DecodeError, match=r"FailureResponse has 1 trailing byte"):
+            FailureResponse.decode_body(body)
+
+    def test_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import FailureResponse
+
+        body = self._body() + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"FailureResponse has 8 trailing byte"):
+            FailureResponse.decode_body(body)
+
+
 class TestLeaderResponseStrictLength:
     """Modern body: uint64 node_id + padded text address. Legacy body:
     padded text address only. Trailing bytes after the address had
