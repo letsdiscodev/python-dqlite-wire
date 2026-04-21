@@ -235,6 +235,63 @@ class TestServersResponseStrictLength:
             ServersResponse.decode_body(body)
 
 
+class TestLeaderResponseStrictLength:
+    """Modern body: uint64 node_id + padded text address. Legacy body:
+    padded text address only. Trailing bytes after the address had
+    been silently dropped."""
+
+    @staticmethod
+    def _modern_body(node_id: int = 7, addr: str = "1.2.3.4:9001") -> bytes:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        return encode_uint64(node_id) + encode_text(addr)
+
+    def test_modern_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+
+        msg = LeaderResponse.decode_body(self._modern_body())
+        assert msg.node_id == 7
+        assert msg.address == "1.2.3.4:9001"
+
+    def test_modern_trailing_byte_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+
+        body = self._modern_body() + b"\x01"
+        with pytest.raises(DecodeError, match=r"LeaderResponse has 1 trailing byte"):
+            LeaderResponse.decode_body(body)
+
+    def test_modern_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+
+        body = self._modern_body() + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"LeaderResponse has 8 trailing byte"):
+            LeaderResponse.decode_body(body)
+
+    def test_legacy_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+        from dqlitewire.types import encode_text
+
+        msg = LeaderResponse.decode_body_legacy(encode_text("10.0.0.1:9001"))
+        assert msg.node_id == 0
+        assert msg.address == "10.0.0.1:9001"
+
+    def test_legacy_trailing_byte_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+        from dqlitewire.types import encode_text
+
+        body = encode_text("10.0.0.1:9001") + b"\x01"
+        with pytest.raises(DecodeError, match=r"LeaderResponse \(legacy\) has 1 trailing byte"):
+            LeaderResponse.decode_body_legacy(body)
+
+    def test_legacy_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+        from dqlitewire.types import encode_text
+
+        body = encode_text("10.0.0.1:9001") + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"LeaderResponse \(legacy\) has 8 trailing byte"):
+            LeaderResponse.decode_body_legacy(body)
+
+
 class TestMetadataResponseStrictLength:
     """Body is two uint64s (failure_domain + weight) — exactly 16 bytes."""
 

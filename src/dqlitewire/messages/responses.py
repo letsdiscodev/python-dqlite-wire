@@ -153,10 +153,17 @@ class LeaderResponse(Message):
         node_id, use decode_body_legacy() instead.
         """
         node_id = decode_uint64(data)
-        address, _ = decode_text(data[8:])
+        address, consumed = decode_text(data[8:])
         if len(address) > _MAX_ADDRESS_SIZE:
             raise DecodeError(
                 f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+            )
+        offset = 8 + consumed
+        if offset != len(data):
+            # Strict-decode parity with sibling decoders: conforming
+            # Go/C servers never emit trailing padding on this body.
+            raise DecodeError(
+                f"LeaderResponse has {len(data) - offset} trailing bytes after address"
             )
         return cls(node_id, _sanitize_server_text(address))
 
@@ -167,10 +174,14 @@ class LeaderResponse(Message):
         Legacy format: text address only (no node_id). Returns node_id=0.
         Go reference: DecodeNodeLegacy in internal/protocol/message.go.
         """
-        address, _ = decode_text(data)
+        address, consumed = decode_text(data)
         if len(address) > _MAX_ADDRESS_SIZE:
             raise DecodeError(
                 f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+            )
+        if consumed != len(data):
+            raise DecodeError(
+                f"LeaderResponse (legacy) has {len(data) - consumed} trailing bytes after address"
             )
         return cls(node_id=0, address=_sanitize_server_text(address))
 
