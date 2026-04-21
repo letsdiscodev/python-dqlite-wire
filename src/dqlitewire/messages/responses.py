@@ -736,6 +736,13 @@ class ServersResponse(Message):
                     f"Invalid node role {raw_role} at offset {offset - 8}; expected one of {valid}"
                 ) from exc
             nodes.append(NodeInfo(node_id, address, role))
+        if offset != len(view):
+            # Strict-decode parity with sibling variable-length
+            # decoders: conforming Go/C servers never emit trailing
+            # padding on this response.
+            raise DecodeError(
+                f"ServersResponse has {len(view) - offset} trailing bytes after {count} nodes"
+            )
         return cls(nodes)
 
 

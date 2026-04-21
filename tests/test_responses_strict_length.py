@@ -160,6 +160,81 @@ class TestWelcomeResponseStrictLength:
             WelcomeResponse.decode_body(b"\x00" * 9)
 
 
+class TestServersResponseStrictLength:
+    """Variable-length body: ``uint64 count`` then ``count`` × (id, text
+    address, role). Trailing bytes after the last node had been silently
+    dropped.
+    """
+
+    @staticmethod
+    def _single_node_body(addr: str = "1.2.3.4:9001") -> bytes:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        return (
+            encode_uint64(1)  # count
+            + encode_uint64(1)  # node_id
+            + encode_text(addr)  # address (padded)
+            + encode_uint64(0)  # role = voter
+        )
+
+    def test_empty_list_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+        from dqlitewire.types import encode_uint64
+
+        msg = ServersResponse.decode_body(encode_uint64(0))
+        assert msg.nodes == []
+
+    def test_single_node_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+
+        msg = ServersResponse.decode_body(self._single_node_body())
+        assert len(msg.nodes) == 1
+        assert msg.nodes[0].address == "1.2.3.4:9001"
+
+    def test_multi_node_exact_round_trip(self) -> None:
+        """Offset accumulation through multiple iterations — exercises
+        the per-node loop boundary condition that the single-node test
+        cannot reach."""
+        from dqlitewire.messages.responses import ServersResponse
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(3)
+        for i in range(3):
+            body += encode_uint64(i)
+            body += encode_text(f"node{i}.example:900{i}")
+            body += encode_uint64(0)
+        msg = ServersResponse.decode_body(body)
+        assert [n.address for n in msg.nodes] == [
+            "node0.example:9000",
+            "node1.example:9001",
+            "node2.example:9002",
+        ]
+
+    def test_trailing_bytes_rejected(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+
+        body = self._single_node_body() + b"\x01"
+        with pytest.raises(DecodeError, match=r"ServersResponse has 1 trailing byte"):
+            ServersResponse.decode_body(body)
+
+    def test_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+
+        body = self._single_node_body() + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"ServersResponse has 8 trailing byte"):
+            ServersResponse.decode_body(body)
+
+    def test_empty_list_trailing_bytes_rejected(self) -> None:
+        """Count=0 with trailing bytes must still raise — otherwise a
+        server could hide bytes behind an empty list."""
+        from dqlitewire.messages.responses import ServersResponse
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(0) + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"ServersResponse has 8 trailing byte"):
+            ServersResponse.decode_body(body)
+
+
 class TestMetadataResponseStrictLength:
     """Body is two uint64s (failure_domain + weight) — exactly 16 bytes."""
 
