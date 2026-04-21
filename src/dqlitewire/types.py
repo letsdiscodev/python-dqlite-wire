@@ -131,15 +131,20 @@ def encode_text(value: str) -> bytes:
     """Encode text as null-terminated UTF-8, padded to 8-byte boundary."""
     if not isinstance(value, str):
         raise EncodeError(f"encode_text expected str, got {type(value).__name__}")
-    if "\x00" in value:
-        raise EncodeError(
-            f"Text value contains embedded null byte at position {value.index(chr(0))}; "
-            "null-terminated encoding would lose data"
-        )
     try:
-        encoded = value.encode("utf-8") + b"\x00"
+        utf8 = value.encode("utf-8")
     except UnicodeEncodeError as e:
         raise EncodeError(f"Text contains invalid UTF-8: {e}") from e
+    nul_byte_offset = utf8.find(b"\x00")
+    if nul_byte_offset != -1:
+        # Report the byte offset of the embedded NUL rather than the
+        # Python-string character index — the encoder produces bytes so
+        # operators debugging a wire capture expect byte offsets.
+        raise EncodeError(
+            f"Text value contains embedded null byte at byte offset "
+            f"{nul_byte_offset}; null-terminated encoding would lose data"
+        )
+    encoded = utf8 + b"\x00"
     padding = pad_to_word(len(encoded))
     return encoded + (b"\x00" * padding)
 
@@ -308,8 +313,18 @@ def encode_value(value: Any, value_type: ValueType | None = None) -> tuple[bytes
         # the outgoing-params path, uses inference and never picks
         # UNIXTIME, so the server-rejection case cannot arise via the
         # documented client API.
+        #
+        # Reject bool under explicit non-BOOLEAN types for symmetry with
+        # the FLOAT branch. The default-inference path (no explicit
+        # value_type) still picks BOOLEAN for bools, so a caller who
+        # wants a bool encoded as an integer must coerce explicitly via
+        # ``int(x)``. This prevents the silent "True in an INTEGER
+        # column decodes as 1 (int), not True (bool)" surprise.
         if isinstance(value, bool):
-            value = 1 if value else 0
+            raise EncodeError(
+                f"Cannot encode bool as {value_type.name}; cast with int(x) "
+                "explicitly if integer semantics are intended."
+            )
         if not isinstance(value, int):
             raise EncodeError(f"Expected int for {value_type.name}, got {type(value).__name__}")
         return encode_int64(value), value_type

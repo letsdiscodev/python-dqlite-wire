@@ -264,6 +264,16 @@ class TestText:
         with pytest.raises(EncodeError, match="embedded null byte"):
             encode_text("\x00")
 
+    def test_embedded_null_error_reports_byte_offset(self) -> None:
+        """The embedded-NUL error must report a UTF-8 byte offset, not a
+        Python code-point index. A multi-byte character preceding the
+        NUL surfaces different offsets for bytes vs codepoints.
+        """
+        # "café" is 5 UTF-8 bytes (c, a, f, 0xC3, 0xA9) but 4 codepoints.
+        # The NUL is at codepoint index 4 and byte offset 5.
+        with pytest.raises(EncodeError, match="byte offset 5"):
+            encode_text("café\x00")
+
     @pytest.mark.parametrize(
         "bad",
         [None, 42, b"x", 3.14, ["x"], bytearray(b"x"), memoryview(b"x")],
@@ -747,16 +757,28 @@ class TestValue:
         assert vtype == ValueType.NULL
         assert encoded == b"\x00" * 8
 
-    def test_encode_value_bool_as_explicit_integer(self) -> None:
-        """Bool with explicit ValueType.INTEGER should coerce to int."""
-        encoded, vtype = encode_value(True, ValueType.INTEGER)
-        assert vtype == ValueType.INTEGER
-        assert decode_int64(encoded) == 1
+    def test_encode_value_bool_with_explicit_integer_is_rejected(self) -> None:
+        """Bool with explicit ValueType.INTEGER is rejected for symmetry
+        with FLOAT. The default-inference path picks BOOLEAN for bools;
+        callers that genuinely want an integer encoding must cast via
+        ``int(x)`` explicitly. Prevents the silent "True stored as INTEGER
+        decodes as 1 (int) not True (bool)" round-trip surprise.
+        """
+        with pytest.raises(EncodeError, match="Cannot encode bool as INTEGER"):
+            encode_value(True, ValueType.INTEGER)
+        with pytest.raises(EncodeError, match="Cannot encode bool as INTEGER"):
+            encode_value(False, ValueType.INTEGER)
 
-    def test_encode_value_false_as_explicit_integer(self) -> None:
-        encoded, vtype = encode_value(False, ValueType.INTEGER)
+    def test_encode_value_bool_as_explicit_unixtime_is_rejected(self) -> None:
+        """UNIXTIME shares the code path with INTEGER; same bool rejection."""
+        with pytest.raises(EncodeError, match="Cannot encode bool as UNIXTIME"):
+            encode_value(True, ValueType.UNIXTIME)
+
+    def test_encode_value_int_as_explicit_integer_still_works(self) -> None:
+        """Regression: the bool-specific reject must not affect plain int."""
+        encoded, vtype = encode_value(42, ValueType.INTEGER)
         assert vtype == ValueType.INTEGER
-        assert decode_int64(encoded) == 0
+        assert decode_int64(encoded) == 42
 
 
 class TestEncodeValueUnsupportedTypes:
