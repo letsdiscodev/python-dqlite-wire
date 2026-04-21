@@ -73,6 +73,36 @@ class TestServerFailure:
         assert "5" in s
         assert "database is locked" in s
 
+    def test_pickle_round_trip(self) -> None:
+        """ServerFailure must survive ``pickle.dumps`` + ``pickle.loads``.
+
+        Workers that propagate exceptions back to a parent process
+        (multiprocessing, concurrent.futures.ProcessPoolExecutor, Celery)
+        unpickle by calling ``ServerFailure(*args)`` on the pickled args
+        tuple. If args hold a single pre-formatted string, unpickle calls
+        ``ServerFailure('[5] db locked')`` against a 2-arg ``__init__``
+        and raises ``TypeError``. Mirror the fix that landed for
+        ``client.OperationalError``.
+        """
+        import pickle
+
+        original = ServerFailure(code=5, message="database is locked")
+        restored = pickle.loads(pickle.dumps(original))
+        assert isinstance(restored, ServerFailure)
+        assert restored.code == 5
+        assert restored.message == "database is locked"
+        assert str(restored) == str(original)
+
+    def test_copy_deepcopy_round_trip(self) -> None:
+        """``copy.deepcopy`` uses the same reduce path as pickle."""
+        import copy
+
+        original = ServerFailure(code=10, message="no free pages")
+        restored = copy.deepcopy(original)
+        assert isinstance(restored, ServerFailure)
+        assert restored.code == 10
+        assert restored.message == "no free pages"
+
 
 class TestRaiseSiteSubclasses:
     """Each raise site in codec.py / buffer.py must raise a specific

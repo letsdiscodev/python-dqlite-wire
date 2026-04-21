@@ -84,7 +84,17 @@ class ServerFailure(ProtocolError):
         message: Human-readable error message from the server.
     """
 
+    code: int
+    message: str
+
     def __init__(self, code: int, message: str) -> None:
-        super().__init__(f"[{code}] {message}")
         self.code = code
         self.message = message
+        # Pass ``code`` and ``message`` through as separate args so
+        # ``self.args == (code, message)``; otherwise ``pickle`` /
+        # ``copy.deepcopy`` reconstruct via ``ServerFailure(*args)``
+        # with a single positional argument and raise ``TypeError``.
+        super().__init__(code, message)
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
