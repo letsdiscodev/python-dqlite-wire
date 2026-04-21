@@ -191,6 +191,8 @@ class WelcomeResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "WelcomeResponse":
+        if len(data) != 8:
+            raise DecodeError(f"WelcomeResponse body must be exactly 8 bytes, got {len(data)}")
         heartbeat_timeout = decode_uint64(data)
         return cls(heartbeat_timeout)
 
@@ -757,6 +759,8 @@ class MetadataResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "MetadataResponse":
+        if len(data) != 16:
+            raise DecodeError(f"MetadataResponse body must be exactly 16 bytes, got {len(data)}")
         failure_domain = decode_uint64(data)
         weight = decode_uint64(data[8:])
         return cls(failure_domain, weight)

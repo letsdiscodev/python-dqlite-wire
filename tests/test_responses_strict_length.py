@@ -136,3 +136,49 @@ class TestStmtResponseStrictLength:
         body = self._body_schema1() + b"\x02"
         with pytest.raises(DecodeError, match=r"StmtResponse schema=1 body must be exactly 24"):
             StmtResponse.decode_body(body, schema=1)
+
+
+class TestWelcomeResponseStrictLength:
+    """Body is uint64(heartbeat_timeout) — exactly 8 bytes."""
+
+    def test_short_body_rejected(self) -> None:
+        from dqlitewire.messages.responses import WelcomeResponse
+
+        with pytest.raises(DecodeError, match=r"WelcomeResponse body must be exactly 8"):
+            WelcomeResponse.decode_body(b"\x00" * 7)
+
+    def test_exact_length_accepted(self) -> None:
+        from dqlitewire.messages.responses import WelcomeResponse
+
+        msg = WelcomeResponse.decode_body((42).to_bytes(8, "little"))
+        assert msg.heartbeat_timeout == 42
+
+    def test_trailing_bytes_rejected(self) -> None:
+        from dqlitewire.messages.responses import WelcomeResponse
+
+        with pytest.raises(DecodeError, match=r"WelcomeResponse body must be exactly 8"):
+            WelcomeResponse.decode_body(b"\x00" * 9)
+
+
+class TestMetadataResponseStrictLength:
+    """Body is two uint64s (failure_domain + weight) — exactly 16 bytes."""
+
+    def test_short_body_rejected(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        with pytest.raises(DecodeError, match=r"MetadataResponse body must be exactly 16"):
+            MetadataResponse.decode_body(b"\x00" * 15)
+
+    def test_exact_length_accepted(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        body = (3).to_bytes(8, "little") + (7).to_bytes(8, "little")
+        msg = MetadataResponse.decode_body(body)
+        assert msg.failure_domain == 3
+        assert msg.weight == 7
+
+    def test_trailing_bytes_rejected(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        with pytest.raises(DecodeError, match=r"MetadataResponse body must be exactly 16"):
+            MetadataResponse.decode_body(b"\x00" * 17)
