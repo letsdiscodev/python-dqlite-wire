@@ -39,6 +39,15 @@ type WireValue = bool | int | float | str | bytes | None
 # ``_MAX_FILE_COUNT`` / ``_MAX_NODE_COUNT`` in spirit.
 _MAX_BLOB_SIZE = 16 * 1024 * 1024  # 16 MiB
 
+# Per-TEXT cell byte cap. Symmetric with ``_MAX_BLOB_SIZE`` — a TEXT
+# row cell (TEXT or ISO8601 wire type) is NUL-terminated UTF-8 and
+# otherwise unbounded within the frame envelope. Matches the 16 MiB
+# BLOB ceiling: real applications never send multi-megabyte string
+# columns over the wire, and this defensive cap keeps ``decode_text``
+# from scanning or allocating attacker-controlled lengths that
+# exceed the BLOB ceiling.
+_MAX_TEXT_VALUE_SIZE = 16 * 1024 * 1024  # 16 MiB
+
 # Cap on the stringified representation of an out-of-range integer in
 # EncodeError messages. A hostile or buggy caller passing ``10 ** 500``
 # would otherwise bake a kilobyte of digits into the error text (and
@@ -172,11 +181,19 @@ _TEXT_ONE_SHOT_MAX = 65_536
 _TEXT_SCAN_CHUNK = 4096
 
 
-def decode_text(data: bytes | memoryview) -> tuple[str, int]:
+def decode_text(
+    data: bytes | memoryview, *, max_size: int = _MAX_TEXT_VALUE_SIZE
+) -> tuple[str, int]:
     """Decode null-terminated UTF-8 text.
 
     Accepts either ``bytes`` or ``memoryview``. Returns the decoded
     string and the number of bytes consumed (including padding).
+
+    ``max_size`` caps the decoded length (excluding the terminator) —
+    defaults to ``_MAX_TEXT_VALUE_SIZE``. Callers that enforce a
+    smaller cap (e.g. ``decode_column_name`` at 4 KiB) pass their own
+    ceiling; callers that legitimately need the full row-cell cap use
+    the default.
 
     The decoder's hot body loops (RowsResponse, FilesResponse,
     ServersResponse) wrap the body in a ``memoryview`` so
@@ -232,6 +249,8 @@ def decode_text(data: bytes | memoryview) -> tuple[str, int]:
         except UnicodeDecodeError as e:
             raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
 
+    if null_pos > max_size:
+        raise DecodeError(f"Text length {null_pos} exceeds maximum ({max_size})")
     # Calculate total size including padding
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
     if len(data) < total_size:
