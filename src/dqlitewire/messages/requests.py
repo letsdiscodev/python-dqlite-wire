@@ -604,6 +604,16 @@ class ClusterRequest(Message):
                 "not implemented in this Python library: ServersResponse only "
                 "decodes V1 (with node role fields). Use format=1."
             )
+        if self.format != 1:
+            # Upstream defines only V0=0 and V1=1 (include/dqlite.h); the
+            # gateway rejects anything else with DQLITE_PARSE. Reject
+            # client-side so callers get a local ValueError instead of a
+            # confusing server failure.
+            raise ValueError(
+                f"ClusterRequest format must be 1 (V1); upstream defines "
+                f"only V0=0 and V1=1 and this library implements only V1. "
+                f"Got {self.format}."
+            )
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)
@@ -618,6 +628,11 @@ class ClusterRequest(Message):
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
                 "decodes V1 (with node role fields)."
+            )
+        if format_val != 1:
+            raise DecodeError(
+                f"ClusterRequest format must be 1 (V1); upstream defines "
+                f"only V0=0 and V1=1. Got {format_val}."
             )
         return cls(format_val)
 

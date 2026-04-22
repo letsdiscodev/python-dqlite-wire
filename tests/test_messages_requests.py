@@ -501,6 +501,33 @@ class TestClusterRequest:
         with pytest.raises(DecodeError, match="format=0.*not implemented"):
             ClusterRequest.decode_body(body)
 
+    @pytest.mark.parametrize("fmt", [2, 3, 255, 0xFFFFFFFFFFFFFFFF])
+    def test_unknown_format_rejected_in_constructor(self, fmt: int) -> None:
+        # Upstream defines only V0=0 and V1=1. V0 is rejected separately
+        # (Python library limitation). Any other value is undefined and
+        # must be rejected client-side so callers see a local ValueError
+        # instead of a confusing server-side failure.
+        with pytest.raises(ValueError, match="format must be 1"):
+            ClusterRequest(format=fmt)
+
+    @pytest.mark.parametrize("fmt", [2, 3, 255, 0xFFFFFFFFFFFFFFFF])
+    def test_decode_unknown_format_raises_decode_error(self, fmt: int) -> None:
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(fmt)
+        with pytest.raises(DecodeError, match="format must be 1"):
+            ClusterRequest.decode_body(body)
+
+    def test_format_v1_positive_case(self) -> None:
+        # Pin the lower edge of the legal set so a future refactor
+        # that narrows past {1} would fail this test too.
+        msg = ClusterRequest(format=1)
+        assert msg.format == 1
+        encoded = msg.encode()
+        decoded = ClusterRequest.decode_body(encoded[HEADER_SIZE:])
+        assert decoded.format == 1
+
 
 class TestTransferRequest:
     def test_roundtrip(self) -> None:
