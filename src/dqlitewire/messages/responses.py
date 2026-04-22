@@ -71,22 +71,44 @@ _MAX_ADDRESS_SIZE = 256
 # logs. The C server promises UTF-8 but makes no promise about terminal
 # escapes or log-injection characters: a malicious or compromised peer
 # can embed ANSI colour/clear sequences, CR/LF to forge log lines, or
-# NUL bytes that upset some log backends. Replace C0 controls (except
-# tab 0x09 and LF 0x0A) and DEL (0x7F) with a literal "?". CR (0x0D) is
-# dropped — it is the log-injection vector alongside LF, and LF alone
-# is enough to represent legitimate multi-line server messages in
-# journald / file handlers.
-_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# NUL bytes that upset some log backends. Replace the following with a
+# literal "?":
+#
+# - C0 controls (\x00-\x08, \x0b-\x1f) and DEL (\x7f)
+# - C1 controls (\x80-\x9f) — some terminals still interpret these
+#   as CSI / DCS / OSC sequences
+# - Unicode line / paragraph separators (U+2028, U+2029) — Python
+#   logging and journald treat these as line breaks, so a server
+#   message with U+2028 can inject arbitrary log lines
+# - Unicode bidi formatting controls (U+202A-U+202E, U+2066-U+2069,
+#   U+061C) — the Trojan-Source primitives
+# - Zero-width / invisible characters (U+200B-U+200F, U+FEFF) that
+#   hide content from casual visual inspection while surviving
+#   substring matches
+#
+# Tab (0x09) and LF (0x0A) are left intact so legitimate multi-line
+# server diagnostics render correctly. CR (0x0D) is dropped — it
+# is the log-injection vector alongside LF.
+_CONTROL_CHARS_RE = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f-\x9f"
+    r"؜"
+    r"​-‏"
+    r"  "
+    r"‪-‮"
+    r"⁦-⁩"
+    r"﻿"
+    r"]"
+)
 
 
 def _sanitize_server_text(s: str) -> str:
-    """Replace C0 control characters and DEL with '?' in server strings.
+    """Replace control / bidi / invisible characters with '?' in server strings.
 
     Applied at the decoder boundary for text fields that flow directly
     into exception messages and logs (FailureResponse.message,
     LeaderResponse.address, ServersResponse.nodes[*].address). Leaves
     tab and LF untouched so multi-line server diagnostics render
-    correctly.
+    correctly. See the regex above for the full replacement class.
     """
     return _CONTROL_CHARS_RE.sub("?", s)
 
