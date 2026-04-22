@@ -307,16 +307,39 @@ class StmtResponse(Message):
     stmt_id: int
     num_params: int
     tail_offset: int | None = None
+    # Optional schema-byte override for mock servers / proxies that
+    # must echo the inbound ``PrepareRequest.schema`` byte
+    # independently of whether ``tail_offset`` is set. Upstream C
+    # dispatches reply shape on the REQUEST's schema byte
+    # (gateway.c::handle_prepare_done_cb): schema=0 emits V0 (16 B,
+    # no tail_offset), schema=1 emits V1 (24 B, with tail_offset).
+    # Without this override, the auto-select cannot emit "V1 with
+    # tail_offset=0" — a valid upstream reply shape. ``None`` keeps
+    # the historical auto-select semantics intact.
+    schema: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.schema is not None and self.schema not in (0, 1):
+            raise ValueError(f"StmtResponse.schema must be 0 or 1, got {self.schema}")
+        if self.schema == 0 and self.tail_offset is not None:
+            raise ValueError(
+                "StmtResponse: schema=0 (V0 body) cannot carry tail_offset; pass schema=1 for V1"
+            )
 
     def _get_schema(self) -> int:
+        if self.schema is not None:
+            return self.schema
         return 1 if self.tail_offset is not None else 0
 
     def encode_body(self) -> bytes:
         result = (
             encode_uint32(self.db_id) + encode_uint32(self.stmt_id) + encode_uint64(self.num_params)
         )
-        if self.tail_offset is not None:
-            result += encode_uint64(self.tail_offset)
+        if self._get_schema() == 1:
+            # V1: always emit tail_offset (default 0 when None so an
+            # explicit schema=1 without tail_offset still produces a
+            # 24-byte body matching the inbound PrepareRequest.schema).
+            result += encode_uint64(self.tail_offset or 0)
         return result
 
     @classmethod
