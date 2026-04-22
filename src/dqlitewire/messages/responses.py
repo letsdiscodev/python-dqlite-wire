@@ -41,6 +41,14 @@ _MAX_COLUMN_COUNT = 10_000
 _MAX_FILE_COUNT = 100
 _MAX_NODE_COUNT = 10_000
 
+# Upper bound on ``StmtResponse.tail_offset``. The field is a byte
+# offset into the prepared-SQL text; a malicious peer could emit an
+# enormous value and Python's slice semantics would silently return
+# ``""`` on ``sql[offset:]``, dropping later statements with no
+# diagnostic. 1 MiB is far above any realistic multi-statement SQL
+# size.
+_MAX_TAIL_OFFSET = 1 * 1024 * 1024
+
 # Per-field cap on ``FailureResponse.message``. The frame-size cap
 # in ``buffer.py`` (64 MiB) bounds total bytes, but error messages in
 # practice are short (SQLite's own error strings are under ~200 chars).
@@ -172,6 +180,17 @@ class LeaderResponse(Message):
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(self.address)
+
+    def encode_body_legacy(self) -> bytes:
+        """Encode as legacy (V0) body: text address only, no node_id.
+
+        Upstream emits this shape via ``SUCCESS_V0(server_legacy,
+        SERVER_LEGACY)`` when the negotiated protocol version is
+        ``PROTOCOL_VERSION_LEGACY``. Mirror of :meth:`decode_body_legacy`.
+        ``node_id`` is dropped — the legacy format carries only the
+        address.
+        """
+        return encode_text(self.address or "")
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
@@ -321,6 +340,16 @@ class StmtResponse(Message):
                 f"StmtResponse num_params {num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
             )
         tail_offset = decode_uint64(data[16:]) if schema >= 1 else None
+        # Defense-in-depth cap: ``tail_offset`` is the byte offset of
+        # the unparsed SQL tail; a hostile peer could emit ``2**63`` and
+        # Python's slice semantics would silently return "" on
+        # ``sql[offset:]``, dropping later statements without any
+        # diagnostic. Cap against the outbound SQL size cap so the
+        # ceiling for inbound and outbound stays aligned.
+        if tail_offset is not None and tail_offset > _MAX_TAIL_OFFSET:
+            raise DecodeError(
+                f"StmtResponse tail_offset {tail_offset} exceeds maximum ({_MAX_TAIL_OFFSET})"
+            )
         return cls(db_id, stmt_id, num_params, tail_offset)
 
 
@@ -640,6 +669,10 @@ class FilesResponse(Message):
     files: dict[str, bytes] = field(default_factory=dict)
 
     def encode_body(self) -> bytes:
+        if len(self.files) > _MAX_FILE_COUNT:
+            raise EncodeError(
+                f"FilesResponse count {len(self.files)} exceeds maximum ({_MAX_FILE_COUNT})"
+            )
         result = encode_uint64(len(self.files))
         for name, content in self.files.items():
             # The upstream C server (gateway.c::dumpFile) asserts
@@ -702,6 +735,14 @@ class FilesResponse(Message):
             content = bytes(view[offset : offset + size])
             # No padding after content — matches Go's byte-by-byte read.
             offset += size
+            # Reject duplicate filenames: the wire format is a positional
+            # sequence of N records; silently overwriting via dict would
+            # make ``len(files) < count`` after decode and break
+            # re-encode symmetry. Upstream's ``handle_dump`` only ever
+            # emits distinct names (``main`` and ``main-wal``), so this
+            # catches only malicious or misframed peers.
+            if name in files:
+                raise DecodeError(f"FilesResponse: duplicate filename {name!r}")
             files[name] = content
         # Upstream client enforces `cursor.cap == fs[i].size` at each
         # iteration; on the last file that amounts to "body must be

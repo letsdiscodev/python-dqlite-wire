@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from dqlitewire.constants import RequestType
+from dqlitewire.constants import NodeRole, RequestType
 from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
@@ -88,15 +88,22 @@ class ClientRequest(Message):
 class HeartbeatRequest(Message):
     """Send heartbeat to server.
 
-    Body: uint64 timestamp
+    .. warning::
 
-    Note: The C dqlite server does not currently handle this request type
-    (HEARTBEAT is omitted from the gateway dispatcher). The Go client's
-    heartbeat code is also commented out. Sending this request will result
-    in a FailureResponse from the server.
+        The ``uint64 timestamp`` body shape is **speculative**. Upstream
+        (``protocol.h``) reserves the type code ``DQLITE_REQUEST_HEARTBEAT
+        = 2`` but defines no schema — ``REQUEST__TYPES`` in
+        ``request.h`` omits ``heartbeat``, and ``gateway.c``'s
+        dispatcher falls through to ``DQLITE_PARSE`` for this type. The
+        Go client's heartbeat code is also commented out.
 
-    If heartbeat is ever enabled, the expected response is a
-    ServersResponse (type 3) containing the cluster node list.
+        This dataclass preserves the historical ``uint64 timestamp``
+        layout for test-mock / golden-byte compatibility, but no real
+        upstream peer accepts it: a real C server replies with a
+        ``FailureResponse``. If upstream ever defines a schema, this
+        body shape will need to change.
+
+    Body: uint64 timestamp (speculative — not part of any upstream spec)
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.HEARTBEAT
@@ -493,17 +500,31 @@ class AssignRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.ASSIGN
 
     node_id: int
-    role: int | None = None
+    role: NodeRole | int | None = None
 
     def __post_init__(self) -> None:
         _check_uint64("node_id", self.node_id)
         if self.role is not None:
-            _check_uint64("role", self.role)
+            # Coerce bare ints to the NodeRole enum and reject unknown
+            # values. Mirrors the response-side narrowing on
+            # ``ServersResponse`` (ISSUE-202) so an outbound assign or
+            # a mock-server decode carries a validated role, not an
+            # unknown integer that would silently surface in the
+            # dataclass.
+            if isinstance(self.role, NodeRole):
+                _check_uint64("role", int(self.role))
+            else:
+                _check_uint64("role", self.role)
+                try:
+                    coerced = NodeRole(self.role)
+                except ValueError as e:
+                    raise ValueError(f"AssignRequest: unknown role {self.role}") from e
+                object.__setattr__(self, "role", coerced)
 
     def encode_body(self) -> bytes:
         result = encode_uint64(self.node_id)
         if self.role is not None:
-            result += encode_uint64(self.role)
+            result += encode_uint64(int(self.role))
         else:
             import warnings
 
@@ -526,7 +547,11 @@ class AssignRequest(Message):
             return cls(node_id, None)
         if len(data) == 16:
             node_id = decode_uint64(data)
-            role = decode_uint64(data[8:])
+            raw = decode_uint64(data[8:])
+            try:
+                role = NodeRole(raw)
+            except ValueError as e:
+                raise DecodeError(f"AssignRequest: unknown role {raw}") from e
             return cls(node_id, role)
         raise DecodeError(
             f"AssignRequest body must be 8 (PROMOTE) or 16 (ASSIGN) bytes, got {len(data)}"
