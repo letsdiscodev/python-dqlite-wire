@@ -80,9 +80,20 @@ class Message(ABC):
     def encode(self) -> bytes:
         """Encode complete message with header."""
         body = self.encode_body()
-        # Ensure body is word-aligned
+        # Every built-in Message subclass already emits a word-aligned
+        # body (text / blob / params / tuple encoders all pad
+        # themselves). The previous silent ``body += b"\x00" * pad``
+        # hid subclass bugs by the time the misshapen body reached the
+        # peer. Upstream's C encoder asserts ``len % 8 == 0``
+        # (``dqlite_assert(_n % 8 == 0)`` in ``gateway.c`` SUCCESS /
+        # failure macros); match the invariant at encode time so
+        # regressions fail loudly here rather than surfacing as a
+        # strict-decode rejection at the peer.
         if len(body) % WORD_SIZE != 0:
-            body += b"\x00" * (WORD_SIZE - (len(body) % WORD_SIZE))
+            raise EncodeError(
+                f"{type(self).__name__}.encode_body() returned "
+                f"{len(body)} bytes; must be {WORD_SIZE}-aligned"
+            )
         size_words = len(body) // WORD_SIZE
         header = Header(size_words, self.MSG_TYPE, schema=self._get_schema())
         return header.encode() + body
