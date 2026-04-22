@@ -335,9 +335,12 @@ class RowsResponse(Message):
 
     Attributes:
         column_names: Column names from the query.
-        column_types: Types from the first row's header. SQLite uses dynamic
-            typing, so different rows may have different types for the same
-            column. Use ``row_types`` for accurate per-row type information.
+        column_types: Types from the first decoded row's per-column type
+            tag. SQLite uses dynamic typing, so different rows may have
+            different types for the same column — use ``row_types`` for
+            accurate per-row type information. **Empty when the frame
+            carries no rows**; prefer ``column_names`` to detect the
+            column count in that case.
         row_types: Per-row type lists, one entry per decoded row.
         rows: Decoded row values.
         has_more: True if a PART marker was found (more rows in next message).

@@ -2,13 +2,14 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from dqlitewire.constants import RequestType
 from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
+    WireInput,
     decode_text,
     decode_uint32,
     decode_uint64,
@@ -207,7 +208,7 @@ class ExecRequest(Message):
 
     db_id: int
     stmt_id: int
-    params: Sequence[Any] = field(default_factory=list)
+    params: Sequence[WireInput] = field(default_factory=list)
     # Preserves the header schema byte seen on decode so a decode →
     # re-encode round-trip emits byte-identical output even when the
     # upstream C client used schema=1 with ≤255 params (which the count
@@ -253,7 +254,7 @@ class QueryRequest(Message):
 
     db_id: int
     stmt_id: int
-    params: Sequence[Any] = field(default_factory=list)
+    params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -322,7 +323,7 @@ class ExecSqlRequest(Message):
 
     db_id: int
     sql: str
-    params: Sequence[Any] = field(default_factory=list)
+    params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -364,7 +365,7 @@ class QuerySqlRequest(Message):
 
     db_id: int
     sql: str
-    params: Sequence[Any] = field(default_factory=list)
+    params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:

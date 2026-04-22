@@ -66,6 +66,7 @@ from dqlitewire.exceptions import (
     ServerFailure,
     StreamError,
 )
+from dqlitewire.types import WireInput, WireValue
 
 __all__ = [
     "ContinuationError",
@@ -94,6 +95,8 @@ __all__ = [
     "ServerFailure",
     "StreamError",
     "ValueType",
+    "WireInput",
+    "WireValue",
     "WriteBuffer",
     "decode_message",
     "encode_message",
