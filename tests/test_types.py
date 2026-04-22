@@ -593,6 +593,36 @@ class TestValue:
             decoded, _ = decode_value(encoded, ValueType.FLOAT)
             assert decoded == val
 
+    @pytest.mark.parametrize(
+        ("val", "expected_sign"),
+        [
+            (0.0, 1.0),
+            (-0.0, -1.0),
+            (1.0, 1.0),
+            (-1.0, -1.0),
+        ],
+    )
+    def test_float_sign_bit_preserved_through_round_trip(
+        self, val: float, expected_sign: float
+    ) -> None:
+        """IEEE 754 sign-bit identity must survive encode/decode.
+
+        ``-0.0 == +0.0`` is ``True`` in Python, so a plain equality
+        assertion on the round-trip silently passes even if a future
+        encoder regression drops the sign bit. The Go/C reference
+        clients preserve the sign bit (raw memcpy of the IEEE 754
+        bits), so a Python encoder that diverged here would produce
+        read-after-write inconsistency on cluster-shared cells.
+        """
+        import math
+
+        encoded, vtype = encode_value(val)
+        assert vtype == ValueType.FLOAT
+        decoded, _ = decode_value(encoded, ValueType.FLOAT)
+        assert math.copysign(1, decoded) == expected_sign, (
+            f"sign bit lost on round-trip for {val!r}: decoded={decoded!r}"
+        )
+
     def test_nan_accepted(self) -> None:
         """NaN should be accepted, matching Go reference implementation."""
         import math
