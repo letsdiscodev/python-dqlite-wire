@@ -353,3 +353,65 @@ class TestDecodeHandshakeSignalSafety:
 
         assert dec._handshake_done is False
         assert dec._buffer.available() == 8
+
+    def test_decode_handshake_reverts_state_on_read_bytes_failure(self) -> None:
+        """Strict pin on the revert contract inside ``decode_handshake``.
+
+        The method commits ``self._version`` and ``self._handshake_done``
+        *before* ``read_bytes(8)`` so an async exception delivered between
+        the commit and the consume cannot leave the buffer advanced
+        while state stays ``False`` (the pre-fix hazard). The ``except
+        BaseException`` block then reverts both state fields and lets
+        the exception propagate; the 8 handshake bytes stay in the
+        buffer, and a retry is deterministic.
+
+        The compound test above is deliberately permissive so either of
+        the two valid fix shapes passes. This test pins the stricter
+        "revert on failure" invariant by monkey-patching
+        ``_buffer.read_bytes`` to raise.
+        """
+        dec = MessageDecoder(is_request=True)
+        dec.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
+
+        original_read_bytes = dec._buffer.read_bytes
+
+        def exploding_read_bytes(n: int) -> bytes:
+            raise KeyboardInterrupt("simulated async cancel")
+
+        dec._buffer.read_bytes = exploding_read_bytes  # type: ignore[method-assign]
+
+        with pytest.raises(KeyboardInterrupt):
+            dec.decode_handshake()
+
+        # Revert invariants: both state fields rolled back, no partial
+        # commit.
+        assert dec._handshake_done is False
+        assert dec._version is None
+
+        # The 8 handshake bytes never consumed — retry on the restored
+        # buffer returns PROTOCOL_VERSION.
+        dec._buffer.read_bytes = original_read_bytes  # type: ignore[method-assign]
+        assert dec._buffer.available() == 8
+        assert dec.decode_handshake() == PROTOCOL_VERSION
+        assert dec._handshake_done is True
+        assert dec._version == PROTOCOL_VERSION
+
+    def test_decode_handshake_reverts_state_on_system_exit(self) -> None:
+        """``except BaseException`` width: ``SystemExit`` — another
+        non-``Exception`` ``BaseException`` subclass — must also trigger
+        the revert. A narrower ``except Exception`` would leak the
+        commit state on shutdown paths.
+        """
+        dec = MessageDecoder(is_request=True)
+        dec.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
+
+        def exploding_read_bytes(n: int) -> bytes:
+            raise SystemExit(1)
+
+        dec._buffer.read_bytes = exploding_read_bytes  # type: ignore[method-assign]
+
+        with pytest.raises(SystemExit):
+            dec.decode_handshake()
+
+        assert dec._handshake_done is False
+        assert dec._version is None
