@@ -285,7 +285,8 @@ class ReadBuffer:
 
         The ``schema_version`` byte is likewise a raw wire value with no
         per-``msg_type`` bound enforced here — the per-type maximum lives
-        in the codec layer (``_MAX_SCHEMA`` in ``codec.py``). Callers
+        in the codec layer (``_REQUEST_MAX_SCHEMA`` /
+        ``_RESPONSE_MAX_SCHEMA`` in ``codec.py``). Callers
         using this field for routing / metrics / dispatch should
         re-validate against the codec's cap before acting on it; the
         ``read_message`` / ``MessageDecoder.decode`` path enforces the

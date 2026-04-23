@@ -755,7 +755,7 @@ class TestRoundTrip:
         assert decoded.schema == 1
 
     def test_stmt_response_v1_through_codec(self) -> None:
-        """112: StmtResponse V1 must pass through the codec _MAX_SCHEMA gate."""
+        """StmtResponse V1 must pass through the codec schema-version gate."""
         msg = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=42)
         encoded = msg.encode()
 
@@ -2042,3 +2042,104 @@ class TestPicklePrevention:
 
         with pytest.raises(TypeError, match="cannot be pickled"):
             pickle.dumps(MessageEncoder())
+
+
+class TestMaxSchemaDirection:
+    """Schema-version ceiling must not bleed across request/response directions.
+
+    ``RequestType`` and ``ResponseType`` share numeric codes (e.g.
+    ``RequestType.QUERY_SQL=9`` collides with ``ResponseType.FILES=9``).
+    A direction-agnostic ceiling lookup would let a hostile or buggy
+    server emit a response whose type does not actually support schema>0
+    but whose numeric code matches a request type that does.
+    """
+
+    def test_response_decoder_rejects_schema_1_on_db(self) -> None:
+        """DB (type 4) must not accept schema=1 even though PREPARE
+        (also type 4) does on the request side."""
+        import struct
+
+        from dqlitewire.constants import ResponseType
+
+        decoder = MessageDecoder(is_request=False)
+        # DbResponse body is a single uint64 db_id.
+        body = b"\x00" * 8
+        size_words = len(body) // 8
+        header = struct.pack("<IBBH", size_words, ResponseType.DB, 1, 0)
+        decoder.feed(header + body)
+        with pytest.raises(DecodeError, match="Unsupported schema version"):
+            decoder.decode()
+
+    def test_response_decoder_rejects_schema_1_on_files(self) -> None:
+        """FILES (type 9) must not accept schema=1 even though QUERY_SQL
+        (also type 9) does on the request side."""
+        import struct
+
+        from dqlitewire.constants import ResponseType
+
+        decoder = MessageDecoder(is_request=False)
+        # Build a FILES response body with count=0 so decode_body would
+        # otherwise succeed. Header carries schema=1.
+        body = b"\x00" * 8  # uint64 count = 0
+        size_words = len(body) // 8
+        header = struct.pack("<IBBH", size_words, ResponseType.FILES, 1, 0)
+        decoder.feed(header + body)
+        with pytest.raises(DecodeError, match="Unsupported schema version"):
+            decoder.decode()
+
+    def test_response_decoder_rejects_schema_1_on_result(self) -> None:
+        """RESULT (type 6) must not accept schema=1 even though QUERY
+        (also type 6) does on the request side."""
+        import struct
+
+        from dqlitewire.constants import ResponseType
+
+        decoder = MessageDecoder(is_request=False)
+        # ResultResponse body is two uint64s (last_insert_id, rows_affected).
+        body = b"\x00" * 16
+        size_words = len(body) // 8
+        header = struct.pack("<IBBH", size_words, ResponseType.RESULT, 1, 0)
+        decoder.feed(header + body)
+        with pytest.raises(DecodeError, match="Unsupported schema version"):
+            decoder.decode()
+
+    def test_response_decoder_rejects_schema_1_on_empty(self) -> None:
+        """EMPTY (type 8) must not accept schema=1 even though EXEC_SQL
+        (also type 8) does on the request side."""
+        import struct
+
+        from dqlitewire.constants import ResponseType
+
+        decoder = MessageDecoder(is_request=False)
+        body = b"\x00" * 8  # EMPTY body is a single placeholder uint64.
+        size_words = len(body) // 8
+        header = struct.pack("<IBBH", size_words, ResponseType.EMPTY, 1, 0)
+        decoder.feed(header + body)
+        with pytest.raises(DecodeError, match="Unsupported schema version"):
+            decoder.decode()
+
+    def test_response_decoder_accepts_schema_1_on_stmt(self) -> None:
+        """STMT is the only response type that genuinely supports schema=1.
+        Regression guard: the direction split must not break this path."""
+        decoder = MessageDecoder(is_request=False)
+        stmt = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=0)
+        decoder.feed(stmt.encode())
+        decoded = decoder.decode()
+        assert isinstance(decoded, StmtResponse)
+        assert decoded.tail_offset == 0
+
+    def test_request_decoder_still_accepts_schema_1_on_query_sql(self) -> None:
+        """QUERY_SQL (request, type 9) keeps schema=1 support even though
+        FILES (response, type 9) loses it. Forcing schema=1 on the request
+        side by supplying >255 params (the V1 count-size cutoff)."""
+        from dqlitewire.messages import QuerySqlRequest
+
+        decoder = MessageDecoder(is_request=True)
+        decoder._handshake_done = True
+        decoder._version = PROTOCOL_VERSION
+        params = [1] * 256  # >255 → encoder picks schema=1
+        req = QuerySqlRequest(db_id=1, sql="SELECT 1", params=params)
+        decoder.feed(req.encode())
+        decoded = decoder.decode()
+        assert isinstance(decoded, QuerySqlRequest)
+        assert len(decoded.params) == 256

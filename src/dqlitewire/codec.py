@@ -97,13 +97,23 @@ RESPONSE_TYPES: dict[int, type[Message]] = {
 }
 
 
-# Maximum supported schema version per message type (default is 0)
-_MAX_SCHEMA: dict[int, int] = {
+# Maximum supported schema version per message type (default is 0).
+#
+# Keyed separately by direction because ``RequestType`` and ``ResponseType``
+# share numeric codes (e.g. ``RequestType.QUERY=6`` collides with
+# ``ResponseType.RESULT=6``). A single-dict lookup would conflate the two —
+# a hostile or buggy server could then emit, say, a ``FILES`` response
+# (code 9) with ``schema=1`` and slip through a ceiling meant for
+# ``QUERY_SQL`` (also code 9). The ``MessageDecoder`` selects the
+# appropriate dict using ``is_request`` at construction time.
+_REQUEST_MAX_SCHEMA: dict[int, int] = {
     RequestType.PREPARE: 1,
     RequestType.EXEC: 1,
     RequestType.QUERY: 1,
     RequestType.EXEC_SQL: 1,
     RequestType.QUERY_SQL: 1,
+}
+_RESPONSE_MAX_SCHEMA: dict[int, int] = {
     ResponseType.STMT: 1,
 }
 
@@ -220,6 +230,7 @@ class MessageDecoder:
         self._buffer = ReadBuffer(max_message_size=max_message_size)
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
+        self._max_schema = _REQUEST_MAX_SCHEMA if is_request else _RESPONSE_MAX_SCHEMA
         # For client-side decoders, version is set from the constructor parameter.
         # For server-side decoders, version is set by decode_handshake().
         self._version: int | None = version if not is_request else None
@@ -332,7 +343,7 @@ class MessageDecoder:
             header = Header.decode(data[:HEADER_SIZE])
             body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
 
-            max_schema = _MAX_SCHEMA.get(header.msg_type, 0)
+            max_schema = self._max_schema.get(header.msg_type, 0)
             if header.schema > max_schema:
                 raise DecodeError(
                     f"Unsupported schema version {header.schema} for message type "
@@ -448,7 +459,7 @@ class MessageDecoder:
         if msg_class is None:
             raise DecodeError(f"Unknown message type: {header.msg_type}")
 
-        max_schema = _MAX_SCHEMA.get(header.msg_type, 0)
+        max_schema = self._max_schema.get(header.msg_type, 0)
         if header.schema > max_schema:
             raise DecodeError(
                 f"Unsupported schema version {header.schema} for message type "
