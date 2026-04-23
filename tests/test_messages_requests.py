@@ -488,6 +488,34 @@ class TestAssignRequest:
             assert len(w) == 0
 
 
+class TestAssignRequestDecodeRoleValidation:
+    """The 16-byte ASSIGN branch narrows the raw uint64 role through
+    ``NodeRole(raw)``. A value outside VOTER/STANDBY/SPARE must surface
+    as ``DecodeError("AssignRequest: unknown role N")`` rather than
+    silently constructing a dataclass with a raw int. Mirrors the
+    sibling ``ServersResponse`` coverage at
+    ``tests/test_messages_responses.py`` and the construction-side
+    cover added in ISSUE-424.
+    """
+
+    @pytest.mark.parametrize("bad_role", [4, 999, 0xFFFFFFFFFFFFFFFF])
+    def test_decode_rejects_unknown_role(self, bad_role: int) -> None:
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(1) + encode_uint64(bad_role)  # 16-byte ASSIGN
+        with pytest.raises(DecodeError, match=f"unknown role {bad_role}"):
+            AssignRequest.decode_body(body)
+
+    def test_decode_accepts_known_roles(self) -> None:
+        from dqlitewire.constants import NodeRole
+        from dqlitewire.types import encode_uint64
+
+        for role in NodeRole:
+            decoded = AssignRequest.decode_body(encode_uint64(1) + encode_uint64(role))
+            assert decoded.role == role
+
+
 class TestRemoveRequest:
     def test_roundtrip(self) -> None:
         msg = RemoveRequest(node_id=3)
