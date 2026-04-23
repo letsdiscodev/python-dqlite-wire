@@ -69,6 +69,23 @@ class TestHeaderReservedField:
         with pytest.raises(DecodeError, match="reserved field must be 0"):
             Header.decode(encoded)
 
+    def test_header_is_frozen_and_hashable(self) -> None:
+        """Header is a frozen/slotted dataclass — no post-construction
+        mutation, no ``__dict__``, hashable so test code can key sets/dicts
+        on header instances.
+        """
+        from dataclasses import FrozenInstanceError
+
+        h = Header(size_words=1, msg_type=0, schema=0, reserved=0)
+        with pytest.raises(FrozenInstanceError):
+            h.size_words = 5  # type: ignore[misc]
+        with pytest.raises(FrozenInstanceError):
+            h.msg_type = 99  # type: ignore[misc]
+        # slots=True removes __dict__
+        assert not hasattr(h, "__dict__")
+        # frozen=True makes the dataclass hashable
+        assert hash(h) == hash(Header(size_words=1, msg_type=0, schema=0, reserved=0))
+
 
 class TestLeaderRequest:
     def test_encode_has_body(self) -> None:

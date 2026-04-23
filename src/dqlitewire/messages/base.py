@@ -9,7 +9,7 @@ from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, EncodeError
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class Header:
     """Message header.
 
