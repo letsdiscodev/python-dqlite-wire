@@ -210,6 +210,35 @@ class TestParamsTupleExternalCount:
         assert decoded == []
         assert consumed == 0
 
+    @pytest.mark.parametrize(
+        ("data", "count", "schema", "buffer_offset"),
+        [
+            # count=10 V0, buffer_offset=0 → padded header is 16 bytes
+            (b"\x01" * 8, 10, 0, 0),  # short-by-eight
+            (b"\x01" * 15, 10, 0, 0),  # short-by-one
+            # count=14 V1, buffer_offset=2 → padded header is 14 bytes
+            (b"\x01" * 8, 14, 1, 2),
+            (b"\x01" * 13, 14, 1, 2),
+            # count=24 V0, buffer_offset=1 → padded = 24 + pad_to_word(25) = 31
+            (b"\x01" * 30, 24, 0, 1),
+        ],
+    )
+    def test_decode_with_external_count_short_data(
+        self, data: bytes, count: int, schema: int, buffer_offset: int
+    ) -> None:
+        """External-count branch must raise DecodeError, not IndexError,
+        when ``data`` is shorter than the padded type-code header.
+
+        The explicit ``len(data) < padded_header_len`` guard protects the
+        type-code read at ``data[count_size + i]``; a regression that
+        reordered the check to run after the read would raise
+        ``IndexError`` on this path. Every case here has
+        ``len(data) >= 8`` (the earlier truncation check passes) so the
+        test exercises only the padded-header-length branch.
+        """
+        with pytest.raises(DecodeError, match="Not enough data for param types"):
+            decode_params_tuple(data, count=count, schema=schema, buffer_offset=buffer_offset)
+
 
 class TestParamsTupleBufferOffset:
     def test_aligned_offset_matches_no_offset(self) -> None:
