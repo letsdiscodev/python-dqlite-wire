@@ -605,30 +605,36 @@ class TestParamsTupleWordAlignment:
 
 
 class TestRequestFieldValidation:
-    """Request fields should be validated at construction time, not just at encode time."""
+    """Request fields should be validated at construction time, not just at encode time.
+
+    Construction-time validation and encode-time validation share a single
+    helper in ``types.py`` so both raise ``EncodeError`` with the same
+    message shape. Callers previously catching ``TypeError``/``ValueError``
+    around construction need to widen to ``EncodeError``.
+    """
 
     def test_negative_uint32_field_rejected(self) -> None:
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(ValueError, match="db_id"):
+        with pytest.raises(EncodeError, match="db_id"):
             ExecRequest(db_id=-1, stmt_id=0, params=[])
 
     def test_overflow_uint32_field_rejected(self) -> None:
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(ValueError, match="stmt_id"):
+        with pytest.raises(EncodeError, match="stmt_id"):
             FinalizeRequest(db_id=0, stmt_id=2**32)
 
     def test_negative_uint64_field_rejected(self) -> None:
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(ValueError, match="client_id"):
+        with pytest.raises(EncodeError, match="client_id"):
             ClientRequest(client_id=-1)
 
     def test_overflow_uint64_field_rejected(self) -> None:
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(ValueError, match="timestamp"):
+        with pytest.raises(EncodeError, match="timestamp"):
             HeartbeatRequest(timestamp=2**64)
 
     def test_valid_values_accepted(self) -> None:
@@ -647,30 +653,47 @@ class TestRequestFieldValidation:
 
     def test_exec_rejects_large_db_id(self) -> None:
         """134: ExecRequest uses uint32 db_id, rejecting values > uint32 max."""
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(ValueError, match="db_id"):
+        with pytest.raises(EncodeError, match="db_id"):
             ExecRequest(db_id=2**32, stmt_id=0)
 
     def test_bool_rejected_for_uint32_db_id(self) -> None:
         """Bool must not be silently accepted as a uint32 field."""
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(TypeError, match="db_id must be int"):
+        with pytest.raises(EncodeError, match="db_id must be int"):
             ExecRequest(db_id=True, stmt_id=0)
 
     def test_bool_rejected_for_uint32_stmt_id(self) -> None:
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(TypeError, match="stmt_id must be int"):
+        with pytest.raises(EncodeError, match="stmt_id must be int"):
             ExecRequest(db_id=0, stmt_id=False)
 
     def test_bool_rejected_for_uint64_client_id(self) -> None:
         """Bool must not be silently accepted as a uint64 field."""
-        import pytest
+        from dqlitewire.exceptions import EncodeError
 
-        with pytest.raises(TypeError, match="client_id must be int"):
+        with pytest.raises(EncodeError, match="client_id must be int"):
             ClientRequest(client_id=True)
+
+    def test_construction_and_encode_raise_same_exception_class(self) -> None:
+        """Construction-time range checks and direct ``encode_uintN`` both
+        raise ``EncodeError`` now that the helpers share a single
+        implementation in ``types.py``.
+        """
+        from dqlitewire.exceptions import EncodeError
+        from dqlitewire.types import encode_uint32, encode_uint64
+
+        with pytest.raises(EncodeError):
+            encode_uint64(-1)
+        with pytest.raises(EncodeError):
+            encode_uint32(-1)
+        with pytest.raises(EncodeError):
+            ClientRequest(client_id=-1)
+        with pytest.raises(EncodeError):
+            ExecRequest(db_id=-1, stmt_id=0, params=[])
 
 
 class TestParamsBodySchemaRoundtrip:

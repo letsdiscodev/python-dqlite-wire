@@ -10,6 +10,8 @@ from dqlitewire.messages.base import Message
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
     WireInput,
+    _validate_uint32,
+    _validate_uint64,
     decode_text,
     decode_uint32,
     decode_uint64,
@@ -17,20 +19,6 @@ from dqlitewire.types import (
     encode_uint32,
     encode_uint64,
 )
-
-
-def _check_uint32(name: str, value: int) -> None:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError(f"{name} must be int, got {type(value).__name__}")
-    if not (0 <= value <= 0xFFFFFFFF):
-        raise ValueError(f"{name} must be uint32 (0 to 4294967295), got {value}")
-
-
-def _check_uint64(name: str, value: int) -> None:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError(f"{name} must be int, got {type(value).__name__}")
-    if not (0 <= value <= 0xFFFFFFFFFFFFFFFF):
-        raise ValueError(f"{name} must be uint64 (0 to 18446744073709551615), got {value}")
 
 
 def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> None:
@@ -93,7 +81,7 @@ class ClientRequest(Message):
     client_id: int
 
     def __post_init__(self) -> None:
-        _check_uint64("client_id", self.client_id)
+        _validate_uint64("client_id", self.client_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.client_id)
@@ -133,7 +121,7 @@ class HeartbeatRequest(Message):
     timestamp: int
 
     def __post_init__(self) -> None:
-        _check_uint64("timestamp", self.timestamp)
+        _validate_uint64("timestamp", self.timestamp)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.timestamp)
@@ -166,7 +154,7 @@ class OpenRequest(Message):
     vfs: str = ""
 
     def __post_init__(self) -> None:
-        _check_uint64("flags", self.flags)
+        _validate_uint64("flags", self.flags)
 
     def encode_body(self) -> bytes:
         result = encode_text(self.name)
@@ -205,7 +193,7 @@ class PrepareRequest(Message):
     schema: int = 0
 
     def __post_init__(self) -> None:
-        _check_uint64("db_id", self.db_id)
+        _validate_uint64("db_id", self.db_id)
         if self.schema not in (0, 1):
             raise ValueError(f"schema must be 0 or 1, got {self.schema}")
 
@@ -246,8 +234,8 @@ class ExecRequest(Message):
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        _check_uint32("db_id", self.db_id)
-        _check_uint32("stmt_id", self.stmt_id)
+        _validate_uint32("db_id", self.db_id)
+        _validate_uint32("stmt_id", self.stmt_id)
         _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
@@ -288,8 +276,8 @@ class QueryRequest(Message):
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        _check_uint32("db_id", self.db_id)
-        _check_uint32("stmt_id", self.stmt_id)
+        _validate_uint32("db_id", self.db_id)
+        _validate_uint32("stmt_id", self.stmt_id)
         _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
@@ -327,8 +315,8 @@ class FinalizeRequest(Message):
     stmt_id: int
 
     def __post_init__(self) -> None:
-        _check_uint32("db_id", self.db_id)
-        _check_uint32("stmt_id", self.stmt_id)
+        _validate_uint32("db_id", self.db_id)
+        _validate_uint32("stmt_id", self.stmt_id)
 
     def encode_body(self) -> bytes:
         return encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
@@ -358,7 +346,7 @@ class ExecSqlRequest(Message):
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        _check_uint64("db_id", self.db_id)
+        _validate_uint64("db_id", self.db_id)
         _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
@@ -401,7 +389,7 @@ class QuerySqlRequest(Message):
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        _check_uint64("db_id", self.db_id)
+        _validate_uint64("db_id", self.db_id)
         _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
@@ -440,7 +428,7 @@ class InterruptRequest(Message):
     db_id: int
 
     def __post_init__(self) -> None:
-        _check_uint64("db_id", self.db_id)
+        _validate_uint64("db_id", self.db_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.db_id)
@@ -471,7 +459,7 @@ class ConnectRequest(Message):
     address: str
 
     def __post_init__(self) -> None:
-        _check_uint64("node_id", self.node_id)
+        _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(self.address)
@@ -499,7 +487,7 @@ class AddRequest(Message):
     address: str
 
     def __post_init__(self) -> None:
-        _check_uint64("node_id", self.node_id)
+        _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(self.address)
@@ -529,7 +517,7 @@ class AssignRequest(Message):
     role: NodeRole | int | None = None
 
     def __post_init__(self) -> None:
-        _check_uint64("node_id", self.node_id)
+        _validate_uint64("node_id", self.node_id)
         if self.role is not None:
             # Coerce bare ints to the NodeRole enum and reject unknown
             # values. Mirrors the response-side narrowing on
@@ -538,9 +526,9 @@ class AssignRequest(Message):
             # unknown integer that would silently surface in the
             # dataclass.
             if isinstance(self.role, NodeRole):
-                _check_uint64("role", int(self.role))
+                _validate_uint64("role", int(self.role))
             else:
-                _check_uint64("role", self.role)
+                _validate_uint64("role", self.role)
                 try:
                     coerced = NodeRole(self.role)
                 except ValueError as e:
@@ -596,7 +584,7 @@ class RemoveRequest(Message):
     node_id: int
 
     def __post_init__(self) -> None:
-        _check_uint64("node_id", self.node_id)
+        _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id)
@@ -649,7 +637,7 @@ class ClusterRequest(Message):
     format: int = 1
 
     def __post_init__(self) -> None:
-        _check_uint64("format", self.format)
+        _validate_uint64("format", self.format)
         if self.format == 0:
             raise ValueError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
@@ -701,7 +689,7 @@ class TransferRequest(Message):
     target_node_id: int
 
     def __post_init__(self) -> None:
-        _check_uint64("target_node_id", self.target_node_id)
+        _validate_uint64("target_node_id", self.target_node_id)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.target_node_id)
@@ -731,7 +719,7 @@ class DescribeRequest(Message):
     format: int = 0
 
     def __post_init__(self) -> None:
-        _check_uint64("format", self.format)
+        _validate_uint64("format", self.format)
         if self.format != 0:
             raise ValueError(
                 f"DescribeRequest format must be 0 (V0); upstream rejects "
@@ -763,7 +751,7 @@ class WeightRequest(Message):
     weight: int
 
     def __post_init__(self) -> None:
-        _check_uint64("weight", self.weight)
+        _validate_uint64("weight", self.weight)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.weight)

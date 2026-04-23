@@ -64,10 +64,38 @@ def _bounded_repr(value: int) -> str:
     return f"{s[:_MAX_VALUE_REPR]}... [{len(s)} digits]"
 
 
+def _validate_uint64(name: str, value: int) -> None:
+    """Validate ``value`` is an int (not bool) in the uint64 range.
+
+    Shared by ``encode_uint64`` and message dataclass ``__post_init__``
+    sites so construction-time and encode-time checks raise the same
+    exception class (``EncodeError``) and both reject ``bool`` (which
+    ``isinstance(True, int)`` otherwise silently admits).
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise EncodeError(f"{name} must be int, got {type(value).__name__}")
+    if not 0 <= value < 2**64:
+        raise EncodeError(
+            f"{name}={_bounded_repr(value)} out of range for uint64 (0 to {(1 << 64) - 1})"
+        )
+
+
+def _validate_uint32(name: str, value: int) -> None:
+    """Validate ``value`` is an int (not bool) in the uint32 range.
+
+    Symmetric with :func:`_validate_uint64`.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise EncodeError(f"{name} must be int, got {type(value).__name__}")
+    if not 0 <= value < 2**32:
+        raise EncodeError(
+            f"{name}={_bounded_repr(value)} out of range for uint32 (0 to {(1 << 32) - 1})"
+        )
+
+
 def encode_uint64(value: int) -> bytes:
     """Encode an unsigned 64-bit integer (little-endian)."""
-    if not 0 <= value < 2**64:
-        raise EncodeError(f"Value {_bounded_repr(value)} out of range for uint64")
+    _validate_uint64("value", value)
     return struct.pack("<Q", value)
 
 
@@ -103,8 +131,7 @@ def decode_int64(data: bytes | memoryview) -> int:
 
 def encode_uint32(value: int) -> bytes:
     """Encode an unsigned 32-bit integer (little-endian)."""
-    if not 0 <= value < 2**32:
-        raise EncodeError(f"Value {_bounded_repr(value)} out of range for uint32")
+    _validate_uint32("value", value)
     return struct.pack("<I", value)
 
 
