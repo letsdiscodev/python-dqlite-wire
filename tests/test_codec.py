@@ -1617,6 +1617,38 @@ class TestDecoderPoisonedState:
         buf.poison(second)
         assert buf._poisoned is first
 
+    def test_has_message_true_then_decode_raises_and_poisons_on_reserved(self) -> None:
+        """``has_message()`` inspects only the 4-byte ``size_words`` prefix —
+        a well-framed header with a non-zero 16-bit reserved field returns
+        True, but ``decode()`` then reads the bytes, surfaces
+        ``DecodeError("reserved field must be 0")`` from ``Header.decode``,
+        and poisons the buffer. Pin the compound contract so a regression
+        that moves reserved validation out of the decode path (or narrows
+        the ``except BaseException`` poison handler) fails loudly.
+        """
+        import struct
+
+        from dqlitewire.constants import ResponseType
+        from dqlitewire.exceptions import PoisonedError, ProtocolError
+
+        decoder = MessageDecoder(is_request=False)
+        # size_words=1, type=FAILURE, schema=0, reserved=0xBEEF (non-zero).
+        header = struct.pack("<IBBH", 1, ResponseType.FAILURE, 0, 0xBEEF)
+        body = b"\x00" * 8
+        decoder.feed(header + body)
+
+        assert decoder.has_message() is True
+        assert decoder.is_poisoned is False
+        with pytest.raises(DecodeError, match="reserved field must be 0"):
+            decoder.decode()
+        assert decoder.is_poisoned is True
+
+        # Subsequent decode on the poisoned buffer must raise the
+        # poison-specific error (a ProtocolError subclass), not re-run
+        # the header parse.
+        with pytest.raises((PoisonedError, ProtocolError), match="poisoned"):
+            decoder.decode()
+
     def test_request_decoder_reset_clears_handshake_state(self) -> None:
         """For a server-side (request) decoder, reset() must also un-do the
         handshake so a reconnect requires a fresh handshake. Otherwise the
