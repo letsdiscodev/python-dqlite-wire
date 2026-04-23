@@ -771,6 +771,25 @@ class TestValue:
         with pytest.raises(DecodeError, match="8 bytes"):
             decode_value(b"", ValueType.NULL)
 
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"\x01\x00\x00\x00\x00\x00\x00\x00",
+            b"\x00\x00\x00\x00\x00\x00\x00\x01",
+            b"\xff" * 8,
+            b"\xde\xad\xbe\xef\xde\xad\xbe\xef",
+        ],
+    )
+    def test_decode_null_rejects_non_zero_payload(self, payload: bytes) -> None:
+        """A well-sized but non-zero NULL payload is either peer corruption
+        or a buggy encoder. ``decode_value`` must reject it rather than
+        silently returning ``None`` and discarding the garbage bits.
+        Mirrors the reserved-field hygiene pinned on Header / DbResponse /
+        LeaderRequest decoders.
+        """
+        with pytest.raises(DecodeError, match="NULL payload must be 8 zero bytes"):
+            decode_value(payload, ValueType.NULL)
+
     def test_encode_value_null_type_with_non_none_raises(self) -> None:
         """Explicit ValueType.NULL with a non-None value should raise EncodeError."""
         with pytest.raises(EncodeError, match="Cannot encode non-None value"):
