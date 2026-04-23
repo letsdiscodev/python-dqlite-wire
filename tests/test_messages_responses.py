@@ -7,9 +7,12 @@ from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
     _MAX_ADDRESS_SIZE,
+    _MAX_COLUMN_COUNT,
     _MAX_COLUMN_NAME_SIZE,
     _MAX_FAILURE_MESSAGE_SIZE,
     _MAX_FILENAME_SIZE,
+    _MAX_NODE_COUNT,
+    _MAX_TAIL_OFFSET,
     DbResponse,
     EmptyResponse,
     FailureResponse,
@@ -23,6 +26,7 @@ from dqlitewire.messages.responses import (
     StmtResponse,
     WelcomeResponse,
 )
+from dqlitewire.tuples import _MAX_PARAM_COUNT
 from dqlitewire.types import encode_text, encode_uint64
 
 
@@ -1596,3 +1600,103 @@ class TestReservedFieldValidation:
 
     def test_empty_response_accepts_zero_reserved(self) -> None:
         assert isinstance(EmptyResponse.decode_body(b"\x00" * 8), EmptyResponse)
+
+
+class TestEncodeSideCaps:
+    """Encode-side caps mirror the decode-side defense-in-depth bounds.
+
+    The wire decoders already reject oversized addresses, node counts,
+    column counts, column-name sizes, param counts, tail offsets, and
+    filenames. The encoders must refuse the same values so that a mock
+    server / proxy cannot produce bytes a conforming peer would reject.
+    """
+
+    def test_leader_response_rejects_oversize_address(self) -> None:
+        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        with pytest.raises(EncodeError, match="leader address"):
+            LeaderResponse(node_id=1, address=oversize).encode_body()
+
+    def test_leader_response_accepts_address_at_cap(self) -> None:
+        at_cap = "a" * _MAX_ADDRESS_SIZE
+        body = LeaderResponse(node_id=1, address=at_cap).encode_body()
+        decoded = LeaderResponse.decode_body(body)
+        assert decoded.address == at_cap
+
+    def test_leader_response_legacy_rejects_oversize_address(self) -> None:
+        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        with pytest.raises(EncodeError, match="leader address"):
+            LeaderResponse(node_id=0, address=oversize).encode_body_legacy()
+
+    def test_leader_response_legacy_accepts_address_at_cap(self) -> None:
+        at_cap = "a" * _MAX_ADDRESS_SIZE
+        body = LeaderResponse(node_id=0, address=at_cap).encode_body_legacy()
+        decoded = LeaderResponse.decode_body_legacy(body)
+        assert decoded.address == at_cap
+
+    def test_servers_response_rejects_oversize_node_count(self) -> None:
+        nodes = [NodeInfo(node_id=i, address="n:9", role=2) for i in range(_MAX_NODE_COUNT + 1)]
+        with pytest.raises(EncodeError, match="node count"):
+            ServersResponse(nodes=nodes).encode_body()
+
+    def test_servers_response_rejects_oversize_address(self) -> None:
+        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        nodes = [NodeInfo(node_id=1, address=oversize, role=2)]
+        with pytest.raises(EncodeError, match="server address"):
+            ServersResponse(nodes=nodes).encode_body()
+
+    def test_servers_response_accepts_address_at_cap(self) -> None:
+        at_cap = "a" * _MAX_ADDRESS_SIZE
+        nodes = [NodeInfo(node_id=1, address=at_cap, role=2)]
+        body = ServersResponse(nodes=nodes).encode_body()
+        decoded = ServersResponse.decode_body(body)
+        assert decoded.nodes[0].address == at_cap
+
+    def test_rows_response_rejects_oversize_column_count(self) -> None:
+        # No rows — just exercise the column_count cap.
+        names = [f"c{i}" for i in range(_MAX_COLUMN_COUNT + 1)]
+        with pytest.raises(EncodeError, match="column count"):
+            RowsResponse(column_names=names, rows=[]).encode_body()
+
+    def test_rows_response_rejects_oversize_column_name(self) -> None:
+        oversize = "a" * (_MAX_COLUMN_NAME_SIZE + 1)
+        with pytest.raises(EncodeError, match="column name"):
+            RowsResponse(column_names=[oversize], rows=[]).encode_body()
+
+    def test_rows_response_accepts_column_name_at_cap(self) -> None:
+        at_cap = "a" * _MAX_COLUMN_NAME_SIZE
+        body = RowsResponse(column_names=[at_cap], rows=[]).encode_body()
+        decoded = RowsResponse.decode_body(body)
+        assert decoded.column_names == [at_cap]
+
+    def test_stmt_response_rejects_oversize_num_params(self) -> None:
+        with pytest.raises(EncodeError, match="num_params"):
+            StmtResponse(db_id=1, stmt_id=1, num_params=_MAX_PARAM_COUNT + 1).encode_body()
+
+    def test_stmt_response_accepts_num_params_at_cap(self) -> None:
+        body = StmtResponse(db_id=1, stmt_id=1, num_params=_MAX_PARAM_COUNT).encode_body()
+        decoded = StmtResponse.decode_body(body, schema=0)
+        assert decoded.num_params == _MAX_PARAM_COUNT
+
+    def test_stmt_response_rejects_oversize_tail_offset(self) -> None:
+        with pytest.raises(EncodeError, match="tail_offset"):
+            StmtResponse(
+                db_id=1, stmt_id=1, num_params=0, tail_offset=_MAX_TAIL_OFFSET + 1
+            ).encode_body()
+
+    def test_stmt_response_accepts_tail_offset_at_cap(self) -> None:
+        body = StmtResponse(
+            db_id=1, stmt_id=1, num_params=0, tail_offset=_MAX_TAIL_OFFSET
+        ).encode_body()
+        decoded = StmtResponse.decode_body(body, schema=1)
+        assert decoded.tail_offset == _MAX_TAIL_OFFSET
+
+    def test_files_response_rejects_oversize_filename(self) -> None:
+        oversize = "a" * (_MAX_FILENAME_SIZE + 1)
+        with pytest.raises(EncodeError, match="filename"):
+            FilesResponse(files={oversize: b""}).encode_body()
+
+    def test_files_response_accepts_filename_at_cap(self) -> None:
+        at_cap = "a" * _MAX_FILENAME_SIZE
+        body = FilesResponse(files={at_cap: b""}).encode_body()
+        decoded = FilesResponse.decode_body(body)
+        assert at_cap in decoded.files

@@ -179,6 +179,10 @@ class LeaderResponse(Message):
     address: str
 
     def encode_body(self) -> bytes:
+        if len(self.address) > _MAX_ADDRESS_SIZE:
+            raise EncodeError(
+                f"leader address length {len(self.address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+            )
         return encode_uint64(self.node_id) + encode_text(self.address)
 
     def encode_body_legacy(self) -> bytes:
@@ -190,7 +194,12 @@ class LeaderResponse(Message):
         ``node_id`` is dropped — the legacy format carries only the
         address.
         """
-        return encode_text(self.address or "")
+        address = self.address or ""
+        if len(address) > _MAX_ADDRESS_SIZE:
+            raise EncodeError(
+                f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
+            )
+        return encode_text(address)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
@@ -332,6 +341,10 @@ class StmtResponse(Message):
         return 1 if self.tail_offset is not None else 0
 
     def encode_body(self) -> bytes:
+        if self.num_params > _MAX_PARAM_COUNT:
+            raise EncodeError(
+                f"StmtResponse num_params {self.num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
+            )
         result = (
             encode_uint32(self.db_id) + encode_uint32(self.stmt_id) + encode_uint64(self.num_params)
         )
@@ -339,7 +352,12 @@ class StmtResponse(Message):
             # V1: always emit tail_offset (default 0 when None so an
             # explicit schema=1 without tail_offset still produces a
             # 24-byte body matching the inbound PrepareRequest.schema).
-            result += encode_uint64(self.tail_offset or 0)
+            tail_offset = self.tail_offset or 0
+            if tail_offset > _MAX_TAIL_OFFSET:
+                raise EncodeError(
+                    f"StmtResponse tail_offset {tail_offset} exceeds maximum ({_MAX_TAIL_OFFSET})"
+                )
+            result += encode_uint64(tail_offset)
         return result
 
     @classmethod
@@ -478,6 +496,16 @@ class RowsResponse(Message):
 
     def encode_body(self) -> bytes:
         col_count = len(self.column_names)
+        if col_count > _MAX_COLUMN_COUNT:
+            raise EncodeError(
+                f"RowsResponse column count {col_count} exceeds maximum ({_MAX_COLUMN_COUNT})"
+            )
+        for name in self.column_names:
+            if len(name) > _MAX_COLUMN_NAME_SIZE:
+                raise EncodeError(
+                    f"RowsResponse column name length {len(name)} exceeds maximum "
+                    f"({_MAX_COLUMN_NAME_SIZE})"
+                )
         if self.column_types and len(self.column_types) != col_count:
             raise EncodeError(
                 f"column_types length ({len(self.column_types)}) != "
@@ -696,6 +724,12 @@ class FilesResponse(Message):
             raise EncodeError(
                 f"FilesResponse count {len(self.files)} exceeds maximum ({_MAX_FILE_COUNT})"
             )
+        for name in self.files:
+            if len(name) > _MAX_FILENAME_SIZE:
+                raise EncodeError(
+                    f"FilesResponse filename length {len(name)} exceeds maximum "
+                    f"({_MAX_FILENAME_SIZE})"
+                )
         result = encode_uint64(len(self.files))
         for name, content in self.files.items():
             # The upstream C server (gateway.c::dumpFile) asserts
@@ -799,8 +833,17 @@ class ServersResponse(Message):
     nodes: list[NodeInfo] = field(default_factory=list)
 
     def encode_body(self) -> bytes:
+        if len(self.nodes) > _MAX_NODE_COUNT:
+            raise EncodeError(
+                f"ServersResponse node count {len(self.nodes)} exceeds maximum ({_MAX_NODE_COUNT})"
+            )
         result = encode_uint64(len(self.nodes))
         for node in self.nodes:
+            if len(node.address) > _MAX_ADDRESS_SIZE:
+                raise EncodeError(
+                    f"server address length {len(node.address)} exceeds maximum "
+                    f"({_MAX_ADDRESS_SIZE})"
+                )
             result += encode_uint64(node.node_id)
             result += encode_text(node.address)
             result += encode_uint64(node.role)
