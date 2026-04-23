@@ -15,7 +15,6 @@ from dqlitewire.messages import (
     DbResponse,
     EmptyResponse,
     FailureResponse,
-    HeartbeatRequest,
     LeaderRequest,
     LeaderResponse,
     OpenRequest,
@@ -25,6 +24,7 @@ from dqlitewire.messages import (
     StmtResponse,
     WelcomeResponse,
 )
+from dqlitewire.messages.requests import _HeartbeatRequest
 
 
 class TestMessageEncoder:
@@ -812,12 +812,23 @@ class TestRoundTrip:
         with pytest.raises(DecodeError, match="[Bb]ody.*short"):
             decode_message(data, is_request=True)
 
-    def test_heartbeat_request(self) -> None:
-        original = HeartbeatRequest(timestamp=1710000000)
-        encoded = encode_message(original)
-        decoded = decode_message(encoded, is_request=True)
-        assert isinstance(decoded, HeartbeatRequest)
-        assert decoded.timestamp == 1710000000
+    def test_heartbeat_request_rejected_by_decode_message(self) -> None:
+        """Type-2 frames are not decodable via the public registry.
+
+        ``_HeartbeatRequest`` stays private and is intentionally absent
+        from ``REQUEST_TYPES`` (upstream C's dispatcher falls through to
+        ``DQLITE_PARSE`` for type 2, so no real server accepts one). A
+        synthesised type-2 frame must surface as the unknown-type error
+        rather than silently decode.
+        """
+        from dqlitewire.codec import REQUEST_TYPES
+        from dqlitewire.constants import RequestType
+
+        assert RequestType.HEARTBEAT not in REQUEST_TYPES
+
+        encoded = encode_message(_HeartbeatRequest(timestamp=1710000000))
+        with pytest.raises(DecodeError, match="Unknown message type"):
+            decode_message(encoded, is_request=True)
 
     def test_finalize_request(self) -> None:
         from dqlitewire.messages.requests import FinalizeRequest

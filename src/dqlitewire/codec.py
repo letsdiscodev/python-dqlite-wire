@@ -27,7 +27,6 @@ from dqlitewire.messages.requests import (
     ExecRequest,
     ExecSqlRequest,
     FinalizeRequest,
-    HeartbeatRequest,
     InterruptRequest,
     LeaderRequest,
     OpenRequest,
@@ -52,11 +51,18 @@ from dqlitewire.messages.responses import (
     WelcomeResponse,
 )
 
-# Mapping from type codes to message classes
+# Mapping from type codes to message classes.
+#
+# ``RequestType.HEARTBEAT`` is intentionally absent: upstream C's
+# ``REQUEST__TYPES`` (``request.h``) omits heartbeat and ``gateway.c``
+# falls through to ``DQLITE_PARSE`` for type-2 frames, so no real server
+# accepts one. A type-2 frame decodes to the unknown-type error path
+# here, matching upstream's reject. The historical class lives on as
+# the private ``_HeartbeatRequest`` in ``messages.requests`` for
+# test-mock / golden-byte harnesses that synthesize the frame.
 REQUEST_TYPES: dict[int, type[Message]] = {
     RequestType.LEADER: LeaderRequest,
     RequestType.CLIENT: ClientRequest,
-    RequestType.HEARTBEAT: HeartbeatRequest,
     RequestType.OPEN: OpenRequest,
     RequestType.PREPARE: PrepareRequest,
     RequestType.EXEC: ExecRequest,

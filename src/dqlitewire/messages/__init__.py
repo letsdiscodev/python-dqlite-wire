@@ -12,7 +12,6 @@ from dqlitewire.messages.requests import (
     ExecRequest,
     ExecSqlRequest,
     FinalizeRequest,
-    HeartbeatRequest,
     InterruptRequest,
     LeaderRequest,
     OpenRequest,
@@ -45,7 +44,6 @@ __all__ = [
     # Requests
     "LeaderRequest",
     "ClientRequest",
-    "HeartbeatRequest",
     "OpenRequest",
     "PrepareRequest",
     "ExecRequest",

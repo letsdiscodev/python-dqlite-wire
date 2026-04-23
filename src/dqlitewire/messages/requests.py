@@ -95,8 +95,8 @@ class ClientRequest(Message):
 
 
 @dataclass
-class HeartbeatRequest(Message):
-    """Send heartbeat to server.
+class _HeartbeatRequest(Message):
+    """Send heartbeat to server (private — not a public wire message).
 
     .. warning::
 
@@ -107,11 +107,17 @@ class HeartbeatRequest(Message):
         dispatcher falls through to ``DQLITE_PARSE`` for this type. The
         Go client's heartbeat code is also commented out.
 
+        Because no upstream peer accepts a heartbeat frame, this class
+        is private: it is omitted from the ``REQUEST_TYPES`` registry in
+        ``codec.py`` and from ``messages/__init__.py``'s ``__all__``.
+        It remains in the source tree only for test-mock / golden-byte
+        harnesses that synthesize a type-2 frame for negative-path
+        coverage; callers import it via the private symbol
+        ``dqlitewire.messages.requests._HeartbeatRequest``.
+
         This dataclass preserves the historical ``uint64 timestamp``
-        layout for test-mock / golden-byte compatibility, but no real
-        upstream peer accepts it: a real C server replies with a
-        ``FailureResponse``. If upstream ever defines a schema, this
-        body shape will need to change.
+        layout for that compatibility purpose; if upstream ever defines
+        a real schema, this body shape will need to change.
 
     Body: uint64 timestamp (speculative — not part of any upstream spec)
     """
@@ -127,9 +133,9 @@ class HeartbeatRequest(Message):
         return encode_uint64(self.timestamp)
 
     @classmethod
-    def decode_body(cls, data: bytes, schema: int = 0) -> "HeartbeatRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "_HeartbeatRequest":
         if len(data) != 8:
-            raise DecodeError(f"HeartbeatRequest body must be 8 bytes, got {len(data)}")
+            raise DecodeError(f"_HeartbeatRequest body must be 8 bytes, got {len(data)}")
         timestamp = decode_uint64(data)
         return cls(timestamp)
 

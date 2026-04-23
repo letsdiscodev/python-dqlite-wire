@@ -26,7 +26,6 @@ from dqlitewire.messages import (
     FailureResponse,
     FilesResponse,
     FinalizeRequest,
-    HeartbeatRequest,
     InterruptRequest,
     LeaderRequest,
     LeaderResponse,
@@ -43,6 +42,7 @@ from dqlitewire.messages import (
     StmtResponse,
     WelcomeResponse,
 )
+from dqlitewire.messages.requests import _HeartbeatRequest
 
 
 def _header(size_words: int, msg_type: int, schema: int = 0) -> bytes:
@@ -122,20 +122,19 @@ class TestGoldenRequests:
         assert msg.stmt_id == 2
 
     def test_heartbeat_request(self) -> None:
-        """HeartbeatRequest(timestamp=1_700_000_000): type=2, body=uint64.
+        """``_HeartbeatRequest(timestamp=1_700_000_000)``: type=2, body=uint64.
 
-        The C server currently does not dispatch HEARTBEAT, but the wire
-        layout is still shipped as part of the public message surface;
-        pin it here so an encoder refactor cannot drift the byte shape
-        symmetrically with the decoder.
+        ``_HeartbeatRequest`` is a private class — upstream C does not
+        dispatch type 2 and no real server accepts the frame. Pin the
+        encoded byte shape here so a test-mock or golden-byte harness
+        that still synthesises the frame stays byte-stable across encoder
+        refactors. ``decode_message`` on the same bytes is not exercised:
+        the public registry intentionally omits ``RequestType.HEARTBEAT``
+        and raises ``DecodeError("Unknown message type")`` for type-2.
         """
         ts = 1_700_000_000
         expected = _header(1, 2) + _u64(ts)
-        assert encode_message(HeartbeatRequest(timestamp=ts)) == expected
-
-        msg = decode_message(expected, is_request=True)
-        assert isinstance(msg, HeartbeatRequest)
-        assert msg.timestamp == ts
+        assert encode_message(_HeartbeatRequest(timestamp=ts)) == expected
 
     def test_interrupt_request(self) -> None:
         """InterruptRequest(db_id=0x1234567890ABCDEF): type=10.

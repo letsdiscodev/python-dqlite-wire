@@ -15,7 +15,6 @@ from dqlitewire.messages.requests import (
     ExecRequest,
     ExecSqlRequest,
     FinalizeRequest,
-    HeartbeatRequest,
     InterruptRequest,
     LeaderRequest,
     OpenRequest,
@@ -25,6 +24,7 @@ from dqlitewire.messages.requests import (
     RemoveRequest,
     TransferRequest,
     WeightRequest,
+    _HeartbeatRequest,
 )
 
 
@@ -39,7 +39,7 @@ class TestHeaderReservedField:
     """
 
     def test_encoded_reserved_is_zero(self) -> None:
-        cases = [LeaderRequest(), HeartbeatRequest(timestamp=0), OpenRequest(name="db")]
+        cases = [LeaderRequest(), _HeartbeatRequest(timestamp=0), OpenRequest(name="db")]
         for msg in cases:
             encoded = msg.encode()
             header = Header.decode(encoded[:HEADER_SIZE])
@@ -155,12 +155,24 @@ class TestClientRequest:
         assert decoded.client_id == 98765
 
 
-class TestHeartbeatRequest:
+class Test_HeartbeatRequest:
     def test_roundtrip(self) -> None:
-        msg = HeartbeatRequest(timestamp=1234567890)
+        msg = _HeartbeatRequest(timestamp=1234567890)
         encoded = msg.encode()
-        decoded = HeartbeatRequest.decode_body(encoded[HEADER_SIZE:])
+        decoded = _HeartbeatRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.timestamp == 1234567890
+
+    def test_not_in_public_request_registry(self) -> None:
+        """``_HeartbeatRequest`` must stay private: no real upstream server
+        accepts a type-2 frame, so the public ``REQUEST_TYPES`` registry
+        and ``messages/__init__.py`` ``__all__`` do not export it.
+        """
+        import dqlitewire.messages as messages
+        from dqlitewire.codec import REQUEST_TYPES
+
+        assert RequestType.HEARTBEAT not in REQUEST_TYPES
+        assert "HeartbeatRequest" not in getattr(messages, "__all__", [])
+        assert not hasattr(messages, "HeartbeatRequest")
 
 
 class TestOpenRequest:
@@ -652,7 +664,7 @@ class TestRequestFieldValidation:
         from dqlitewire.exceptions import EncodeError
 
         with pytest.raises(EncodeError, match="timestamp"):
-            HeartbeatRequest(timestamp=2**64)
+            _HeartbeatRequest(timestamp=2**64)
 
     def test_valid_values_accepted(self) -> None:
         """Valid values should not raise."""
@@ -660,7 +672,7 @@ class TestRequestFieldValidation:
         ExecRequest(db_id=2**32 - 1, stmt_id=2**32 - 1, params=[])
         ClientRequest(client_id=0)
         ClientRequest(client_id=2**64 - 1)
-        HeartbeatRequest(timestamp=0)
+        _HeartbeatRequest(timestamp=0)
         OpenRequest(name="test.db", flags=0, vfs="")
 
     def test_exec_sql_accepts_large_db_id(self) -> None:

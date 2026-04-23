@@ -35,7 +35,6 @@ from dqlitewire.messages.requests import (
     ExecRequest,
     ExecSqlRequest,
     FinalizeRequest,
-    HeartbeatRequest,
     InterruptRequest,
     OpenRequest,
     PrepareRequest,
@@ -44,6 +43,7 @@ from dqlitewire.messages.requests import (
     RemoveRequest,
     TransferRequest,
     WeightRequest,
+    _HeartbeatRequest,
 )
 from dqlitewire.types import encode_uint64
 
@@ -55,7 +55,7 @@ class TestFixedSizeRequestStrictLength:
         "cls",
         [
             ClientRequest,
-            HeartbeatRequest,
+            _HeartbeatRequest,
             InterruptRequest,
             RemoveRequest,
             TransferRequest,
@@ -73,7 +73,7 @@ class TestFixedSizeRequestStrictLength:
         "cls",
         [
             ClientRequest,
-            HeartbeatRequest,
+            _HeartbeatRequest,
             InterruptRequest,
             RemoveRequest,
             TransferRequest,
