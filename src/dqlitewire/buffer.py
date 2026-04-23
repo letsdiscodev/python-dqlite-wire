@@ -225,6 +225,14 @@ class ReadBuffer:
         ``True`` so that the caller's ``while decoder.has_message(): ...``
         loop proceeds to the consume call, where the error actually surfaces.
         The raise lives in ``read_message()`` / ``skip_message()``, not here.
+
+        Only the 4-byte ``size_words`` field is inspected. The other header
+        fields (``msg_type``, ``schema_version``, ``reserved``) are not
+        validated at this layer, so a ``True`` return does not imply that
+        the subsequent ``read_message()`` / ``Header.decode`` will succeed.
+        A non-zero ``reserved`` value (rejected by ``Header.decode`` per the
+        upstream C invariant) still reports ``True`` here; the decode path
+        then raises ``DecodeError`` and poisons the buffer.
         """
         available = len(self._data) - self._pos
 
@@ -265,6 +273,15 @@ class ReadBuffer:
         ``max_message_size`` guard the caller is presumably relying on. The
         error message and exception type match ``read_message()`` so the
         consume-side recovery path (``skip_message()``) applies the same way.
+
+        The ``msg_type`` and ``schema_version`` bytes are returned raw and
+        the 16-bit ``reserved`` field is not inspected. A successful peek
+        therefore does not imply that a subsequent ``Header.decode`` will
+        succeed: a non-zero ``reserved`` value (rejected strictly by
+        ``Header.decode`` per the upstream C invariant) is silently passed
+        through here, and the decode path will then raise and poison the
+        buffer. Callers that need decode-success guarantees must go through
+        ``read_message()``.
 
         Raises ``ProtocolError`` if the buffer is poisoned.
         """
