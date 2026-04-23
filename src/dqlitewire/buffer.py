@@ -283,6 +283,14 @@ class ReadBuffer:
         buffer. Callers that need decode-success guarantees must go through
         ``read_message()``.
 
+        The ``schema_version`` byte is likewise a raw wire value with no
+        per-``msg_type`` bound enforced here — the per-type maximum lives
+        in the codec layer (``_MAX_SCHEMA`` in ``codec.py``). Callers
+        using this field for routing / metrics / dispatch should
+        re-validate against the codec's cap before acting on it; the
+        ``read_message`` / ``MessageDecoder.decode`` path enforces the
+        bound itself.
+
         Raises ``ProtocolError`` if the buffer is poisoned.
         """
         self._check_poisoned()
