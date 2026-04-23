@@ -1700,3 +1700,58 @@ class TestEncodeSideCaps:
         body = FilesResponse(files={at_cap: b""}).encode_body()
         decoded = FilesResponse.decode_body(body)
         assert at_cap in decoded.files
+
+
+class TestDecodeTextCapsAreByteBased:
+    """Sized text decoders must short-circuit on UTF-8 byte count, not
+    Python character count.
+
+    A 3-byte-per-codepoint UTF-8 string (e.g. CJK) at ``_MAX_X // 2``
+    characters occupies 1.5× ``_MAX_X`` bytes on the wire. A
+    post-decode ``len(str) > cap`` guard accepts it; a byte-level
+    ``decode_text(max_size=cap)`` rejects it before UTF-8 decoding.
+    """
+
+    def test_failure_response_rejects_oversize_utf8_message(self) -> None:
+        # "漢" is U+6F22, 3 UTF-8 bytes.
+        char_count = _MAX_FAILURE_MESSAGE_SIZE // 3 + 1
+        msg = "漢" * char_count
+        body = encode_uint64(1) + encode_text(msg)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            FailureResponse.decode_body(body)
+
+    def test_leader_response_rejects_oversize_utf8_address(self) -> None:
+        char_count = _MAX_ADDRESS_SIZE // 3 + 1
+        address = "漢" * char_count
+        body = encode_uint64(1) + encode_text(address)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            LeaderResponse.decode_body(body)
+
+    def test_leader_response_legacy_rejects_oversize_utf8_address(self) -> None:
+        char_count = _MAX_ADDRESS_SIZE // 3 + 1
+        address = "漢" * char_count
+        body = encode_text(address)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            LeaderResponse.decode_body_legacy(body)
+
+    def test_servers_response_rejects_oversize_utf8_address(self) -> None:
+        char_count = _MAX_ADDRESS_SIZE // 3 + 1
+        address = "漢" * char_count
+        body = encode_uint64(1) + encode_uint64(1) + encode_text(address) + encode_uint64(2)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            ServersResponse.decode_body(body)
+
+    def test_rows_response_rejects_oversize_utf8_column_name(self) -> None:
+        char_count = _MAX_COLUMN_NAME_SIZE // 3 + 1
+        name = "漢" * char_count
+        body = encode_uint64(1) + encode_text(name) + encode_uint64(0)
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            RowsResponse.decode_body(body)
+
+    def test_files_response_rejects_oversize_utf8_filename(self) -> None:
+        char_count = _MAX_FILENAME_SIZE // 3 + 1
+        name = "漢" * char_count
+        content = b"\x00" * 8
+        body = encode_uint64(1) + encode_text(name) + encode_uint64(len(content)) + content
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            FilesResponse.decode_body(body)

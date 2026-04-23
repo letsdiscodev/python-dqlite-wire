@@ -182,7 +182,10 @@ _TEXT_SCAN_CHUNK = 4096
 
 
 def decode_text(
-    data: bytes | memoryview, *, max_size: int = _MAX_TEXT_VALUE_SIZE
+    data: bytes | memoryview,
+    *,
+    max_size: int = _MAX_TEXT_VALUE_SIZE,
+    label: str = "Text",
 ) -> tuple[str, int]:
     """Decode null-terminated UTF-8 text.
 
@@ -193,7 +196,10 @@ def decode_text(
     defaults to ``_MAX_TEXT_VALUE_SIZE``. Callers that enforce a
     smaller cap (e.g. ``decode_column_name`` at 4 KiB) pass their own
     ceiling; callers that legitimately need the full row-cell cap use
-    the default.
+    the default. ``label`` is used in the ``DecodeError`` message when
+    ``max_size`` is exceeded, so a caller passing
+    ``label="leader address"`` gets ``"leader address length N exceeds
+    maximum (M)"`` rather than the generic ``"Text length..."``.
 
     The decoder's hot body loops (RowsResponse, FilesResponse,
     ServersResponse) wrap the body in a ``memoryview`` so
@@ -250,7 +256,7 @@ def decode_text(
             raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
 
     if null_pos > max_size:
-        raise DecodeError(f"Text length {null_pos} exceeds maximum ({max_size})")
+        raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
     # Calculate total size including padding
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
     if len(data) < total_size:

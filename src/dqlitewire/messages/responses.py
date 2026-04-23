@@ -151,11 +151,9 @@ class FailureResponse(Message):
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         code = decode_uint64(data)
-        message, consumed = decode_text(data[8:])
-        if len(message) > _MAX_FAILURE_MESSAGE_SIZE:
-            raise DecodeError(
-                f"Failure message length {len(message)} exceeds maximum {_MAX_FAILURE_MESSAGE_SIZE}"
-            )
+        message, consumed = decode_text(
+            data[8:], max_size=_MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
+        )
         offset = 8 + consumed
         if offset != len(data):
             # Strict-decode parity with sibling decoders: conforming
@@ -210,11 +208,9 @@ class LeaderResponse(Message):
         node_id, use decode_body_legacy() instead.
         """
         node_id = decode_uint64(data)
-        address, consumed = decode_text(data[8:])
-        if len(address) > _MAX_ADDRESS_SIZE:
-            raise DecodeError(
-                f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
-            )
+        address, consumed = decode_text(
+            data[8:], max_size=_MAX_ADDRESS_SIZE, label="leader address"
+        )
         offset = 8 + consumed
         if offset != len(data):
             # Strict-decode parity with sibling decoders: conforming
@@ -231,11 +227,7 @@ class LeaderResponse(Message):
         Legacy format: text address only (no node_id). Returns node_id=0.
         Go reference: DecodeNodeLegacy in internal/protocol/message.go.
         """
-        address, consumed = decode_text(data)
-        if len(address) > _MAX_ADDRESS_SIZE:
-            raise DecodeError(
-                f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
-            )
+        address, consumed = decode_text(data, max_size=_MAX_ADDRESS_SIZE, label="leader address")
         if consumed != len(data):
             raise DecodeError(
                 f"LeaderResponse (legacy) has {len(data) - consumed} trailing bytes after address"
@@ -588,11 +580,9 @@ class RowsResponse(Message):
         # Column names
         column_names: list[str] = []
         for _ in range(column_count):
-            name, consumed = decode_text(view[offset:])
-            if len(name) > _MAX_COLUMN_NAME_SIZE:
-                raise DecodeError(
-                    f"column name length {len(name)} exceeds maximum {_MAX_COLUMN_NAME_SIZE}"
-                )
+            name, consumed = decode_text(
+                view[offset:], max_size=_MAX_COLUMN_NAME_SIZE, label="column name"
+            )
             column_names.append(name)
             offset += consumed
 
@@ -767,11 +757,9 @@ class FilesResponse(Message):
                 f"{remaining} bytes of remaining data"
             )
         for _ in range(count):
-            name, consumed = decode_text(view[offset:])
-            if len(name) > _MAX_FILENAME_SIZE:
-                raise DecodeError(
-                    f"filename length {len(name)} exceeds maximum {_MAX_FILENAME_SIZE}"
-                )
+            name, consumed = decode_text(
+                view[offset:], max_size=_MAX_FILENAME_SIZE, label="filename"
+            )
             offset += consumed
             size = decode_uint64(view[offset:])
             offset += 8
@@ -869,11 +857,9 @@ class ServersResponse(Message):
         for _ in range(count):
             node_id = decode_uint64(view[offset:])
             offset += 8
-            address, consumed = decode_text(view[offset:])
-            if len(address) > _MAX_ADDRESS_SIZE:
-                raise DecodeError(
-                    f"server address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
-                )
+            address, consumed = decode_text(
+                view[offset:], max_size=_MAX_ADDRESS_SIZE, label="server address"
+            )
             address = _sanitize_server_text(address)
             offset += consumed
             raw_role = decode_uint64(view[offset:])
