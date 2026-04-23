@@ -1532,6 +1532,25 @@ class TestShortBodyDecoding:
         with pytest.raises(DecodeError):
             LeaderResponse.decode_body_legacy(b"abc")
 
+    def test_leader_response_missing_null_terminator_names_field(self) -> None:
+        """When the address text has no NUL terminator, the DecodeError
+        must carry the ``leader address`` label so operators can trace the
+        failure to the LEADER response's address field rather than see a
+        generic ``"Text not null-terminated"``.
+        """
+        # 8 bytes of node_id then bytes with no NUL.
+        body = b"\x01\x00\x00\x00\x00\x00\x00\x00" + b"abc"
+        with pytest.raises(DecodeError, match="leader address not null-terminated"):
+            LeaderResponse.decode_body(body)
+
+    def test_decode_text_uses_label_on_null_term_error(self) -> None:
+        """``decode_text``'s ``label`` kwarg must propagate into the
+        null-terminator diagnostic, not just the max-length one."""
+        from dqlitewire.types import decode_text
+
+        with pytest.raises(DecodeError, match="zop not null-terminated"):
+            decode_text(b"abc", label="zop")
+
 
 class TestServerTextSanitization:
     """Server-supplied strings that flow into exception messages and

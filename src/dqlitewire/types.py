@@ -246,11 +246,11 @@ def decode_text(
             materialized = bytes(data)
             null_pos = materialized.find(b"\x00")
             if null_pos < 0:
-                raise DecodeError("Text not null-terminated")
+                raise DecodeError(f"{label} not null-terminated")
             try:
                 text = materialized[:null_pos].decode("utf-8")
             except UnicodeDecodeError as e:
-                raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+                raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
         else:
             # Chunked fallback for pathologically long text payloads.
             chunks: list[bytes] = []
@@ -267,20 +267,20 @@ def decode_text(
                 chunks.append(chunk)
                 scanned = chunk_end
             if null_pos < 0:
-                raise DecodeError("Text not null-terminated")
+                raise DecodeError(f"{label} not null-terminated")
             try:
                 text = b"".join(chunks).decode("utf-8")
             except UnicodeDecodeError as e:
-                raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+                raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
     else:
         try:
             null_pos = data.index(b"\x00")
         except ValueError as e:
-            raise DecodeError("Text not null-terminated") from e
+            raise DecodeError(f"{label} not null-terminated") from e
         try:
             text = data[:null_pos].decode("utf-8")
         except UnicodeDecodeError as e:
-            raise DecodeError(f"Invalid UTF-8 in text field: {e}") from e
+            raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
 
     if null_pos > max_size:
         raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
