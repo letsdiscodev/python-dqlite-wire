@@ -800,9 +800,15 @@ class FilesResponse(Message):
         return cls(files)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class NodeInfo:
-    """Information about a cluster node."""
+    """Information about a cluster node.
+
+    Frozen + slotted to match ``dqliteclient.node_store.NodeInfo``. The
+    class holds wire-decoded values that are handed off for routing
+    decisions; mutation would invalidate caller-held references, and
+    hashability lets instances live in sets / dict keys.
+    """
 
     node_id: int
     address: str

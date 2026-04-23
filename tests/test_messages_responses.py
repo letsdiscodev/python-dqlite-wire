@@ -1702,6 +1702,23 @@ class TestEncodeSideCaps:
         assert at_cap in decoded.files
 
 
+class TestNodeInfoFrozenSlotted:
+    """Mirror of ``dqliteclient.node_store.NodeInfo`` invariants."""
+
+    def test_is_frozen(self) -> None:
+        import dataclasses
+
+        node = NodeInfo(node_id=1, address="host:1", role=2)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            node.node_id = 2  # type: ignore[misc]
+
+    def test_is_hashable(self) -> None:
+        a = NodeInfo(node_id=1, address="host:1", role=2)
+        b = NodeInfo(node_id=1, address="host:1", role=2)
+        assert hash(a) == hash(b)
+        assert {a, b} == {a}
+
+
 class TestDecodeTextCapsAreByteBased:
     """Sized text decoders must short-circuit on UTF-8 byte count, not
     Python character count.
