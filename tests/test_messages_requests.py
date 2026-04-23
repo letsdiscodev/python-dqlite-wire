@@ -3,6 +3,7 @@
 import pytest
 
 from dqlitewire.constants import HEADER_SIZE, RequestType
+from dqlitewire.exceptions import DecodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.requests import (
     AddRequest,
@@ -26,6 +27,7 @@ from dqlitewire.messages.requests import (
     WeightRequest,
     _HeartbeatRequest,
 )
+from dqlitewire.types import encode_text, encode_uint32, encode_uint64
 
 
 class TestHeaderReservedField:
@@ -897,3 +899,42 @@ class TestDecodedSchemaConstructionValidation:
             kwargs["sql"] = "SELECT 1"
         # Must not raise.
         cls(**kwargs)
+
+
+class TestDecodeBodySchemaGuard:
+    """Direct ``decode_body(body, schema=N)`` invocations (bypassing the
+    codec) must surface a message-class-named DecodeError for schema>1
+    rather than propagating the generic ``decode_params_tuple`` error.
+    """
+
+    def test_prepare_request_rejects_schema_2(self) -> None:
+        body = encode_uint64(1) + encode_text("SELECT 1")
+        with pytest.raises(DecodeError, match="PrepareRequest unsupported schema"):
+            PrepareRequest.decode_body(body, schema=2)
+
+    def test_exec_request_rejects_schema_2(self) -> None:
+        body = encode_uint32(1) + encode_uint32(2) + b"\x00" * 8
+        with pytest.raises(DecodeError, match="ExecRequest unsupported schema"):
+            ExecRequest.decode_body(body, schema=2)
+
+    def test_query_request_rejects_schema_2(self) -> None:
+        body = encode_uint32(1) + encode_uint32(2) + b"\x00" * 8
+        with pytest.raises(DecodeError, match="QueryRequest unsupported schema"):
+            QueryRequest.decode_body(body, schema=2)
+
+    def test_exec_sql_request_rejects_schema_2(self) -> None:
+        body = encode_uint64(1) + encode_text("SELECT 1") + b"\x00" * 8
+        with pytest.raises(DecodeError, match="ExecSqlRequest unsupported schema"):
+            ExecSqlRequest.decode_body(body, schema=2)
+
+    def test_query_sql_request_rejects_schema_2(self) -> None:
+        body = encode_uint64(1) + encode_text("SELECT 1") + b"\x00" * 8
+        with pytest.raises(DecodeError, match="QuerySqlRequest unsupported schema"):
+            QuerySqlRequest.decode_body(body, schema=2)
+
+    def test_open_request_ignores_schema_byte(self) -> None:
+        """OpenRequest has no schema-carrying body; schema>1 passes through
+        to match upstream server behaviour (gateway ignores schema on OPEN)."""
+        body = encode_text("main") + b"\x01\x00\x00\x00\x00\x00\x00\x00" + encode_text("")
+        # Should not raise despite schema=2; parity with upstream C.
+        OpenRequest.decode_body(body, schema=2)

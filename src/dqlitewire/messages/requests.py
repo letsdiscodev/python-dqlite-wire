@@ -211,6 +211,8 @@ class PrepareRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
+        if schema not in (0, 1):
+            raise DecodeError(f"PrepareRequest unsupported schema version {schema}")
         db_id = decode_uint64(data)
         sql, consumed = decode_text(data[8:])
         offset = 8 + consumed
@@ -257,6 +259,8 @@ class ExecRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecRequest":
+        if schema not in (0, 1):
+            raise DecodeError(f"ExecRequest unsupported schema version {schema}")
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         params, consumed = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
@@ -299,6 +303,8 @@ class QueryRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "QueryRequest":
+        if schema not in (0, 1):
+            raise DecodeError(f"QueryRequest unsupported schema version {schema}")
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         params, consumed = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
@@ -369,6 +375,8 @@ class ExecSqlRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecSqlRequest":
+        if schema not in (0, 1):
+            raise DecodeError(f"ExecSqlRequest unsupported schema version {schema}")
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
@@ -412,6 +420,8 @@ class QuerySqlRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "QuerySqlRequest":
+        if schema not in (0, 1):
+            raise DecodeError(f"QuerySqlRequest unsupported schema version {schema}")
         db_id = decode_uint64(data)
         sql, offset = decode_text(data[8:])
         offset += 8
