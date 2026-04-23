@@ -459,8 +459,8 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
         # Strict reserved-field hygiene: ``encode_null`` writes exactly
         # ``b"\x00" * 8``; a non-zero NULL payload is either bug or
         # malice. Symmetric with the BOOLEAN strict-decode precedent
-        # (ISSUE-60 / 107 / 247 / 343) and the reserved-field policy
-        # pinned across Header / DbResponse / LeaderRequest decoders.
+        # and the reserved-field policy pinned across Header /
+        # DbResponse / LeaderRequest decoders.
         if bytes(data[:8]) != b"\x00" * 8:
             raise DecodeError(f"NULL payload must be 8 zero bytes, got {bytes(data[:8])!r}")
         return None, 8

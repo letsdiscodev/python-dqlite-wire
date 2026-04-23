@@ -527,8 +527,8 @@ class AssignRequest(Message):
         if self.role is not None:
             # Coerce bare ints to the NodeRole enum and reject unknown
             # values. Mirrors the response-side narrowing on
-            # ``ServersResponse`` (ISSUE-202) so an outbound assign or
-            # a mock-server decode carries a validated role, not an
+            # ``ServersResponse`` so an outbound assign or a
+            # mock-server decode carries a validated role, not an
             # unknown integer that would silently surface in the
             # dataclass.
             if isinstance(self.role, NodeRole):
