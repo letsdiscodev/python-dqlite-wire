@@ -33,6 +33,28 @@ def _check_uint64(name: str, value: int) -> None:
         raise ValueError(f"{name} must be uint64 (0 to 18446744073709551615), got {value}")
 
 
+def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> None:
+    """Validate the optional ``_decoded_schema`` round-trip hint shared by
+    ExecRequest / QueryRequest / ExecSqlRequest / QuerySqlRequest.
+
+    The field is a private hook used to reproduce wire bytes identically
+    on re-encode (mock-server / proxy use cases) — it lets a request
+    carry schema=1 with ≤255 params even though the count heuristic
+    would pick schema=0. ``None`` (auto-select), ``0``, and ``1`` are the
+    only legitimate values; schema=0 also caps params at 255 (the V0
+    tuple format's uint8 count byte).
+    """
+    if decoded_schema is None:
+        return
+    if decoded_schema not in (0, 1):
+        raise ValueError(f"_decoded_schema must be 0, 1, or None; got {decoded_schema}")
+    if decoded_schema == 0 and param_count > 255:
+        raise ValueError(
+            f"_decoded_schema=0 (V0 tuple format) supports at most 255 parameters; "
+            f"got {param_count}"
+        )
+
+
 @dataclass
 class LeaderRequest(Message):
     """Request current cluster leader address.
@@ -226,6 +248,7 @@ class ExecRequest(Message):
     def __post_init__(self) -> None:
         _check_uint32("db_id", self.db_id)
         _check_uint32("stmt_id", self.stmt_id)
+        _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
@@ -267,6 +290,7 @@ class QueryRequest(Message):
     def __post_init__(self) -> None:
         _check_uint32("db_id", self.db_id)
         _check_uint32("stmt_id", self.stmt_id)
+        _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
@@ -335,6 +359,7 @@ class ExecSqlRequest(Message):
 
     def __post_init__(self) -> None:
         _check_uint64("db_id", self.db_id)
+        _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
@@ -377,6 +402,7 @@ class QuerySqlRequest(Message):
 
     def __post_init__(self) -> None:
         _check_uint64("db_id", self.db_id)
+        _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:

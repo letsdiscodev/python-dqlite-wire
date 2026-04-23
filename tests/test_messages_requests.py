@@ -752,3 +752,68 @@ class TestParamsBodySchemaRoundtrip:
 
         msg = ExecRequest(db_id=1, stmt_id=2, params=list(range(300)))
         assert msg._get_schema() == 1
+
+
+class TestDecodedSchemaConstructionValidation:
+    """``_decoded_schema`` is a private round-trip hint used by decoders
+    so re-encode is byte-identical even when the count heuristic would
+    otherwise downgrade the schema. Misuse was previously deferred until
+    encode time; catch it at construction so the error message names the
+    field and fires from the caller's frame.
+    """
+
+    @pytest.mark.parametrize(
+        "cls_name",
+        ["ExecRequest", "QueryRequest", "ExecSqlRequest", "QuerySqlRequest"],
+    )
+    def test_rejects_schema_values_other_than_0_1_none(self, cls_name: str) -> None:
+        import dqlitewire.messages as m
+
+        cls = getattr(m, cls_name)
+        kwargs: dict[str, object] = {"db_id": 1, "_decoded_schema": 2}
+        if cls_name in ("ExecRequest", "QueryRequest"):
+            kwargs["stmt_id"] = 1
+        else:
+            kwargs["sql"] = "SELECT 1"
+        with pytest.raises(ValueError, match="_decoded_schema"):
+            cls(**kwargs)
+
+    @pytest.mark.parametrize(
+        "cls_name",
+        ["ExecRequest", "QueryRequest", "ExecSqlRequest", "QuerySqlRequest"],
+    )
+    def test_rejects_schema_0_with_more_than_255_params(self, cls_name: str) -> None:
+        import dqlitewire.messages as m
+
+        cls = getattr(m, cls_name)
+        kwargs: dict[str, object] = {
+            "db_id": 1,
+            "_decoded_schema": 0,
+            "params": [None] * 256,
+        }
+        if cls_name in ("ExecRequest", "QueryRequest"):
+            kwargs["stmt_id"] = 1
+        else:
+            kwargs["sql"] = "SELECT 1"
+        with pytest.raises(ValueError, match="255 parameters"):
+            cls(**kwargs)
+
+    @pytest.mark.parametrize(
+        "cls_name",
+        ["ExecRequest", "QueryRequest", "ExecSqlRequest", "QuerySqlRequest"],
+    )
+    def test_accepts_schema_1_with_many_params(self, cls_name: str) -> None:
+        import dqlitewire.messages as m
+
+        cls = getattr(m, cls_name)
+        kwargs: dict[str, object] = {
+            "db_id": 1,
+            "_decoded_schema": 1,
+            "params": [None] * 256,
+        }
+        if cls_name in ("ExecRequest", "QueryRequest"):
+            kwargs["stmt_id"] = 1
+        else:
+            kwargs["sql"] = "SELECT 1"
+        # Must not raise.
+        cls(**kwargs)
