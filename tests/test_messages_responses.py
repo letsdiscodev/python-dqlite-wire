@@ -225,6 +225,40 @@ class TestStmtResponse:
         with pytest.raises(DecodeError, match=r"schema=1 body must be exactly 24 bytes"):
             StmtResponse.decode_body(v0_body, schema=1)
 
+    def test_decode_preserves_schema_v1_zero_tail(self) -> None:
+        """A V1 body with ``tail_offset=0`` must round-trip as V1 (24-byte
+        body), not V0 (16-byte body). The decoder therefore stores the
+        incoming header schema byte on the dataclass so ``_get_schema``
+        prefers it over the ``tail_offset is not None`` auto-select."""
+        import struct
+
+        body = (
+            struct.pack("<I", 1)  # db_id
+            + struct.pack("<I", 2)  # stmt_id
+            + struct.pack("<Q", 3)  # num_params
+            + struct.pack("<Q", 0)  # tail_offset = 0 (valid V1)
+        )
+        assert len(body) == 24
+        decoded = StmtResponse.decode_body(body, schema=1)
+        assert decoded.tail_offset == 0
+        assert decoded.schema == 1
+        assert decoded._get_schema() == 1
+        # Re-encoding produces a V1 body (24 B), not V0 (16 B).
+        reencoded = decoded.encode_body()
+        assert len(reencoded) == 24
+
+    def test_decode_schema_0_leaves_schema_attribute_set_to_zero(self) -> None:
+        """V0 path stores ``schema=0`` on the dataclass so the field is
+        always meaningful after decode (no ``None`` ambiguity)."""
+        import struct
+
+        body = struct.pack("<I", 1) + struct.pack("<I", 2) + struct.pack("<Q", 3)
+        assert len(body) == 16
+        decoded = StmtResponse.decode_body(body, schema=0)
+        assert decoded.schema == 0
+        assert decoded.tail_offset is None
+        assert len(decoded.encode_body()) == 16
+
     def test_rejects_oversized_num_params(self) -> None:
         """Defense-in-depth: cap server-declared num_params to match the
         encoder-side _MAX_PARAM_COUNT. A malicious or corrupt server

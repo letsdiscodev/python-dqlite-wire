@@ -383,7 +383,13 @@ class StmtResponse(Message):
             raise DecodeError(
                 f"StmtResponse tail_offset {tail_offset} exceeds maximum ({_MAX_TAIL_OFFSET})"
             )
-        return cls(db_id, stmt_id, num_params, tail_offset)
+        # Preserve the incoming header schema byte on the dataclass so
+        # round-trip encode emits exactly what came in. Without this,
+        # a V1 body with ``tail_offset=0`` would round-trip through
+        # ``_get_schema()`` as V0 (``tail_offset is None``) on any
+        # future equality-based manipulation, losing the
+        # "peer advertised V1" signal.
+        return cls(db_id, stmt_id, num_params, tail_offset, schema=schema)
 
 
 @dataclass
