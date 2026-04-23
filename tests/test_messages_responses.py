@@ -1573,6 +1573,70 @@ class TestServerTextSanitization:
         assert len(decoded.nodes) == 1
         assert decoded.nodes[0].address == "node1?[2J:9001"
 
+    # Trojan-Source / log-injection primitives. Each row here matches
+    # one codepoint class inside ``_CONTROL_CHARS_RE``:
+    #  - U+2028/U+2029 : line- and paragraph-separators (log-line forging)
+    #  - U+202A-U+202E : LRE/RLE/PDF/LRO/RLO bidi-overrides
+    #  - U+2066-U+2069 : LRI/RLI/FSI/PDI isolation formatting
+    #  - U+061C        : Arabic letter mark (bidi)
+    #  - U+200B-U+200F : zero-width and directional markers
+    #  - U+FEFF        : zero-width no-break space / byte-order mark
+    # A regex regression narrowing to ``[\x00-\x1f]`` would pass the
+    # ANSI/CR/NUL/Tab cases above while silently re-opening these.
+    _BIDI_AND_ZERO_WIDTH: list[tuple[str, str]] = [
+        (" ", "LINE SEPARATOR"),
+        (" ", "PARAGRAPH SEPARATOR"),
+        ("‪", "LRE"),
+        ("‫", "RLE"),
+        ("‬", "PDF"),
+        ("‭", "LRO"),
+        ("‮", "RLO"),
+        ("⁦", "LRI"),
+        ("⁧", "RLI"),
+        ("⁨", "FSI"),
+        ("⁩", "PDI"),
+        ("؜", "ALM"),
+        ("​", "ZWSP"),
+        ("‌", "ZWNJ"),
+        ("‍", "ZWJ"),
+        ("‎", "LRM"),
+        ("‏", "RLM"),
+        ("﻿", "ZWNBSP/BOM"),
+    ]
+
+    @pytest.mark.parametrize(("bad_char", "label"), _BIDI_AND_ZERO_WIDTH)
+    def test_failure_response_sanitizes_bidi_and_zero_width(
+        self, bad_char: str, label: str
+    ) -> None:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        payload = encode_uint64(1) + encode_text(f"hello{bad_char}world")
+        decoded = FailureResponse.decode_body(payload)
+        assert decoded.message == "hello?world", f"failed on {label}"
+
+    @pytest.mark.parametrize(("bad_char", "label"), _BIDI_AND_ZERO_WIDTH)
+    def test_leader_response_sanitizes_bidi_and_zero_width(self, bad_char: str, label: str) -> None:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        payload = encode_uint64(5) + encode_text(f"host{bad_char}:9001")
+        decoded = LeaderResponse.decode_body(payload)
+        assert decoded.address == "host?:9001", f"failed on {label}"
+
+    @pytest.mark.parametrize(("bad_char", "label"), _BIDI_AND_ZERO_WIDTH)
+    def test_servers_response_sanitizes_bidi_and_zero_width(
+        self, bad_char: str, label: str
+    ) -> None:
+        from dqlitewire.constants import NodeRole
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(1)
+        body += encode_uint64(1)
+        body += encode_text(f"node{bad_char}1:9001")
+        body += encode_uint64(NodeRole.VOTER)
+        decoded = ServersResponse.decode_body(body)
+        assert len(decoded.nodes) == 1
+        assert decoded.nodes[0].address == "node?1:9001", f"failed on {label}"
+
 
 class TestReservedFieldValidation:
     """Non-zero reserved bytes must fail to decode across all message
