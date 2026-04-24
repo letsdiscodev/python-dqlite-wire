@@ -285,6 +285,27 @@ class TestStmtResponse:
         with pytest.raises(DecodeError, match="num_params"):
             StmtResponse.decode_body(body, schema=0)
 
+    def test_rejects_oversized_tail_offset(self) -> None:
+        """Defense-in-depth: a schema=1 server emitting ``tail_offset``
+        above ``_MAX_TAIL_OFFSET`` could make Python's ``sql[offset:]``
+        silently return ``""`` and drop trailing statements. Mirror the
+        encoder-side cap with a decode-side DecodeError so the attack
+        surface is closed at both boundaries.
+        """
+        import struct
+
+        from dqlitewire.messages.responses import _MAX_TAIL_OFFSET
+
+        body = (
+            struct.pack("<I", 1)  # db_id
+            + struct.pack("<I", 2)  # stmt_id
+            + struct.pack("<Q", 3)  # num_params
+            + struct.pack("<Q", _MAX_TAIL_OFFSET + 1)  # tail_offset (bogus)
+        )
+        assert len(body) == 24
+        with pytest.raises(DecodeError, match="tail_offset"):
+            StmtResponse.decode_body(body, schema=1)
+
 
 class TestResultResponse:
     def test_roundtrip(self) -> None:
@@ -1380,6 +1401,22 @@ class TestFilesResponse:
         body += encode_uint64(4096)  # claims 4096 bytes
         body += b"\x00" * 100  # but only 100 bytes available
         with pytest.raises(DecodeError, match="truncated"):
+            FilesResponse.decode_body(body)
+
+    def test_rejects_duplicate_filename(self) -> None:
+        """The wire format is a positional sequence of N records; a
+        dict-style silent overwrite would make ``len(files) < count``
+        after decode and break re-encode symmetry. Upstream's
+        ``handle_dump`` only ever emits distinct names (``main`` and
+        ``main-wal``), so the duplicate must be rejected as a malicious
+        or misframed peer rather than silently merged.
+        """
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(2)  # count=2
+        body += encode_text("main") + encode_uint64(0)  # first
+        body += encode_text("main") + encode_uint64(0)  # duplicate
+        with pytest.raises(DecodeError, match="duplicate filename"):
             FilesResponse.decode_body(body)
 
 
