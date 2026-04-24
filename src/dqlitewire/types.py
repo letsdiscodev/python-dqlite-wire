@@ -309,30 +309,42 @@ def decode_text(
     return text, total_size
 
 
-def encode_blob(value: bytes) -> bytes:
+def encode_blob(value: bytes, *, max_blob_size: int = _MAX_BLOB_SIZE) -> bytes:
     """Encode a blob (length-prefixed binary data, padded to 8-byte boundary).
 
     Format: uint64 length + data + padding
+
+    ``max_blob_size`` is the per-blob cap. Defaults to
+    ``_MAX_BLOB_SIZE`` (16 MiB) — a defense-in-depth ceiling matching
+    the decode-side cap. Callers handling larger BLOBs (per their
+    deployment's actual ``raft.log.entry_size_max``) can raise this
+    explicitly. The outer ``max_message_size`` cap on the codec
+    always wins regardless.
     """
     length = len(value)
-    if length > _MAX_BLOB_SIZE:
-        raise EncodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
+    if length > max_blob_size:
+        raise EncodeError(f"Blob length {length} exceeds maximum ({max_blob_size})")
     padding = pad_to_word(length)
     return encode_uint64(length) + value + (b"\x00" * padding)
 
 
-def decode_blob(data: bytes | memoryview) -> tuple[bytes, int]:
+def decode_blob(
+    data: bytes | memoryview, *, max_blob_size: int = _MAX_BLOB_SIZE
+) -> tuple[bytes, int]:
     """Decode a blob.
 
     Accepts either ``bytes`` or ``memoryview``. Returns the blob data
     (always as ``bytes``) and the number of bytes consumed.
+
+    ``max_blob_size`` mirrors the ``encode_blob`` parameter — see that
+    docstring for the rationale.
     """
     if len(data) < 8:
         raise DecodeError("Not enough data for blob length")
 
     length = decode_uint64(data[:8])
-    if length > _MAX_BLOB_SIZE:
-        raise DecodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
+    if length > max_blob_size:
+        raise DecodeError(f"Blob length {length} exceeds maximum ({max_blob_size})")
     total_size = 8 + length + pad_to_word(length)
 
     if len(data) < total_size:
