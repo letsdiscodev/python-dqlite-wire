@@ -328,6 +328,17 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
 
     If value_type is not provided, it's inferred from the Python type.
     Returns (encoded_data, value_type).
+
+    Inference: Python ``bool`` infers to ``ValueType.BOOLEAN``, NOT
+    ``ValueType.INTEGER``. On the wire both encode as ``uint64(0)`` or
+    ``uint64(1)``; the difference is only in the type tag. SQLite
+    stores both as an integer column value regardless of that tag, so
+    a round-trip through a column declared INTEGER returns a Python
+    ``int`` (``1`` or ``0``), never a Python ``bool``. Callers who
+    need ``True`` back must either coerce at read time
+    (``bool(row[0])``) or pass ``column_types=[...BOOLEAN...]`` on the
+    response side so the driver's typed decode materialises bool.
+    Inference matches the Go / C clients' DQLITE_BOOLEAN handling.
     """
     if value is None:
         if value_type is not None and value_type != ValueType.NULL:

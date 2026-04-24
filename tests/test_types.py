@@ -844,6 +844,18 @@ class TestValue:
         assert vtype == ValueType.INTEGER
         assert decode_int64(encoded) == 42
 
+    def test_encode_value_bool_infers_boolean_not_integer(self) -> None:
+        """Pin the inference contract: a bare ``True``/``False`` infers to
+        BOOLEAN, not INTEGER. This mirrors Go/C client behaviour. Callers
+        that want an INTEGER round-trip from a Python bool must cast via
+        ``int(x)`` at the call site; the decoder cannot reconstruct
+        ``bool`` from an INTEGER column.
+        """
+        _, vtype = encode_value(True)
+        assert vtype == ValueType.BOOLEAN
+        _, vtype = encode_value(False)
+        assert vtype == ValueType.BOOLEAN
+
 
 class TestEncodeValueUnsupportedTypes:
     """Pin the rejection contract for Python types the wire codec does
