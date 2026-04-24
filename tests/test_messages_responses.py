@@ -770,6 +770,42 @@ class TestRowsResponse:
         assert len(decoded.rows) == 2
 
 
+class TestRowsResponseColumnCountBounds:
+    """The pre-loop column-count bound must reserve 8 bytes for the
+    mandatory row-end marker (DONE/PART). A ``column_count`` that
+    consumes every remaining byte would otherwise proceed into the row
+    decode loop and only fail there with a less-specific error.
+    """
+
+    def test_column_count_leaves_room_for_end_marker(self) -> None:
+        """With remaining=16 (two 8-byte words), column_count=2 would
+        eat every byte and leave none for the marker. Reject at the
+        pre-loop bound with a marker-aware diagnostic."""
+        from dqlitewire.types import encode_uint64
+
+        # 8 bytes of column_count + 16 bytes of remaining room = 24 total.
+        # Two empty column names would consume those 16 bytes, leaving
+        # zero for the 8-byte end marker.
+        body = encode_uint64(2) + (b"\x00" * 16)
+        with pytest.raises(DecodeError, match="row end marker"):
+            RowsResponse.decode_body(body)
+
+    def test_column_count_exactly_fills_names_and_marker(self) -> None:
+        """With remaining=24 (three 8-byte words), column_count=2 leaves
+        exactly 8 bytes for the marker. Must NOT be rejected by the
+        pre-loop bound (the loop body handles the valid path).
+        """
+        # Build a well-formed frame with 2 empty column names and a
+        # DONE marker so the rest of the decode succeeds.
+        from dqlitewire.types import encode_uint64
+
+        done_marker = b"\xff" * 8  # ROW_DONE_MARKER as 8 little-endian bytes
+        body = encode_uint64(2) + (b"\x00" * 16) + done_marker
+        resp = RowsResponse.decode_body(body)
+        assert resp.column_names == ["", ""]
+        assert not resp.has_more
+
+
 class TestRowsResponseEncodeInference:
     """Pin the docstring's type-inference contract: when both ``row_types``
     and ``column_types`` are empty, per-cell types are inferred from

@@ -588,12 +588,19 @@ class RowsResponse(Message):
         if column_count > _MAX_COLUMN_COUNT:
             raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
 
-        # Bounds check: each column name is at least 8 bytes (null + padding)
+        # Bounds check: each column name is at least 8 bytes (null +
+        # padding) AND the mandatory 8-byte DONE/PART row-end marker
+        # follows the names (or the row stream). Reserve 8 bytes for
+        # the marker so a ``column_count`` that would consume every
+        # remaining byte fails here with a clear diagnostic rather than
+        # later via "body exhausted without end marker".
         remaining = len(view) - offset
-        if column_count > remaining // 8:
+        max_columns = max(0, remaining - WORD_SIZE) // 8
+        if column_count > max_columns:
             raise DecodeError(
                 f"Column count {column_count} exceeds maximum possible in "
-                f"{remaining} bytes of remaining data"
+                f"{remaining} bytes of remaining data (reserving {WORD_SIZE} "
+                f"bytes for the row end marker)"
             )
 
         # Column names
