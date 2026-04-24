@@ -8,7 +8,17 @@ catch the more specific subclasses below.
 
 
 class ProtocolError(Exception):
-    """Base exception for protocol errors."""
+    """Base wire-layer protocol exception.
+
+    Sibling packages expose their own ``ProtocolError`` class that
+    inherits from this one via multiple inheritance — notably
+    ``dqliteclient.exceptions.ProtocolError(DqliteError, WireProtocolError)``.
+    Catching ``dqlitewire.ProtocolError`` therefore also catches the
+    client-layer subclass and its call-site-specific context, which
+    is the intended posture. The two packages carry the name by
+    design; the client package imports this one under the
+    ``_WireProtocolError`` alias locally to avoid shadowing.
+    """
 
 
 class EncodeError(ProtocolError):
