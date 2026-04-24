@@ -849,15 +849,19 @@ class TestRoundTrip:
         assert isinstance(decoded, InterruptRequest)
         assert decoded.db_id == 7
 
-    def test_connect_request(self) -> None:
-        from dqlitewire.messages.requests import ConnectRequest
+    def test_connect_request_rejected_by_public_dispatch(self) -> None:
+        """CONNECT (type 11) is a Raft-transport frame; the public
+        request dispatcher rejects it with an ``unknown type`` error
+        mirroring upstream ``gateway.c``'s ``DQLITE_PARSE`` fallthrough.
+        The private ``_ConnectRequest`` class is still available for
+        test-mock / golden-byte harnesses.
+        """
+        from dqlitewire.messages.requests import _ConnectRequest
 
-        original = ConnectRequest(node_id=5, address="10.0.0.1:9001")
+        original = _ConnectRequest(node_id=5, address="10.0.0.1:9001")
         encoded = encode_message(original)
-        decoded = decode_message(encoded, is_request=True)
-        assert isinstance(decoded, ConnectRequest)
-        assert decoded.node_id == 5
-        assert decoded.address == "10.0.0.1:9001"
+        with pytest.raises(DecodeError, match="Unknown message type"):
+            decode_message(encoded, is_request=True)
 
     def test_add_request(self) -> None:
         from dqlitewire.messages.requests import AddRequest

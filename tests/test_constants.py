@@ -163,16 +163,20 @@ class TestTypeDictCompleteness:
     def test_request_types_covers_all_enum_members(self) -> None:
         from dqlitewire.codec import REQUEST_TYPES
 
-        # HEARTBEAT is reserved upstream (``DQLITE_REQUEST_HEARTBEAT = 2``)
+        # HEARTBEAT and CONNECT are reserved upstream
+        # (``DQLITE_REQUEST_HEARTBEAT = 2``, ``DQLITE_REQUEST_CONNECT = 11``)
         # but upstream C's dispatcher falls through to ``DQLITE_PARSE`` for
-        # type-2 frames, so the class (``_HeartbeatRequest``) stays private
-        # and is intentionally absent from ``REQUEST_TYPES``. Every other
-        # enum member is a real public request type.
+        # both — HEARTBEAT is a transport ping that Go/C clients never send,
+        # and CONNECT is a Raft-transport frame used only for inter-node
+        # connections. The classes (``_HeartbeatRequest``, ``_ConnectRequest``)
+        # stay private and are intentionally absent from ``REQUEST_TYPES``.
+        # Every other enum member is a real public request type.
+        private_dispatch_excluded = {RequestType.HEARTBEAT, RequestType.CONNECT}
         for member in RequestType:
-            if member is RequestType.HEARTBEAT:
+            if member in private_dispatch_excluded:
                 assert member.value not in REQUEST_TYPES, (
-                    "RequestType.HEARTBEAT must stay out of REQUEST_TYPES; "
-                    "upstream does not dispatch type-2 frames."
+                    f"RequestType.{member.name} must stay out of REQUEST_TYPES; "
+                    "upstream does not dispatch this frame to the gateway."
                 )
                 continue
             assert member.value in REQUEST_TYPES, (

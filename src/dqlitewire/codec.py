@@ -21,7 +21,6 @@ from dqlitewire.messages.requests import (
     AssignRequest,
     ClientRequest,
     ClusterRequest,
-    ConnectRequest,
     DescribeRequest,
     DumpRequest,
     ExecRequest,
@@ -53,13 +52,17 @@ from dqlitewire.messages.responses import (
 
 # Mapping from type codes to message classes.
 #
-# ``RequestType.HEARTBEAT`` is intentionally absent: upstream C's
-# ``REQUEST__TYPES`` (``request.h``) omits heartbeat and ``gateway.c``
-# falls through to ``DQLITE_PARSE`` for type-2 frames, so no real server
-# accepts one. A type-2 frame decodes to the unknown-type error path
-# here, matching upstream's reject. The historical class lives on as
-# the private ``_HeartbeatRequest`` in ``messages.requests`` for
-# test-mock / golden-byte harnesses that synthesize the frame.
+# ``RequestType.HEARTBEAT`` and ``RequestType.CONNECT`` are intentionally
+# absent: upstream C's ``REQUEST__TYPES`` (``request.h``) omits both and
+# ``gateway.c`` falls through to ``DQLITE_PARSE`` for type-2 and type-11
+# frames, so no real gateway accepts them. HEARTBEAT is a transport
+# ping that Go/C clients never send; CONNECT is a Raft-transport frame
+# used only for inter-node connections, never for client-gateway
+# traffic. A type-2 or type-11 request decodes to the unknown-type
+# error path here, matching upstream's reject. The historical classes
+# live on as the private ``_HeartbeatRequest`` and ``_ConnectRequest``
+# in ``messages.requests`` for test-mock / golden-byte harnesses that
+# synthesize the frames.
 REQUEST_TYPES: dict[int, type[Message]] = {
     RequestType.LEADER: LeaderRequest,
     RequestType.CLIENT: ClientRequest,
@@ -71,7 +74,6 @@ REQUEST_TYPES: dict[int, type[Message]] = {
     RequestType.EXEC_SQL: ExecSqlRequest,
     RequestType.QUERY_SQL: QuerySqlRequest,
     RequestType.INTERRUPT: InterruptRequest,
-    RequestType.CONNECT: ConnectRequest,
     RequestType.ADD: AddRequest,
     RequestType.ASSIGN: AssignRequest,
     RequestType.REMOVE: RemoveRequest,

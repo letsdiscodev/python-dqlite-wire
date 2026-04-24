@@ -10,7 +10,6 @@ from dqlitewire.messages.requests import (
     AssignRequest,
     ClientRequest,
     ClusterRequest,
-    ConnectRequest,
     DescribeRequest,
     DumpRequest,
     ExecRequest,
@@ -25,6 +24,7 @@ from dqlitewire.messages.requests import (
     RemoveRequest,
     TransferRequest,
     WeightRequest,
+    _ConnectRequest,
     _HeartbeatRequest,
 )
 from dqlitewire.types import encode_text, encode_uint32, encode_uint64
@@ -409,17 +409,35 @@ class TestInterruptRequest:
         assert decoded.db_id == 42
 
 
-class TestConnectRequest:
+class Test_ConnectRequest:
+    """``_ConnectRequest`` is a private class exposed only to mock /
+    golden-byte harnesses — upstream ``gateway.c`` rejects type-11
+    frames with ``DQLITE_PARSE``. The public ``REQUEST_TYPES`` registry
+    does not include it; see ``test_not_in_public_request_registry``.
+    """
+
     def test_roundtrip(self) -> None:
-        msg = ConnectRequest(node_id=3, address="node3:9001")
+        msg = _ConnectRequest(node_id=3, address="node3:9001")
         encoded = msg.encode()
-        decoded = ConnectRequest.decode_body(encoded[HEADER_SIZE:])
+        decoded = _ConnectRequest.decode_body(encoded[HEADER_SIZE:])
         assert decoded.node_id == 3
         assert decoded.address == "node3:9001"
 
     def test_type_code_is_11(self) -> None:
-        msg = ConnectRequest(node_id=1, address="localhost:9001")
+        msg = _ConnectRequest(node_id=1, address="localhost:9001")
         assert msg.MSG_TYPE == 11
+
+    def test_not_in_public_request_registry(self) -> None:
+        """No real upstream server accepts a type-11 gateway frame, so
+        the public ``REQUEST_TYPES`` registry and
+        ``messages/__init__.py`` ``__all__`` do not export it.
+        """
+        import dqlitewire.messages as messages
+        from dqlitewire.codec import REQUEST_TYPES
+
+        assert RequestType.CONNECT not in REQUEST_TYPES
+        assert "ConnectRequest" not in getattr(messages, "__all__", [])
+        assert not hasattr(messages, "ConnectRequest")
 
 
 class TestAddRequest:

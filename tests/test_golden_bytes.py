@@ -13,6 +13,8 @@ mistake (e.g. wrong nibble order, wrong padding base).
 
 import struct
 
+import pytest
+
 from dqlitewire.codec import decode_message, encode_message
 from dqlitewire.constants import ValueType
 from dqlitewire.messages import (
@@ -512,21 +514,26 @@ class TestGoldenRequestsPriority1:
         assert msg.node_id == 3
 
     def test_connect_request(self) -> None:
-        """ConnectRequest(node_id=2, address="127.0.0.1:9001"): type=11.
+        """``_ConnectRequest(node_id=2, address="127.0.0.1:9001")``: type=11.
 
         Body: uint64(2) + text("127.0.0.1:9001")
         text = 14 chars + null = 15 bytes, padded to 16
         Total body = 8 + 16 = 24 = 3 words
+
+        CONNECT is a Raft-transport frame, not a gateway request.
+        The class is exposed with a private name and is NOT in the
+        public ``REQUEST_TYPES`` dispatch; encoding golden bytes
+        still works for mock harnesses, but ``decode_message`` rejects
+        type-11 frames as unknown (matching upstream ``gateway.c``).
         """
-        from dqlitewire.messages import ConnectRequest
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.requests import _ConnectRequest
 
         expected = _header(3, 11) + _u64(2) + _text("127.0.0.1:9001")
-        assert encode_message(ConnectRequest(node_id=2, address="127.0.0.1:9001")) == expected
+        assert encode_message(_ConnectRequest(node_id=2, address="127.0.0.1:9001")) == expected
 
-        msg = decode_message(expected, is_request=True)
-        assert isinstance(msg, ConnectRequest)
-        assert msg.node_id == 2
-        assert msg.address == "127.0.0.1:9001"
+        with pytest.raises(DecodeError, match="Unknown message type"):
+            decode_message(expected, is_request=True)
 
     def test_dump_request(self) -> None:
         """DumpRequest(name="test.db"): type=15.

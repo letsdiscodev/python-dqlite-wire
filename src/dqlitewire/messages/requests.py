@@ -458,15 +458,21 @@ class InterruptRequest(Message):
 
 
 @dataclass
-class ConnectRequest(Message):
+class _ConnectRequest(Message):
     """Establish a Raft transport connection (node-to-node).
 
     Body: uint64 node_id, text address
 
-    This message type is defined in the C dqlite protocol (DQLITE_REQUEST_CONNECT = 11)
-    but is not used by the Go client library (go-dqlite), which is a client-only
-    implementation. It is used for inter-node Raft transport connections within a
-    dqlite cluster.
+    WARNING: CONNECT (type 11) is a Raft-transport frame, NOT a gateway
+    request. Upstream ``request.h``'s ``REQUEST__TYPES`` macro omits it,
+    and ``gateway.c`` falls through to ``DQLITE_PARSE`` for type-11
+    frames — a real dqlite gateway rejects a CONNECT request sent over
+    the client-server link. The class is exposed with a private name so
+    mock-server / golden-byte harnesses can still synthesise a type-11
+    frame for testing, but it is intentionally absent from the public
+    dispatcher (``REQUEST_TYPES`` in ``codec.py``) and the public
+    ``dqlitewire.messages`` re-export list — mirroring the same
+    treatment applied to ``_HeartbeatRequest``.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CONNECT
@@ -481,12 +487,12 @@ class ConnectRequest(Message):
         return encode_uint64(self.node_id) + encode_text(self.address)
 
     @classmethod
-    def decode_body(cls, data: bytes, schema: int = 0) -> "ConnectRequest":
+    def decode_body(cls, data: bytes, schema: int = 0) -> "_ConnectRequest":
         node_id = decode_uint64(data)
         address, consumed = decode_text(data[8:])
         offset = 8 + consumed
         if offset != len(data):
-            raise DecodeError(f"ConnectRequest has {len(data) - offset} trailing bytes")
+            raise DecodeError(f"_ConnectRequest has {len(data) - offset} trailing bytes")
         return cls(node_id, address)
 
 

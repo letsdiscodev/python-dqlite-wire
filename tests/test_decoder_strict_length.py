@@ -29,7 +29,6 @@ from dqlitewire.messages.requests import (
     AssignRequest,
     ClientRequest,
     ClusterRequest,
-    ConnectRequest,
     DescribeRequest,
     DumpRequest,
     ExecRequest,
@@ -43,6 +42,7 @@ from dqlitewire.messages.requests import (
     RemoveRequest,
     TransferRequest,
     WeightRequest,
+    _ConnectRequest,
     _HeartbeatRequest,
 )
 from dqlitewire.types import encode_uint64
@@ -157,9 +157,9 @@ class TestVariableSizeRequestStrictLength:
             QuerySqlRequest.decode_body(valid + b"\x00" * 8)
 
     def test_connect_request_trailing_bytes_rejected(self) -> None:
-        valid = ConnectRequest(1, "127.0.0.1:9001").encode_body()
+        valid = _ConnectRequest(1, "127.0.0.1:9001").encode_body()
         with pytest.raises(DecodeError, match="trailing bytes"):
-            ConnectRequest.decode_body(valid + b"\x00" * 8)
+            _ConnectRequest.decode_body(valid + b"\x00" * 8)
 
     def test_add_request_trailing_bytes_rejected(self) -> None:
         valid = AddRequest(1, "127.0.0.1:9001").encode_body()
