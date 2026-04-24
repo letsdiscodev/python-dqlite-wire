@@ -118,3 +118,24 @@ SQLITE_IOERR_LEADERSHIP_LOST = SQLITE_IOERR | (41 << 8)  # 10506
 LEADER_ERROR_CODES: frozenset[int] = frozenset(
     {SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST}
 )
+
+# Bit mask for extracting the primary (low-byte) code from an
+# extended SQLite error code. Upstream encodes extended codes as
+# ``primary | (sub << 8)``; ``code & SQLITE_PRIMARY_CODE_MASK``
+# recovers the primary. Use via :func:`primary_sqlite_code`.
+SQLITE_PRIMARY_CODE_MASK = 0xFF
+
+
+def primary_sqlite_code(code: int) -> int:
+    """Return the primary SQLite error code from an extended code.
+
+    ``SQLITE_IOERR_NOT_LEADER`` (``10250``) → ``SQLITE_IOERR`` (``10``).
+    A primary code (low byte only) passes through unchanged.
+
+    Matches the ``code & 0xFF`` pattern used by dqlitedbapi for its
+    ``Error`` subclass dispatch and by the no-transaction mask.
+    Exposed so callers don't have to recompute the shift inline and
+    so a future change to the extended-code layout has a single
+    point of rework.
+    """
+    return code & SQLITE_PRIMARY_CODE_MASK

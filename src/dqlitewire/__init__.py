@@ -51,10 +51,12 @@ from dqlitewire.constants import (
     SQLITE_IOERR,
     SQLITE_IOERR_LEADERSHIP_LOST,
     SQLITE_IOERR_NOT_LEADER,
+    SQLITE_PRIMARY_CODE_MASK,
     NodeRole,
     RequestType,
     ResponseType,
     ValueType,
+    primary_sqlite_code,
 )
 from dqlitewire.exceptions import (
     ContinuationError,
@@ -97,7 +99,9 @@ __all__ = [
     "SQLITE_IOERR",
     "SQLITE_IOERR_LEADERSHIP_LOST",
     "SQLITE_IOERR_NOT_LEADER",
+    "SQLITE_PRIMARY_CODE_MASK",
     "ServerFailure",
+    "primary_sqlite_code",
     "StreamError",
     "ValueType",
     "WireInput",
