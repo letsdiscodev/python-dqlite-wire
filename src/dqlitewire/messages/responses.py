@@ -112,11 +112,18 @@ _CONTROL_CHARS_RE = re.compile(
 def _sanitize_server_text(s: str) -> str:
     """Replace control / bidi / invisible characters with '?' in server strings.
 
-    Applied at the decoder boundary for text fields that flow directly
-    into exception messages and logs (FailureResponse.message,
-    LeaderResponse.address, ServersResponse.nodes[*].address). Leaves
-    tab and LF untouched so multi-line server diagnostics render
-    correctly. See the regex above for the full replacement class.
+    Applied at the decoder boundary for text fields that are
+    **display-only** (``FailureResponse.message``). Address fields
+    (``LeaderResponse.address``, ``ServersResponse.nodes[*].address``)
+    are decoded raw — those values flow into TCP routing and
+    allowlist-policy comparisons, and mangling them at decode time
+    would silently split an operator-configured address set. The
+    client layer (``dqliteclient.cluster``) calls this helper at
+    log / exception format time instead.
+
+    Leaves tab and LF untouched so multi-line server diagnostics
+    render correctly. See the regex above for the full replacement
+    class.
     """
     return _CONTROL_CHARS_RE.sub("?", s)
 
@@ -218,7 +225,10 @@ class LeaderResponse(Message):
             raise DecodeError(
                 f"LeaderResponse has {len(data) - offset} trailing bytes after address"
             )
-        return cls(node_id, _sanitize_server_text(address))
+        # Address is stored raw — it flows into TCP routing and
+        # allowlist comparisons downstream. Sanitisation happens at
+        # log / exception format time, not at decode.
+        return cls(node_id, address)
 
     @classmethod
     def decode_body_legacy(cls, data: bytes) -> "LeaderResponse":
@@ -232,7 +242,8 @@ class LeaderResponse(Message):
             raise DecodeError(
                 f"LeaderResponse (legacy) has {len(data) - consumed} trailing bytes after address"
             )
-        return cls(node_id=0, address=_sanitize_server_text(address))
+        # Raw address — see the modern decoder for rationale.
+        return cls(node_id=0, address=address)
 
 
 @dataclass
@@ -907,7 +918,10 @@ class ServersResponse(Message):
             address, consumed = decode_text(
                 view[offset:], max_size=_MAX_ADDRESS_SIZE, label="server address"
             )
-            address = _sanitize_server_text(address)
+            # Raw address — sanitisation happens at log / exception
+            # format time so the value used for TCP routing and
+            # allowlist comparisons stays authentic. See
+            # ``LeaderResponse.decode_body`` for rationale.
             offset += consumed
             raw_role = decode_uint64(view[offset:])
             offset += 8

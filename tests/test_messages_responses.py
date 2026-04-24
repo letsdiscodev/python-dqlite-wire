@@ -1708,23 +1708,33 @@ class TestServerTextSanitization:
         decoded = FailureResponse.decode_body(payload)
         assert decoded.message == "line1\nline2\tkey=val"
 
-    def test_leader_response_sanitizes_address(self) -> None:
+    def test_leader_response_preserves_raw_address_bytes(self) -> None:
+        """Address fields decode RAW — they flow into TCP routing and
+        allowlist comparisons. Sanitisation happens at log / exception
+        format time in the client layer, not at decode. If the decoder
+        mangled the address, an operator-configured allowlist string
+        would silently fail to match the peer's own canonical form.
+        """
         from dqlitewire.types import encode_text, encode_uint64
 
         payload = encode_uint64(5) + encode_text("evil.com:9001\r\nHost: x")
         decoded = LeaderResponse.decode_body(payload)
-        assert decoded.address == "evil.com:9001?\nHost: x"
+        # Decode preserves the input verbatim (control characters
+        # included). The client layer applies ``_sanitize_server_text``
+        # when formatting the address into an exception or log line.
+        assert decoded.address == "evil.com:9001\r\nHost: x"
 
-    def test_leader_response_legacy_sanitizes(self) -> None:
+    def test_leader_response_legacy_preserves_raw_address(self) -> None:
         from dqlitewire.types import encode_text
 
         payload = encode_text("\x1b[31mred\x1b[0m")
         decoded = LeaderResponse.decode_body_legacy(payload)
-        assert decoded.address == "?[31mred?[0m"
+        assert decoded.address == "\x1b[31mred\x1b[0m"
 
-    def test_servers_response_sanitizes_node_addresses(self) -> None:
+    def test_servers_response_preserves_raw_node_addresses(self) -> None:
         # Build a SERVERS body with a single node whose address contains
-        # an ANSI clear-screen sequence.
+        # an ANSI clear-screen sequence. Decode keeps it raw; client-
+        # layer log formatters sanitise at display time.
         from dqlitewire.constants import NodeRole
         from dqlitewire.types import encode_text, encode_uint64
 
@@ -1734,7 +1744,7 @@ class TestServerTextSanitization:
         body += encode_uint64(NodeRole.VOTER)
         decoded = ServersResponse.decode_body(body)
         assert len(decoded.nodes) == 1
-        assert decoded.nodes[0].address == "node1?[2J:9001"
+        assert decoded.nodes[0].address == "node1\x1b[2J:9001"
 
     # Trojan-Source / log-injection primitives. Each row here matches
     # one codepoint class inside ``_CONTROL_CHARS_RE``:
@@ -1778,17 +1788,25 @@ class TestServerTextSanitization:
         assert decoded.message == "hello?world", f"failed on {label}"
 
     @pytest.mark.parametrize(("bad_char", "label"), _BIDI_AND_ZERO_WIDTH)
-    def test_leader_response_sanitizes_bidi_and_zero_width(self, bad_char: str, label: str) -> None:
+    def test_leader_response_preserves_bidi_and_zero_width(self, bad_char: str, label: str) -> None:
+        """Address decode is raw: the client layer sanitises at log-
+        format time so routing and allowlist comparisons see the
+        peer's authentic bytes. A future ``_sanitize_server_text``
+        applied at decode would split an operator-configured address
+        set when the peer advertised its own canonical form.
+        """
         from dqlitewire.types import encode_text, encode_uint64
 
         payload = encode_uint64(5) + encode_text(f"host{bad_char}:9001")
         decoded = LeaderResponse.decode_body(payload)
-        assert decoded.address == "host?:9001", f"failed on {label}"
+        assert decoded.address == f"host{bad_char}:9001", f"failed on {label}"
 
     @pytest.mark.parametrize(("bad_char", "label"), _BIDI_AND_ZERO_WIDTH)
-    def test_servers_response_sanitizes_bidi_and_zero_width(
+    def test_servers_response_preserves_bidi_and_zero_width(
         self, bad_char: str, label: str
     ) -> None:
+        """Node addresses decode raw — same rationale as the leader
+        address decoder."""
         from dqlitewire.constants import NodeRole
         from dqlitewire.types import encode_text, encode_uint64
 
@@ -1798,7 +1816,7 @@ class TestServerTextSanitization:
         body += encode_uint64(NodeRole.VOTER)
         decoded = ServersResponse.decode_body(body)
         assert len(decoded.nodes) == 1
-        assert decoded.nodes[0].address == "node?1:9001", f"failed on {label}"
+        assert decoded.nodes[0].address == f"node{bad_char}1:9001", f"failed on {label}"
 
 
 class TestReservedFieldValidation:
