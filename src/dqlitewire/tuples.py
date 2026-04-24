@@ -48,6 +48,12 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
         buffer_offset: Absolute byte offset where this tuple starts in the
             message body. Used to compute padding from the absolute position,
             matching Go's putNamedValues which pads based on m.Offset.
+            Need not be word-aligned — the padding math handles any
+            offset and the encode/decode pair round-trip faithfully
+            (``TestParamsTupleBufferOffset`` pins this). In-tree request
+            bodies happen to pass 8-aligned offsets (params tuple
+            always starts at a word boundary) but the function is not
+            restricted to that.
     """
     if schema not in (0, 1):
         raise EncodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
@@ -126,7 +132,9 @@ def decode_params_tuple(
         count: If provided, the number of params (count field not in data).
         schema: 0 for V0, 1 for V1.
         buffer_offset: Absolute byte offset where this tuple starts in the
-            message body. Used for padding calculation matching Go's behavior.
+            message body. Used for padding calculation matching Go's
+            behaviour. Need not be word-aligned — see
+            ``encode_params_tuple`` for the round-trip contract.
     """
     if schema not in (0, 1):
         raise DecodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
