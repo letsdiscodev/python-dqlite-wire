@@ -170,10 +170,15 @@ class OpenRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "OpenRequest":
-        name, offset = decode_text(data)
-        flags = decode_uint64(data[offset:])
+        # memoryview wrap so per-slice cost stays O(1) on large bodies
+        # with many embedded text fields, matching the response-side
+        # decoders (RowsResponse, FilesResponse, ServersResponse) that
+        # already use this pattern.
+        view = memoryview(data)
+        name, offset = decode_text(view)
+        flags = decode_uint64(view[offset:])
         offset += 8
-        vfs, consumed = decode_text(data[offset:])
+        vfs, consumed = decode_text(view[offset:])
         offset += consumed
         if offset != len(data):
             raise DecodeError(f"OpenRequest has {len(data) - offset} trailing bytes")
@@ -213,8 +218,9 @@ class PrepareRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
         if schema not in (0, 1):
             raise DecodeError(f"PrepareRequest unsupported schema version {schema}")
-        db_id = decode_uint64(data)
-        sql, consumed = decode_text(data[8:])
+        view = memoryview(data)
+        db_id = decode_uint64(view)
+        sql, consumed = decode_text(view[8:])
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"PrepareRequest has {len(data) - offset} trailing bytes")
@@ -261,9 +267,10 @@ class ExecRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecRequest":
         if schema not in (0, 1):
             raise DecodeError(f"ExecRequest unsupported schema version {schema}")
-        db_id = decode_uint32(data)
-        stmt_id = decode_uint32(data[4:])
-        params, consumed = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
+        view = memoryview(data)
+        db_id = decode_uint32(view)
+        stmt_id = decode_uint32(view[4:])
+        params, consumed = decode_params_tuple(view[8:], schema=schema, buffer_offset=8)
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"ExecRequest has {len(data) - offset} trailing bytes")
@@ -305,9 +312,10 @@ class QueryRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "QueryRequest":
         if schema not in (0, 1):
             raise DecodeError(f"QueryRequest unsupported schema version {schema}")
-        db_id = decode_uint32(data)
-        stmt_id = decode_uint32(data[4:])
-        params, consumed = decode_params_tuple(data[8:], schema=schema, buffer_offset=8)
+        view = memoryview(data)
+        db_id = decode_uint32(view)
+        stmt_id = decode_uint32(view[4:])
+        params, consumed = decode_params_tuple(view[8:], schema=schema, buffer_offset=8)
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"QueryRequest has {len(data) - offset} trailing bytes")
@@ -377,10 +385,11 @@ class ExecSqlRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecSqlRequest":
         if schema not in (0, 1):
             raise DecodeError(f"ExecSqlRequest unsupported schema version {schema}")
-        db_id = decode_uint64(data)
-        sql, offset = decode_text(data[8:])
+        view = memoryview(data)
+        db_id = decode_uint64(view)
+        sql, offset = decode_text(view[8:])
         offset += 8
-        params, consumed = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
+        params, consumed = decode_params_tuple(view[offset:], schema=schema, buffer_offset=offset)
         offset += consumed
         if offset != len(data):
             raise DecodeError(f"ExecSqlRequest has {len(data) - offset} trailing bytes")
@@ -422,10 +431,11 @@ class QuerySqlRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "QuerySqlRequest":
         if schema not in (0, 1):
             raise DecodeError(f"QuerySqlRequest unsupported schema version {schema}")
-        db_id = decode_uint64(data)
-        sql, offset = decode_text(data[8:])
+        view = memoryview(data)
+        db_id = decode_uint64(view)
+        sql, offset = decode_text(view[8:])
         offset += 8
-        params, consumed = decode_params_tuple(data[offset:], schema=schema, buffer_offset=offset)
+        params, consumed = decode_params_tuple(view[offset:], schema=schema, buffer_offset=offset)
         offset += consumed
         if offset != len(data):
             raise DecodeError(f"QuerySqlRequest has {len(data) - offset} trailing bytes")

@@ -116,7 +116,7 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
 
 
 def decode_params_tuple(
-    data: bytes,
+    data: bytes | memoryview,
     count: int | None = None,
     schema: int = 0,
     buffer_offset: int = 0,
