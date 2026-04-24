@@ -176,6 +176,20 @@ class ReadBuffer:
         preserved.
         """
         self._check_poisoned()
+        # Early oversize reject: a caller that hands in a chunk larger
+        # than ``2 * max_message_size`` is certainly misbehaving (legal
+        # messages fit in one cap, bursty reads occasionally double).
+        # Rejecting at entry means ``ReadBuffer`` — which is part of
+        # the public API — surfaces the misuse before the caller's
+        # upstream buffer allocation grows unbounded. The factor of
+        # two allows a caller to legitimately push a single chunk
+        # containing the tail of a max-size message followed by a
+        # fresh max-size message.
+        if len(data) > 2 * self._max_message_size:
+            raise DecodeError(
+                f"feed data ({len(data)}) exceeds 2x max_message_size "
+                f"({self._max_message_size}); split into smaller chunks"
+            )
         # Size check BEFORE any mutation: the DecodeError raised here
         # must NOT poison the buffer, because its caller-recovery
         # contract is "drain or reset() and continue". The check
