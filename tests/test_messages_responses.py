@@ -153,6 +153,15 @@ class TestWelcomeResponse:
         decoded = WelcomeResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.heartbeat_timeout == heartbeat
 
+    def test_heartbeat_timeout_seconds_property(self) -> None:
+        """``heartbeat_timeout_seconds`` must expose the server's value
+        as seconds (milliseconds / 1000). Pin the conversion so a caller
+        wiring the field directly into ``asyncio.wait_for`` picks up the
+        seconds-based property rather than the raw milliseconds."""
+        assert WelcomeResponse(heartbeat_timeout=15000).heartbeat_timeout_seconds == 15.0
+        assert WelcomeResponse(heartbeat_timeout=0).heartbeat_timeout_seconds == 0.0
+        assert WelcomeResponse(heartbeat_timeout=250).heartbeat_timeout_seconds == 0.25
+
 
 class TestDbResponse:
     def test_roundtrip(self) -> None:

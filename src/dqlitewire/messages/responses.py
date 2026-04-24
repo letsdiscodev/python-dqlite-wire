@@ -240,11 +240,26 @@ class WelcomeResponse(Message):
     """Client registration acknowledgment.
 
     Body: uint64 heartbeat_timeout
+
+    Attributes:
+        heartbeat_timeout: Server-advertised heartbeat interval, in
+            **milliseconds** (upstream default 15000 = 15 s, set from
+            ``config->heartbeat_timeout`` in ``config.c`` and copied
+            verbatim by ``gateway.c``'s WELCOME handler). The unit is a
+            protocol-level invariant; callers passing this value to
+            seconds-based APIs (``asyncio.wait_for``, ``time.sleep``)
+            must divide by 1000 first. Prefer
+            :attr:`heartbeat_timeout_seconds` to avoid the divisor.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.WELCOME
 
     heartbeat_timeout: int
+
+    @property
+    def heartbeat_timeout_seconds(self) -> float:
+        """Heartbeat interval converted to seconds (milliseconds / 1000)."""
+        return self.heartbeat_timeout / 1000.0
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.heartbeat_timeout)
