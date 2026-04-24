@@ -770,6 +770,34 @@ class TestRowsResponse:
         assert len(decoded.rows) == 2
 
 
+class TestRowsResponseEncodeInference:
+    """Pin the docstring's type-inference contract: when both ``row_types``
+    and ``column_types`` are empty, per-cell types are inferred from
+    Python types, which cannot distinguish dqlite-specific encodings from
+    their primitive siblings. Regression fence — a future 'helpful' encoder
+    that quietly promotes int to UNIXTIME would break golden-byte tests
+    silently."""
+
+    def test_int_infers_integer_not_unixtime(self) -> None:
+        from dqlitewire.constants import ValueType
+
+        resp = RowsResponse(column_names=["ts"], rows=[[1700000000]])
+        encoded = resp.encode_body()
+        # Decode and inspect the row_types — per-row type nibble is INTEGER, not UNIXTIME.
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.column_types == [ValueType.INTEGER]
+
+    def test_bool_infers_boolean_not_integer(self) -> None:
+        """Sanity: ``bool`` is a special case with its own ValueType,
+        inferred correctly (no ambiguity with the int case above)."""
+        from dqlitewire.constants import ValueType
+
+        resp = RowsResponse(column_names=["flag"], rows=[[True]])
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        assert decoded.column_types == [ValueType.BOOLEAN]
+
+
 class TestRowsResponseEncodeValidation:
     """Encode-time validation of column count consistency."""
 

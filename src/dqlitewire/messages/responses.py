@@ -434,6 +434,19 @@ class RowsResponse(Message):
         row_types: Per-row type lists, one entry per decoded row.
         rows: Decoded row values.
         has_more: True if a PART marker was found (more rows in next message).
+
+    Encode-side type inference: ``encode_body`` consults ``row_types``
+    first, then ``column_types``; if **both are empty** and ``rows`` are
+    supplied, per-cell types are inferred from Python types via
+    ``encode_value``. Inference cannot distinguish the dqlite-specific
+    encodings (UNIXTIME / ISO8601 / BOOLEAN / SERVER_TIME) from the
+    primitives they share a byte layout with (INTEGER / TEXT / INTEGER
+    / INTEGER respectively): a Python ``int`` always encodes as
+    ``ValueType.INTEGER``. Callers building frames for a column with a
+    declared dqlite-specific type (mock servers, golden-byte harnesses)
+    MUST pass ``column_types`` or ``row_types`` explicitly — otherwise
+    re-encoding a round-tripped frame emits the wrong type nibble even
+    though the payload bytes are identical.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.ROWS
