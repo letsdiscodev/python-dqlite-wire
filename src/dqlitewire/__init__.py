@@ -66,6 +66,7 @@ from dqlitewire.exceptions import (
     ServerFailure,
     StreamError,
 )
+from dqlitewire.messages.base import Header, Message
 from dqlitewire.types import WireInput, WireValue
 
 __all__ = [
@@ -74,7 +75,9 @@ __all__ = [
     "DecodeError",
     "EncodeError",
     "HandshakeError",
+    "Header",
     "LEADER_ERROR_CODES",
+    "Message",
     "MessageDecoder",
     "MessageEncoder",
     "NodeRole",

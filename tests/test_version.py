@@ -22,3 +22,17 @@ def test_version_is_in_all() -> None:
     that read ``__all__`` as the source of truth see it as public.
     """
     assert "__version__" in dqlitewire.__all__
+
+
+def test_header_and_message_exported_from_package() -> None:
+    """``Message`` and ``Header`` are used in the public
+    ``encode_message`` annotation, so they must be importable from the
+    top-level package rather than only from ``dqlitewire.messages.base``.
+    """
+    import dqlitewire
+    from dqlitewire.messages.base import Header, Message
+
+    assert dqlitewire.Header is Header
+    assert dqlitewire.Message is Message
+    assert "Header" in dqlitewire.__all__
+    assert "Message" in dqlitewire.__all__
