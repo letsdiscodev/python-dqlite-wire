@@ -69,6 +69,8 @@ from dqlitewire.exceptions import (
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.types import WireInput, WireValue
 
+__version__ = "0.1.3"
+
 __all__ = [
     "ContinuationError",
     "__version__",
@@ -104,5 +106,3 @@ __all__ = [
     "decode_message",
     "encode_message",
 ]
-
-__version__ = "0.1.3"
