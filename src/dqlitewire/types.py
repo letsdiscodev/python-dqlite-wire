@@ -177,7 +177,17 @@ def pad_to_word(size: int) -> int:
 
 
 def encode_text(value: str) -> bytes:
-    """Encode text as null-terminated UTF-8, padded to 8-byte boundary."""
+    """Encode text as null-terminated UTF-8, padded to 8-byte boundary.
+
+    Wire-protocol limitation: TEXT is NUL-terminated, so the encoder
+    rejects values with embedded NULs — they cannot round-trip through
+    the wire. Callers that need to transmit arbitrary bytes (including
+    NULs) must use the BLOB type instead. SQLite itself allows TEXT
+    columns to contain embedded NULs on disk, but such values cannot be
+    reliably read back through the dqlite wire protocol (``decode_text``
+    stops at the first NUL). This matches Go / C client behaviour;
+    it is a protocol-level asymmetry, not a Python-side design choice.
+    """
     if not isinstance(value, str):
         raise EncodeError(f"encode_text expected str, got {type(value).__name__}")
     try:
@@ -227,6 +237,14 @@ def decode_text(
     ``max_size`` is exceeded, so a caller passing
     ``label="leader address"`` gets ``"leader address length N exceeds
     maximum (M)"`` rather than the generic ``"Text length..."``.
+
+    Wire-protocol limitation: TEXT is NUL-terminated, so a value with
+    embedded NULs on the server side (e.g. written by a non-dqlite
+    SQLite client that accepts TEXT with NULs) reads back **truncated
+    at the first NUL**. No diagnostic is raised — the protocol provides
+    no length prefix, so the decoder cannot tell an embedded NUL apart
+    from the terminator. The encoder refuses such values outright;
+    callers who need round-trip-safe binary data should use BLOB.
 
     The decoder's hot body loops (RowsResponse, FilesResponse,
     ServersResponse) wrap the body in a ``memoryview`` so

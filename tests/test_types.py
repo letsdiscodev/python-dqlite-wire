@@ -274,6 +274,25 @@ class TestText:
         with pytest.raises(EncodeError, match="byte offset 5"):
             encode_text("café\x00")
 
+    def test_decode_truncates_at_first_nul_documented_behaviour(self) -> None:
+        """The wire format is NUL-terminated with word-alignment padding,
+        so an embedded NUL is indistinguishable from the terminator. The
+        decoder therefore truncates at the first NUL and does NOT raise
+        — pin the documented asymmetry so a future "strict" refactor
+        that flagged stray NULs after the terminator (breaking the
+        legitimate padding case) is caught early.
+        """
+        # Valid wire payload: "hello" + NUL + "world" + NUL + padding.
+        # The bytes AFTER the first terminator ("world" + NUL + padding)
+        # are legitimate under NO realistic interpretation — but the
+        # decoder cannot distinguish them from padding, so it simply
+        # returns "hello" and the reported consumed length matches the
+        # padded length of "hello\x00".
+        text, consumed = decode_text(b"hello\x00world\x00\x00\x00")
+        assert text == "hello"
+        # "hello" + NUL = 6 bytes, padded to 8.
+        assert consumed == 8
+
     @pytest.mark.parametrize(
         "bad",
         [None, 42, b"x", 3.14, ["x"], bytearray(b"x"), memoryview(b"x")],
