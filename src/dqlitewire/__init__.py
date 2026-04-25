@@ -101,7 +101,6 @@ __all__ = [
     "SQLITE_IOERR_NOT_LEADER",
     "SQLITE_PRIMARY_CODE_MASK",
     "ServerFailure",
-    "primary_sqlite_code",
     "StreamError",
     "ValueType",
     "WireInput",
@@ -109,4 +108,5 @@ __all__ = [
     "WriteBuffer",
     "decode_message",
     "encode_message",
+    "primary_sqlite_code",
 ]
