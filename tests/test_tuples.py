@@ -81,6 +81,28 @@ class TestParamsTuple:
         assert values == []
         assert consumed == 0
 
+    def test_decode_rejects_short_data_for_nonzero_count(self) -> None:
+        """``decode_params_tuple(short_data, count=N)`` with N>0 must
+        raise DecodeError when there are not enough bytes for the
+        params header. Pin the diagnostic so a refactor that
+        silently returns an empty list (instead of raising) is
+        caught — that would make the wire silently drop params
+        on a torn read."""
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="Not enough data"):
+            decode_params_tuple(b"\x00\x00\x00\x00", count=1)
+
+    def test_decode_short_data_with_zero_count_returns_empty(self) -> None:
+        """``decode_params_tuple(short_data, count=0)`` is the
+        legitimate "the upstream bound the count to zero, the wire
+        is short but that's fine" path. Returns empty list. Pin
+        this branch alongside the raise-on-nonzero-count branch
+        above so a refactor that conflates them is caught."""
+        values, consumed = decode_params_tuple(b"\x00\x00\x00\x00", count=0)
+        assert values == []
+        assert consumed == 0
+
     def test_roundtrip_integers(self) -> None:
         params = [1, 2, 3, 100, -50]
         encoded = encode_params_tuple(params)

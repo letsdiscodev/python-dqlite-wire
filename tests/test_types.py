@@ -223,6 +223,39 @@ class TestText:
             text, _ = decode_text(encode_text(s))
             assert text == s
 
+    def test_decode_rejects_unterminated_bytes(self) -> None:
+        """A TEXT bytes payload without a NUL terminator must surface
+        as ``DecodeError("&lt;label&gt; not null-terminated")``. Pin the
+        bytes-path branch."""
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="not null-terminated"):
+            decode_text(b"abc", label="param")
+
+    def test_decode_rejects_unterminated_memoryview(self) -> None:
+        """Same diagnostic for the memoryview one-shot path. Drives
+        the uncovered branch at types.py:267."""
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="not null-terminated"):
+            decode_text(memoryview(b"abc"), label="param")
+
+    def test_decode_rejects_invalid_utf8_bytes(self) -> None:
+        """Bytes before the NUL terminator that are not valid UTF-8
+        must raise ``DecodeError("Invalid UTF-8 in &lt;label&gt;: ...")``."""
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="Invalid UTF-8 in param"):
+            decode_text(b"\xff\xfe\x00", label="param")
+
+    def test_decode_rejects_invalid_utf8_memoryview(self) -> None:
+        """Same diagnostic for the memoryview one-shot path. Drives
+        the uncovered branch at types.py:270-271."""
+        from dqlitewire.exceptions import DecodeError
+
+        with pytest.raises(DecodeError, match="Invalid UTF-8 in param"):
+            decode_text(memoryview(b"\xff\xfe\x00"), label="param")
+
     def test_roundtrip_unicode_comprehensive(self) -> None:
         """Test various Unicode edge cases."""
         unicode_strings = [

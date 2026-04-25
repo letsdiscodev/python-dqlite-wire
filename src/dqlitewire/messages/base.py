@@ -45,7 +45,12 @@ class Header:
             raise DecodeError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
         try:
             size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
-        except struct.error as e:
+        except struct.error as e:  # pragma: no cover
+            # Defensive: ``struct.unpack`` of the fixed-size ``<IBBH``
+            # format on a guaranteed-8-byte slice cannot fail with
+            # ``struct.error`` — the length check above ensures the
+            # slice has exactly ``HEADER_SIZE`` bytes. Kept as a
+            # belt-and-braces guard against future format changes.
             raise DecodeError(f"Failed to decode header: {e}") from e
         # Upstream C (message.h) reserves the trailing uint16 and every
         # current server writes 0. Reject non-zero values so peer

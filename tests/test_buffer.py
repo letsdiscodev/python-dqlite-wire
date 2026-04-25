@@ -776,3 +776,155 @@ class TestReadBuffer:
         buf.feed(b"\x00" * 16)
         with pytest.raises(TypeError, match="cannot be pickled"):
             pickle.dumps(buf)
+
+
+class TestReadBufferDefensiveChecks:
+    """Defensive paths reported as uncovered by ``pytest --cov``.
+
+    Each test drives a structural defense in ``ReadBuffer`` that no
+    other test exercises directly. A regression that removes or
+    weakens one of these checks would silently break correctness
+    under partial reads or developer misuse, with no test failure
+    on the happy path."""
+
+    def test_feed_rejects_chunk_larger_than_double_max_message_size(self) -> None:
+        """Caller-misuse early reject. A single ``feed()`` chunk
+        must not exceed ``2 * max_message_size`` — beyond that,
+        even a back-to-back-max-message scenario cannot justify
+        the chunk size."""
+        from dqlitewire.exceptions import DecodeError
+
+        buf = ReadBuffer(max_message_size=64)
+        with pytest.raises(DecodeError, match="exceeds 2x max_message_size"):
+            buf.feed(b"\x00" * 129)
+
+    def test_read_message_poisons_with_runtime_error_on_base_exception(self) -> None:
+        """If a non-Exception ``BaseException`` (e.g. KeyboardInterrupt)
+        lands inside ``read_message`` between the slice and the
+        ``_pos += total_size`` write, the buffer poisons with a
+        RuntimeError naming the call site. Drives the
+        BaseException-not-Exception fallback at buffer.py:384."""
+        from unittest.mock import patch
+
+        buf = ReadBuffer(max_message_size=128)
+        # Build a complete frame: 8-byte header + 8-byte body.
+        encoded = LeaderRequest().encode()
+        buf.feed(encoded)
+
+        # Patch ``bytes`` IN THE BUFFER MODULE so our raise lands
+        # at the slice site inside ``read_message`` without
+        # polluting other modules.
+        import dqlitewire.buffer as buffer_mod
+
+        with (
+            patch.object(buffer_mod, "bytes", side_effect=KeyboardInterrupt()),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            buf.read_message()
+
+        assert isinstance(buf._poisoned, RuntimeError)
+        assert "read_message interrupted" in str(buf._poisoned)
+        assert "KeyboardInterrupt" in str(buf._poisoned)
+
+    def test_skip_message_poisons_with_runtime_error_on_base_exception(self) -> None:
+        """Sibling pin for ``skip_message``'s BaseException fallback
+        at buffer.py:458. Patch ``_maybe_compact`` to raise
+        KeyboardInterrupt mid-skip."""
+        from unittest.mock import patch
+
+        buf = ReadBuffer(max_message_size=128)
+        encoded = LeaderRequest().encode()
+        buf.feed(encoded)
+
+        with (
+            patch.object(ReadBuffer, "_maybe_compact", side_effect=KeyboardInterrupt()),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            buf.skip_message()
+
+        assert isinstance(buf._poisoned, RuntimeError)
+        assert "skip_message interrupted" in str(buf._poisoned)
+        assert "KeyboardInterrupt" in str(buf._poisoned)
+
+    def test_read_bytes_poisons_with_runtime_error_on_base_exception(self) -> None:
+        """Sibling pin for ``read_bytes``'s BaseException fallback at
+        buffer.py:486."""
+        from unittest.mock import patch
+
+        buf = ReadBuffer(max_message_size=128)
+        buf.feed(b"\x00" * 16)
+
+        import dqlitewire.buffer as buffer_mod
+
+        with (
+            patch.object(buffer_mod, "bytes", side_effect=KeyboardInterrupt()),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            buf.read_bytes(8)
+
+        assert isinstance(buf._poisoned, RuntimeError)
+        assert "read_bytes interrupted" in str(buf._poisoned)
+        assert "KeyboardInterrupt" in str(buf._poisoned)
+
+    def test_read_message_poisons_with_original_exception_on_exception_subclass(
+        self,
+    ) -> None:
+        """Sibling pin for the ``isinstance(e, Exception)`` branch
+        of read_message's poisoning logic. A regular Exception
+        subclass (e.g. MemoryError) is stored as-is on
+        ``_poisoned``, NOT wrapped in RuntimeError."""
+        from unittest.mock import patch
+
+        buf = ReadBuffer(max_message_size=128)
+        encoded = LeaderRequest().encode()
+        buf.feed(encoded)
+
+        import dqlitewire.buffer as buffer_mod
+
+        sentinel = MemoryError("simulated allocation failure")
+        with (
+            patch.object(buffer_mod, "bytes", side_effect=sentinel),
+            pytest.raises(MemoryError),
+        ):
+            buf.read_message()
+
+        assert buf._poisoned is sentinel
+
+    def test_skip_message_poisons_with_original_exception_on_exception_subclass(
+        self,
+    ) -> None:
+        """Sibling pin for skip_message's Exception branch."""
+        from unittest.mock import patch
+
+        buf = ReadBuffer(max_message_size=128)
+        encoded = LeaderRequest().encode()
+        buf.feed(encoded)
+
+        sentinel = MemoryError("simulated allocation failure")
+        with (
+            patch.object(ReadBuffer, "_maybe_compact", side_effect=sentinel),
+            pytest.raises(MemoryError),
+        ):
+            buf.skip_message()
+
+        assert buf._poisoned is sentinel
+
+    def test_read_bytes_poisons_with_original_exception_on_exception_subclass(
+        self,
+    ) -> None:
+        """Sibling pin for read_bytes's Exception branch."""
+        from unittest.mock import patch
+
+        buf = ReadBuffer(max_message_size=128)
+        buf.feed(b"\x00" * 16)
+
+        import dqlitewire.buffer as buffer_mod
+
+        sentinel = MemoryError("simulated allocation failure")
+        with (
+            patch.object(buffer_mod, "bytes", side_effect=sentinel),
+            pytest.raises(MemoryError),
+        ):
+            buf.read_bytes(8)
+
+        assert buf._poisoned is sentinel

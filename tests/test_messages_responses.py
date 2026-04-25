@@ -2052,3 +2052,33 @@ class TestDecodeTextCapsAreByteBased:
         body = encode_uint64(1) + encode_text(name) + encode_uint64(len(content)) + content
         with pytest.raises(DecodeError, match="exceeds maximum"):
             FilesResponse.decode_body(body)
+
+
+class TestStmtResponsePostInitValidation:
+    """Pin StmtResponse.__post_init__'s schema and tail_offset
+    sanity checks. Both are reachable via direct construction; no
+    other test exercises the post-init raises directly."""
+
+    def test_post_init_rejects_schema_outside_known_set(self) -> None:
+        from dqlitewire.messages.responses import StmtResponse
+
+        with pytest.raises(ValueError, match="must be 0 or 1"):
+            StmtResponse(db_id=0, stmt_id=0, num_params=0, tail_offset=None, schema=2)
+
+    def test_post_init_rejects_v0_schema_with_tail_offset(self) -> None:
+        from dqlitewire.messages.responses import StmtResponse
+
+        with pytest.raises(ValueError, match="schema=0"):
+            StmtResponse(db_id=0, stmt_id=0, num_params=0, tail_offset=42, schema=0)
+
+
+class TestFilesResponseEncodeCountCap:
+    """Pin the encode-side count cap on FilesResponse — symmetric
+    with the existing decode-side cap test in TestEncodeSideCaps."""
+
+    def test_encode_rejects_count_above_max(self) -> None:
+        from dqlitewire.messages.responses import _MAX_FILE_COUNT, FilesResponse
+
+        files = {f"f{i}": b"\x00" * 8 for i in range(_MAX_FILE_COUNT + 1)}
+        with pytest.raises(EncodeError, match="exceeds maximum"):
+            FilesResponse(files=files).encode_body()

@@ -274,7 +274,13 @@ class ReadBuffer:
         # caller's while-loop proceeds to read_message(), which then
         # poisons. has_message() itself is a total predicate and
         # must not raise.
-        if size_words > 0xFFFFFFFF:
+        if size_words > 0xFFFFFFFF:  # pragma: no cover
+            # Defensive: ``size_words`` is read from 4 bytes via
+            # ``int.from_bytes(..., "little")`` and so caps at exactly
+            # ``0xFFFFFFFF`` — strictly-greater requires a concurrent
+            # slice-widening that no Python-level test can drive.
+            # Kept as the torn-read shortcut for free-threaded /
+            # signal-interrupted readers.
             return True
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 

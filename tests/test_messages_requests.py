@@ -535,6 +535,34 @@ class TestAssignRequestDecodeRoleValidation:
             decoded = AssignRequest.decode_body(encode_uint64(1) + encode_uint64(role))
             assert decoded.role == role
 
+    def test_post_init_rejects_unknown_role_int(self) -> None:
+        """Construction-side narrowing: passing a raw int role that is
+        not a known ``NodeRole`` value must surface as
+        ``ValueError("AssignRequest: unknown role N")``. Sibling pin
+        to the decode-side check above; the construction path is
+        what tests / mock servers / direct callers exercise."""
+        with pytest.raises(ValueError, match="unknown role 999"):
+            AssignRequest(node_id=1, role=999)
+
+
+class TestDescribeRequestStrictLength:
+    """``DescribeRequest.decode_body`` rejects bodies of any length
+    other than exactly 8 bytes. Pinned alongside the other strict-
+    length decoders in ``test_decoder_strict_length.py`` would also
+    work; placing it here keeps the per-message-class test cohesion."""
+
+    def test_decode_body_rejects_short_body(self) -> None:
+        from dqlitewire.messages.requests import DescribeRequest
+
+        with pytest.raises(DecodeError, match="must be 8 bytes"):
+            DescribeRequest.decode_body(b"")
+
+    def test_decode_body_rejects_wrong_length(self) -> None:
+        from dqlitewire.messages.requests import DescribeRequest
+
+        with pytest.raises(DecodeError, match="must be 8 bytes"):
+            DescribeRequest.decode_body(b"\x00" * 7)
+
 
 class TestRemoveRequest:
     def test_roundtrip(self) -> None:
