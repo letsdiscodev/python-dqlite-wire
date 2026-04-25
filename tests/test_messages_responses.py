@@ -324,6 +324,41 @@ class TestResultResponse:
         assert decoded.last_insert_id == 0
         assert decoded.rows_affected == 0
 
+    def test_decodes_uint64_max(self) -> None:
+        """Wire is uint64; the max boundary must round-trip without
+        overflow or sign coercion."""
+        import struct
+
+        body = struct.pack("<QQ", 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+        decoded = ResultResponse.decode_body(body)
+        assert decoded.last_insert_id == 0xFFFFFFFFFFFFFFFF
+        assert decoded.rows_affected == 0xFFFFFFFFFFFFFFFF
+
+    def test_decodes_signed_negative_rowid_as_unsigned(self) -> None:
+        """The C server gateway casts sqlite3_last_insert_rowid()
+        (signed int64) through (uint64_t). A negative SQLite rowid
+        ``-5`` arrives as ``0xFFFFFFFFFFFFFFFB``. Pin the asymmetry —
+        the decoder MUST surface the unsigned form, not coerce to
+        Python's signed int."""
+        import struct
+
+        body = struct.pack("<QQ", 0xFFFFFFFFFFFFFFFB, 0)
+        decoded = ResultResponse.decode_body(body)
+        assert decoded.last_insert_id == 0xFFFFFFFFFFFFFFFB
+        # The unsigned form is NOT -5 — that conversion belongs to a
+        # downstream layer that wants stdlib sqlite3 parity, not to the
+        # wire decoder.
+        assert decoded.last_insert_id != -5
+
+    def test_decodes_signed_min_int64_boundary(self) -> None:
+        """The signed-int64 ``MIN`` value (``-2**63``) round-trips
+        through ``(uint64_t)`` as ``0x8000000000000000``."""
+        import struct
+
+        body = struct.pack("<QQ", 0x8000000000000000, 0)
+        decoded = ResultResponse.decode_body(body)
+        assert decoded.last_insert_id == 0x8000000000000000
+
 
 class TestRowsResponseAliasing:
     """Regression tests for caller-list aliasing in RowsResponse.
