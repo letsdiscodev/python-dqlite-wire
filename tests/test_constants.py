@@ -236,3 +236,42 @@ class TestLeaderErrorCodes:
         assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
         expected = frozenset({10250, 10506})
         assert expected == LEADER_ERROR_CODES
+
+
+class TestPrimarySqliteCode:
+    def test_mask_value(self) -> None:
+        from dqlitewire.constants import SQLITE_PRIMARY_CODE_MASK
+
+        assert SQLITE_PRIMARY_CODE_MASK == 0xFF
+
+    def test_extended_ioerr_not_leader_unmasks_to_ioerr(self) -> None:
+        from dqlitewire.constants import (
+            SQLITE_IOERR,
+            SQLITE_IOERR_NOT_LEADER,
+            primary_sqlite_code,
+        )
+
+        assert primary_sqlite_code(SQLITE_IOERR_NOT_LEADER) == SQLITE_IOERR
+
+    def test_extended_ioerr_leadership_lost_unmasks_to_ioerr(self) -> None:
+        from dqlitewire.constants import (
+            SQLITE_IOERR,
+            SQLITE_IOERR_LEADERSHIP_LOST,
+            primary_sqlite_code,
+        )
+
+        assert primary_sqlite_code(SQLITE_IOERR_LEADERSHIP_LOST) == SQLITE_IOERR
+
+    def test_primary_code_passes_through_unchanged(self) -> None:
+        from dqlitewire.constants import primary_sqlite_code
+
+        # Identity for codes that already are primary (low byte only).
+        assert primary_sqlite_code(1) == 1  # SQLITE_ERROR
+        assert primary_sqlite_code(5) == 5  # SQLITE_BUSY
+        assert primary_sqlite_code(10) == 10  # SQLITE_IOERR
+        assert primary_sqlite_code(0) == 0  # SQLITE_OK
+
+    def test_helper_importable_from_top_level(self) -> None:
+        from dqlitewire import primary_sqlite_code
+
+        assert primary_sqlite_code(10250) == 10
