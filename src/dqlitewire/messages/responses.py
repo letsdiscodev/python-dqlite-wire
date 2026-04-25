@@ -423,6 +423,14 @@ class ResultResponse(Message):
     """Statement execution result.
 
     Body: uint64 last_insert_id, uint64 rows_affected
+
+    Note on signedness: the wire is uint64 per the dqlite protocol spec.
+    The upstream C server casts ``sqlite3_last_insert_rowid()``
+    (``sqlite3_int64``) through ``(uint64_t)`` before sending, so a
+    negative SQLite rowid arrives here as ``2**64 - abs(rowid)``.
+    Downstream layers that surface this to PEP 249's
+    ``cursor.lastrowid`` (which mirrors ``sqlite3.Connection.lastrowid``,
+    a signed value) may want to re-cast as int64 for stdlib parity.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.RESULT
