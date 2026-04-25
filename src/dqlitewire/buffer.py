@@ -33,12 +33,26 @@ class WriteBuffer:
     def write_padded(self, data: bytes) -> None:
         """Append data with padding to word boundary.
 
-        The padded bytes are built locally and emitted via a single
-        ``bytearray.extend`` so that under accidental concurrent misuse
-        two threads' payloads and padding cannot interleave. This
-        still does not make
-        ``WriteBuffer`` thread-safe in any strong sense, but it removes
-        the torn payload/pad split that used to be visible to callers.
+        Concurrency contract — narrow:
+
+        - **Within a single call**, the payload and its trailing pad
+          bytes are emitted via a single ``bytearray.extend``, so
+          another thread's bytes cannot land between the payload and
+          its pad. This removes the torn payload/pad split that used
+          to be visible to callers under accidental concurrent misuse.
+
+        - **Across calls**, ``write_padded`` does NOT serialize
+          concurrent writers. Two threads each calling
+          ``write_padded`` succeed in unbounded order — each individual
+          payload is intact and correctly padded, but the inter-payload
+          ordering is not defined. The wire layer relies on
+          per-connection ownership (one task per ``WriteBuffer``) for
+          cross-call ordering; ``write_padded`` protects only the
+          within-call atomicity.
+
+        If multiple threads must share one ``WriteBuffer``, wrap every
+        call site in a ``threading.Lock`` (or ``asyncio.Lock`` for
+        coroutines) at the layer that owns the buffer.
         """
         remainder = len(data) % WORD_SIZE
         if remainder:
