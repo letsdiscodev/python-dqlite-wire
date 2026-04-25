@@ -1178,6 +1178,90 @@ class TestDecoderContinuation:
         with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
             decoder.decode_continuation()
 
+    def test_decode_continuation_accepts_empty_response_as_terminator(self) -> None:
+        """decode_continuation must accept an EmptyResponse mid-stream as
+        a clean terminator.
+
+        The upstream C server emits ``EmptyResponse`` instead of a final
+        ROWS frame when the in-flight query is cancelled by an INTERRUPT
+        request (gateway.c::handle_query_done_cb). The reference Go
+        client (Protocol.Interrupt) loops reading until it sees
+        ``ResponseEmpty`` and treats that frame as the normal
+        acknowledgement that the in-flight query was interrupted. The
+        Python codec must not poison its buffer on that frame.
+        """
+        from dqlitewire.messages.responses import EmptyResponse
+
+        empty_bytes = EmptyResponse().encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
+        decoder.feed(empty_bytes)
+
+        result = decoder.decode_continuation()
+        assert isinstance(result, EmptyResponse)
+        # Flag cleared so the decoder can resume normal traffic.
+        assert decoder._continuation_expected is False
+        # Buffer is NOT poisoned.
+        assert not decoder._buffer.is_poisoned
+
+    def test_decode_continuation_empty_after_partial_rows(self) -> None:
+        """Realistic interrupt-mid-stream sequence: a ROWS-PART frame
+        with rows is delivered, then the caller drains via
+        ``decode_continuation`` and receives an EmptyResponse instead of
+        a final ROWS-DONE frame. Pin that this transition clears the
+        continuation flag without poisoning."""
+        from dqlitewire.constants import ROW_PART_MARKER, ValueType
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import EmptyResponse, RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER]
+        body = encode_uint64(1)  # column_count
+        body += encode_text("id")
+        body += encode_row_header(types)
+        body += encode_row_values([1], types)
+        body += encode_uint64(ROW_PART_MARKER)
+        rows_header = Header(size_words=len(body) // 8, msg_type=7, schema=0)
+        rows_bytes = rows_header.encode() + body
+
+        empty_bytes = EmptyResponse().encode()
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(rows_bytes + empty_bytes)
+
+        first = decoder.decode()
+        assert isinstance(first, RowsResponse)
+        assert first.has_more is True
+
+        terminator = decoder.decode_continuation()
+        assert isinstance(terminator, EmptyResponse)
+        assert decoder._continuation_expected is False
+        assert not decoder._buffer.is_poisoned
+
+    def test_decode_continuation_malformed_empty_still_poisons(self) -> None:
+        """A malformed EmptyResponse (non-zero reserved field) must
+        surface the underlying DecodeError and poison the buffer — the
+        clean-terminator path is opt-in to well-formed frames only."""
+        import struct
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.base import Header
+
+        # EMPTY body is a single uint64 reserved field, must be 0.
+        body = struct.pack("<Q", 1)
+        header = Header(size_words=1, msg_type=8, schema=0)  # ResponseType.EMPTY = 8
+        empty_bad = header.encode() + body
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
+        decoder.feed(empty_bad)
+
+        with pytest.raises(DecodeError, match="reserved field must be 0"):
+            decoder.decode_continuation()
+        assert decoder.is_poisoned is True
+
 
 class TestDecoderContinuationExpected:
     """Regression tests for the continuation-expected state machine.
@@ -1557,17 +1641,21 @@ class TestDecoderPoisonedState:
 
     def test_decode_continuation_poisons_on_wrong_type(self) -> None:
         """decode_continuation() must poison the decoder when the next
-        message is not a ROWS continuation. The bytes have been consumed
-        from the buffer; subsequent operations cannot trust the offset.
+        message is not a ROWS continuation, FAILURE, or EMPTY. The bytes
+        have been consumed from the buffer; subsequent operations cannot
+        trust the offset.
+
+        ``EmptyResponse`` is now treated as a clean interrupt-ack
+        terminator and does NOT poison — that case is covered in
+        :class:`TestDecoderContinuation` separately. Use a
+        ``ResultResponse`` here to exercise the genuine-desync path.
         """
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=False)
         decoder._continuation_expected = True
-        # Feed a non-ROWS message where decode_continuation expects ROWS.
-        # An EmptyResponse is type 127, body is empty.
-        empty = EmptyResponse().encode()
-        decoder.feed(empty)
+        result = ResultResponse(last_insert_id=0, rows_affected=0).encode()
+        decoder.feed(result)
 
         with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
             decoder.decode_continuation()

@@ -305,7 +305,7 @@ class MessageDecoder:
         """True if still discarding bytes from an oversized message."""
         return self._buffer.is_skipping
 
-    def decode_continuation(self) -> RowsResponse | None:
+    def decode_continuation(self) -> RowsResponse | EmptyResponse | None:
         """Decode a ROWS continuation message from the buffer.
 
         After receiving a RowsResponse with has_more=True, call this
@@ -315,11 +315,23 @@ class MessageDecoder:
         so this method uses ``RowsResponse.decode_body`` — the same
         decoder used for the initial frame.
 
+        An ``EmptyResponse`` mid-continuation is also a conforming
+        terminator: the upstream C server emits
+        ``EmptyResponse`` instead of a final ROWS frame when the
+        in-flight query was cancelled by an INTERRUPT request
+        (``gateway.c::handle_query_done_cb``). The reference Go client
+        loops reading continuations until it sees ``ResponseEmpty``.
+        Returning the ``EmptyResponse`` here mirrors that behaviour and
+        clears the continuation-expected flag so subsequent traffic on
+        the connection can resume normally.
+
         Returns None if no complete message is available.
         Raises ProtocolError if no continuation is in progress
         (use ``decode()`` for the initial message).
-        Raises ProtocolError if the server sends a FailureResponse
+        Raises ServerFailure if the server sends a FailureResponse
         instead of a ROWS continuation (e.g., mid-stream I/O error).
+        Raises StreamError for any other message type — that indicates
+        genuine wire desync and the buffer is poisoned.
         """
         self._buffer._check_poisoned()
         if not self._continuation_expected:
@@ -356,6 +368,14 @@ class MessageDecoder:
                 self._continuation_expected = False
                 failure = FailureResponse.decode_body(body, schema=header.schema)
                 raise ServerFailure(failure.code, failure.message)
+            if header.msg_type == ResponseType.EMPTY:
+                # The upstream C server emits an ``EmptyResponse`` when
+                # the in-flight query was cancelled by an INTERRUPT
+                # request mid-stream. Treat it as a clean terminator,
+                # mirroring go-dqlite's ``Protocol.Interrupt`` drain
+                # loop. Do NOT poison the buffer.
+                self._continuation_expected = False
+                return EmptyResponse.decode_body(body, schema=header.schema)
             if header.msg_type != ResponseType.ROWS:
                 self._continuation_expected = False
                 raise StreamError(
