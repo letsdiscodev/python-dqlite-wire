@@ -47,30 +47,50 @@ class TestFailureResponse:
         assert decoded.message == "Something went wrong"
 
     def test_empty_message(self) -> None:
-        # Use code=1 (SQLITE_ERROR) — code=0 is now rejected as
-        # semantically incoherent (SQLITE_OK in a failure).
         msg = FailureResponse(code=1, message="")
         encoded = msg.encode()
         decoded = FailureResponse.decode_body(encoded[HEADER_SIZE:])
         assert decoded.code == 1
         assert decoded.message == ""
 
-    def test_construct_with_code_zero_rejected(self) -> None:
-        """SQLITE_OK (0) inside a FailureResponse is incoherent — a
-        successful operation cannot be a failure. Conforming Go/C
-        servers cannot emit this; reject so the malformed peer
-        surfaces here at the boundary rather than as a confusing
-        ``OperationalError(code=0)`` downstream."""
-        with pytest.raises(EncodeError, match="SQLITE_OK"):
-            FailureResponse(code=0, message="huh?")
+    def test_construct_with_code_zero_accepted(self) -> None:
+        """Upstream's gateway emits ``failure(req, 0, "empty statement")``
+        from ``handle_prepare_done_cb`` (gateway.c:372) and
+        ``handle_query_sql_done_cb`` (gateway.c:890) when the SQL parses
+        to no statement (empty / comment-only). The C source carries an
+        explicit ``/* FIXME Should we use a code other than 0 here? */``
+        next to the emit. Pin acceptance so a conforming server's
+        empty-statement reply does not poison the decoder."""
+        msg = FailureResponse(code=0, message="empty statement")
+        assert msg.code == 0
+        assert msg.message == "empty statement"
 
-    def test_decode_rejects_code_zero(self) -> None:
-        """Symmetric: bytes with code=0 also rejected via the
-        ``__post_init__`` chain (decode constructs via ``cls(code,
-        ...)`` which triggers the validation)."""
-        body = encode_uint64(0) + encode_text("huh?")
-        with pytest.raises(EncodeError, match="SQLITE_OK"):
-            FailureResponse.decode_body(body)
+    def test_decode_accepts_code_zero(self) -> None:
+        """Symmetric: bytes with code=0 round-trip cleanly through the
+        decoder, surfacing as a normal ``OperationalError(0, "empty
+        statement")`` to the user rather than a poisoned-buffer
+        ProtocolError."""
+        body = encode_uint64(0) + encode_text("empty statement")
+        decoded = FailureResponse.decode_body(body)
+        assert decoded.code == 0
+        assert decoded.message == "empty statement"
+
+    def test_round_trip_code_zero_through_message_decoder(self) -> None:
+        """End-to-end pin: ``encode_message`` → ``MessageDecoder.feed`` →
+        ``decode`` for ``FailureResponse(code=0)``. This is the path a
+        real client takes when the server replies to an empty SQL
+        prepare; the prior contract-level rejection broke this path."""
+        from dqlitewire.codec import MessageDecoder
+
+        msg = FailureResponse(code=0, message="empty statement")
+        encoded = msg.encode()
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(encoded)
+        decoded = decoder.decode()
+        assert isinstance(decoded, FailureResponse)
+        assert decoded.code == 0
+        assert decoded.message == "empty statement"
+        assert not decoder.is_poisoned
 
     @pytest.mark.parametrize("code", [4, 9, 10, 11, 13])
     def test_round_trip_auto_rollback_codes(self, code: int) -> None:
@@ -2198,8 +2218,10 @@ class TestResponsePostInitValidation:
 
     def test_in_range_values_construct_cleanly(self) -> None:
         """Negative pin: in-spec values do not raise."""
-        # FailureResponse code=0 is now rejected (SQLITE_OK in a
-        # failure is incoherent — see test_construct_with_code_zero_rejected).
+        # FailureResponse code=0 is accepted: upstream's gateway emits
+        # ``failure(req, 0, "empty statement")`` for empty / comment-only
+        # SQL — see test_construct_with_code_zero_accepted.
+        FailureResponse(code=0, message="empty statement")
         FailureResponse(code=1, message="")
         FailureResponse(code=2**64 - 1, message="x")
         LeaderResponse(node_id=0, address="")

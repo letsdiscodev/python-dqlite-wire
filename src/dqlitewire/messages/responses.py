@@ -153,17 +153,16 @@ class FailureResponse(Message):
     message: str
 
     def __post_init__(self) -> None:
+        # ``code`` is intentionally NOT rejected when 0. Upstream's gateway
+        # emits ``failure(req, 0, "empty statement")`` from
+        # ``handle_prepare_done_cb`` and ``handle_query_sql_done_cb`` when
+        # the SQL parses to no statement (empty / comment-only / no bound
+        # parameters). The C source even has a ``/* FIXME Should we use a
+        # code other than 0 here? */`` at the emit site. Rejecting code=0
+        # here would poison the streaming decoder buffer on a clean
+        # operational signal and force reconnect for users issuing
+        # ``cursor.execute("-- comment\n")`` against a real cluster.
         _validate_uint64("code", self.code)
-        if self.code == 0:
-            # SQLITE_OK (0) inside a FailureResponse is semantically
-            # incoherent — a successful operation cannot be a failure.
-            # Conforming servers cannot emit this; reject so a malformed
-            # peer surfaces here at the boundary rather than as a
-            # confusing OperationalError(code=0) downstream.
-            raise EncodeError(
-                "FailureResponse code must not be SQLITE_OK (0); "
-                "code=0 represents success and is incoherent in a failure"
-            )
 
     def encode_body(self) -> bytes:
         if len(self.message) > _MAX_FAILURE_MESSAGE_SIZE:
