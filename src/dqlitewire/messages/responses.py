@@ -37,9 +37,12 @@ from dqlitewire.types import (
 )
 
 # Defense-in-depth upper bounds for count fields in response messages.
-# These are far above any legitimate use case but prevent CPU/memory
-# exhaustion from malicious or corrupted messages.
-_MAX_COLUMN_COUNT = 10_000
+# Tightened to SQLite's documented hard cap (SQLITE_MAX_COLUMN max =
+# 32767 per https://www.sqlite.org/limits.html). The default upstream
+# build uses 2000, but custom builds can go up to 32767 — anything
+# above that is provably malformed and could only come from a hostile
+# or corrupted peer.
+_MAX_COLUMN_COUNT = 32767
 _MAX_FILE_COUNT = 100
 _MAX_NODE_COUNT = 10_000
 

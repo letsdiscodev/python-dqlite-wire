@@ -800,15 +800,21 @@ class TestRowsResponse:
             RowsResponse.decode_body(body)
 
     def test_column_count_exceeds_hard_limit(self) -> None:
-        """Column count exceeding the hard limit should raise DecodeError."""
+        """Column count exceeding the hard limit should raise DecodeError.
+
+        Cap is now SQLite's documented maximum (32767 per
+        https://www.sqlite.org/limits.html); anything above is
+        provably malformed."""
         import pytest
 
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.types import encode_uint64
 
-        # 20_000 columns, with enough data to pass the data-size check
-        body = encode_uint64(20_000) + b"\x00" * (20_000 * 8 + 8)
-        with pytest.raises(DecodeError, match="Column count.*exceeds maximum"):
+        # 32_768 columns — one above SQLite's hard cap.
+        # Provide enough data bytes to bypass the early "Not enough
+        # data" guard so we reach the cap check.
+        body = encode_uint64(32_768) + b"\x00" * (32_768 * 8 + 8)
+        with pytest.raises(DecodeError, match="(?i)column count.*exceeds maximum"):
             RowsResponse.decode_body(body)
 
     def test_max_rows_limit_decode_body(self) -> None:
