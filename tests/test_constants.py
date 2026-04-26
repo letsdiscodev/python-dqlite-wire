@@ -306,21 +306,33 @@ class TestAutoRollbackPrimaryCodes:
     def test_set_matches_documented_values(self) -> None:
         from dqlitewire.constants import TX_AUTO_ROLLBACK_PRIMARY_CODES
 
-        assert frozenset({4, 9, 10, 11, 13}) == TX_AUTO_ROLLBACK_PRIMARY_CODES
+        assert frozenset({4, 7, 9, 10, 11, 13}) == TX_AUTO_ROLLBACK_PRIMARY_CODES
 
     def test_set_importable_from_top_level(self) -> None:
         from dqlitewire import TX_AUTO_ROLLBACK_PRIMARY_CODES
 
         assert 4 in TX_AUTO_ROLLBACK_PRIMARY_CODES
+        assert 7 in TX_AUTO_ROLLBACK_PRIMARY_CODES  # SQLITE_NOMEM
         assert 9 in TX_AUTO_ROLLBACK_PRIMARY_CODES
         assert 10 in TX_AUTO_ROLLBACK_PRIMARY_CODES
         assert 11 in TX_AUTO_ROLLBACK_PRIMARY_CODES
         assert 13 in TX_AUTO_ROLLBACK_PRIMARY_CODES
 
+    def test_set_includes_sqlite_nomem(self) -> None:
+        """SQLITE_NOMEM (7) is on SQLite's documented auto-rollback list
+        (https://www.sqlite.org/lang_transaction.html). A server-side
+        OOM during step() causes SQLite to tear down the txn; the
+        client must mirror that by clearing tracker state."""
+        from dqlitewire.constants import SQLITE_NOMEM, TX_AUTO_ROLLBACK_PRIMARY_CODES
+
+        assert SQLITE_NOMEM == 7
+        assert SQLITE_NOMEM in TX_AUTO_ROLLBACK_PRIMARY_CODES
+
     @pytest.mark.parametrize(
         ("name", "expected"),
         [
             ("SQLITE_ABORT", 4),
+            ("SQLITE_NOMEM", 7),
             ("SQLITE_INTERRUPT", 9),
             ("SQLITE_IOERR", 10),
             ("SQLITE_CORRUPT", 11),

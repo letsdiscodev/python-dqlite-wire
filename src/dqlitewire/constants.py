@@ -145,15 +145,25 @@ def primary_sqlite_code(code: int) -> int:
 # auto-rollback of the active transaction. The dqlite leader's polling
 # of ``sqlite3_txn_state`` observes ``SQLITE_TXN_NONE`` after any of
 # these, so the cluster-side tx is gone and the client must clear its
-# tracking state. Source: SQLite C engine; values match
-# https://www.sqlite.org/rescode.html
-SQLITE_ABORT = 4  # operation aborted (e.g., sqlite3_interrupt)
+# tracking state. Source: SQLite docs at
+# https://www.sqlite.org/lang_transaction.html#response_to_errors_within_a_transaction
+# documents NOMEM, IOERR, INTERRUPT, FULL as auto-rollback. ABORT and
+# CORRUPT are NOT on SQLite's documented list but are kept here as
+# defensive over-clears: false-positive auto-rollback is benign (pool
+# reset would do it anyway), false-negative leaves tx state stale.
+# BUSY is intentionally NOT included — dqlite has TWO BUSY origins
+# (engine-side vs Raft-side) that aren't distinguishable from the wire
+# without inspecting the message text; the client-side handler at
+# ``dqliteclient.connection`` carves out the Raft-side
+# "checkpoint in progress" case explicitly.
+SQLITE_ABORT = 4  # operation aborted (e.g., sqlite3_interrupt) — defensive
+SQLITE_NOMEM = 7  # out of memory
 SQLITE_INTERRUPT = 9  # query interrupted via INTERRUPT
-SQLITE_CORRUPT = 11  # database disk image malformed
+SQLITE_CORRUPT = 11  # database disk image malformed — defensive
 SQLITE_FULL = 13  # database/disk full
 
 TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
-    {SQLITE_ABORT, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
+    {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
 )
 
 
