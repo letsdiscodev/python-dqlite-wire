@@ -139,3 +139,19 @@ def primary_sqlite_code(code: int) -> int:
     point of rework.
     """
     return code & SQLITE_PRIMARY_CODE_MASK
+
+
+# Primary SQLite error codes whose semantics imply server-side
+# auto-rollback of the active transaction. The dqlite leader's polling
+# of ``sqlite3_txn_state`` observes ``SQLITE_TXN_NONE`` after any of
+# these, so the cluster-side tx is gone and the client must clear its
+# tracking state. Source: SQLite C engine; values match
+# https://www.sqlite.org/rescode.html
+SQLITE_ABORT = 4  # operation aborted (e.g., sqlite3_interrupt)
+SQLITE_INTERRUPT = 9  # query interrupted via INTERRUPT
+SQLITE_CORRUPT = 11  # database disk image malformed
+SQLITE_FULL = 13  # database/disk full
+
+TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
+    {SQLITE_ABORT, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
+)

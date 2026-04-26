@@ -1,5 +1,7 @@
 """Tests for protocol constants matching Go reference implementation."""
 
+import pytest
+
 from dqlitewire.constants import RequestType, ResponseType
 
 
@@ -275,3 +277,57 @@ class TestPrimarySqliteCode:
         from dqlitewire import primary_sqlite_code
 
         assert primary_sqlite_code(10250) == 10
+
+    @pytest.mark.parametrize(
+        ("primary", "extended"),
+        [
+            (4, 4),  # SQLITE_ABORT
+            (4, 4 | (2 << 8)),  # SQLITE_ABORT_ROLLBACK
+            (9, 9),  # SQLITE_INTERRUPT
+            (11, 11),  # SQLITE_CORRUPT
+            (13, 13),  # SQLITE_FULL
+        ],
+    )
+    def test_primary_sqlite_code_extracts_auto_rollback_primaries(
+        self, primary: int, extended: int
+    ) -> None:
+        """Pin extraction for the auto-rollback primary set so a future
+        codec refactor can't silently mishandle one of them."""
+        from dqlitewire.constants import primary_sqlite_code
+
+        assert primary_sqlite_code(extended) == primary
+
+
+class TestAutoRollbackPrimaryCodes:
+    """Pin the canonical home for the auto-rollback primary code set
+    that the downstream client tracker uses to clear ``_in_transaction``
+    after a server-side auto-rollback."""
+
+    def test_set_matches_documented_values(self) -> None:
+        from dqlitewire.constants import TX_AUTO_ROLLBACK_PRIMARY_CODES
+
+        assert frozenset({4, 9, 10, 11, 13}) == TX_AUTO_ROLLBACK_PRIMARY_CODES
+
+    def test_set_importable_from_top_level(self) -> None:
+        from dqlitewire import TX_AUTO_ROLLBACK_PRIMARY_CODES
+
+        assert 4 in TX_AUTO_ROLLBACK_PRIMARY_CODES
+        assert 9 in TX_AUTO_ROLLBACK_PRIMARY_CODES
+        assert 10 in TX_AUTO_ROLLBACK_PRIMARY_CODES
+        assert 11 in TX_AUTO_ROLLBACK_PRIMARY_CODES
+        assert 13 in TX_AUTO_ROLLBACK_PRIMARY_CODES
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("SQLITE_ABORT", 4),
+            ("SQLITE_INTERRUPT", 9),
+            ("SQLITE_IOERR", 10),
+            ("SQLITE_CORRUPT", 11),
+            ("SQLITE_FULL", 13),
+        ],
+    )
+    def test_named_constants(self, name: str, expected: int) -> None:
+        import dqlitewire
+
+        assert getattr(dqlitewire, name) == expected

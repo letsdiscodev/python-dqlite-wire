@@ -51,6 +51,18 @@ class TestFailureResponse:
         assert decoded.code == 0
         assert decoded.message == ""
 
+    @pytest.mark.parametrize("code", [4, 9, 10, 11, 13])
+    def test_round_trip_auto_rollback_codes(self, code: int) -> None:
+        """Pin round-trip for the primary SQLite codes that the downstream
+        client interprets as server-side auto-rollback. A future codec
+        refactor that mishandled one of these would otherwise surface only
+        in an integration test."""
+        msg = FailureResponse(code=code, message=f"primary code {code}")
+        encoded = msg.encode_body()
+        decoded = FailureResponse.decode_body(encoded)
+        assert decoded.code == code
+        assert decoded.message == f"primary code {code}"
+
     def test_decode_rejects_oversize_message(self) -> None:
         """A peer claiming a multi-megabyte error message can force a large
         allocation and full-string scan through _sanitize_server_text. Cap
