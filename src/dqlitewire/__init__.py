@@ -41,6 +41,8 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
+    DEFAULT_MAX_CONTINUATION_FRAMES,
+    DEFAULT_MAX_TOTAL_ROWS,
     LEADER_ERROR_CODES,
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_LEGACY,
@@ -80,6 +82,8 @@ __version__ = "0.1.3"
 
 __all__ = [
     "ContinuationError",
+    "DEFAULT_MAX_CONTINUATION_FRAMES",
+    "DEFAULT_MAX_TOTAL_ROWS",
     "__version__",
     "DecodeError",
     "EncodeError",

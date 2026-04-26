@@ -155,3 +155,18 @@ SQLITE_FULL = 13  # database/disk full
 TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
     {SQLITE_ABORT, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
 )
+
+
+# Cumulative-row cap for a single SELECT result spanning multiple
+# continuation frames. The default protects against unbounded memory
+# growth on a maliciously slow-drip server while staying well above
+# any realistic legitimate result set. Forwarded to every
+# :class:`DqliteConnection` the public ``connect()`` /
+# ``ConnectionPool`` / dbapi ``connect()`` entry points hand out.
+DEFAULT_MAX_TOTAL_ROWS = 10_000_000
+
+# Per-query continuation-frame cap. Complements
+# ``DEFAULT_MAX_TOTAL_ROWS``: a server sending one row per frame can
+# inflict O(n) Python decode work where n is the row cap; the frame
+# cap bounds that work even when the row cap is large.
+DEFAULT_MAX_CONTINUATION_FRAMES = 100_000
