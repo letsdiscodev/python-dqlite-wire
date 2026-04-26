@@ -1057,6 +1057,24 @@ class TestRowsResponseNullInTypedColumn:
         assert decoded.row_types[0][1] == ValueType.TEXT
         assert decoded.row_types[0][2] == ValueType.NULL
 
+    def test_round_trip_first_row_null_clobbers_column_type(self) -> None:
+        """When row 0 contains NULL in a column declared as INTEGER, the
+        decoded ``column_types`` reflects NULL (not the schema-declared
+        INTEGER), because ``column_types`` is captured from the first
+        decoded row's per-row type tag and the encoder writes NULL for
+        None values to match Go-parity. This pins the documented caveat
+        — consumers needing the schema type should not rely on
+        ``column_types[X]`` when row 0 may carry NULL."""
+        resp = RowsResponse(
+            column_names=["x"],
+            column_types=[ValueType.INTEGER],
+            rows=[[None]],
+        )
+        encoded = resp.encode_body()
+        decoded = RowsResponse.decode_body(encoded)
+        # column_types now reflects NULL, not the originally-declared INTEGER.
+        assert decoded.column_types == [ValueType.NULL]
+
 
 class TestRowsResponseWordBoundary:
     """115: row header padding crosses word boundary at 17+ columns."""

@@ -465,6 +465,16 @@ class RowsResponse(Message):
             accurate per-row type information. **Empty when the frame
             carries no rows**; prefer ``column_names`` to detect the
             column count in that case.
+
+            Caveat: when row 0 contains NULL in column X, the per-row
+            type tag for that cell is encoded as NULL on the wire
+            (Go-parity, see ``encode_body``), so on decode
+            ``column_types[X]`` will be ``ValueType.NULL`` even if the
+            encoder was given an explicit non-NULL ``column_types``.
+            Consumers needing the schema-declared type should not rely
+            on ``column_types[X]`` when row 0 may carry NULL — use a
+            later non-NULL row's ``row_types`` entry, or consult the
+            schema separately.
         row_types: Per-row type lists, one entry per decoded row.
         rows: Decoded row values.
         has_more: True if a PART marker was found (more rows in next message).
