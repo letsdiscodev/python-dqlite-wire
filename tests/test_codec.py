@@ -1258,6 +1258,65 @@ class TestDecoderContinuation:
         assert decoder._continuation_expected is False
         assert not decoder._buffer.is_poisoned
 
+    def test_decode_continuation_clean_failure_does_not_poison(self) -> None:
+        """A well-formed FailureResponse mid-continuation surfaces as
+        ``ServerFailure`` without poisoning the buffer. Upstream's
+        ``query_work_done`` path can emit FAILURE after ROWS_PART chunks
+        have already been written (e.g. mid-stream constraint or
+        SQLITE_BUSY). The connection is still wire-coherent at the
+        offset following the failure body, so subsequent requests must
+        decode normally without ``reset()``."""
+        from dqlitewire.exceptions import ServerFailure
+        from dqlitewire.messages.responses import FailureResponse
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
+
+        failure_bytes = FailureResponse(code=19, message="CHECK constraint failed").encode()
+        decoder.feed(failure_bytes)
+
+        with pytest.raises(ServerFailure) as exc_info:
+            decoder.decode_continuation()
+        assert exc_info.value.code == 19
+        assert "CHECK constraint" in exc_info.value.message
+        assert decoder.is_poisoned is False
+        assert decoder._continuation_expected is False
+
+        # A subsequent message decodes cleanly through the same buffer.
+        from dqlitewire.messages.responses import LeaderResponse
+
+        leader_bytes = LeaderResponse(node_id=1, address="127.0.0.1:9001").encode()
+        decoder.feed(leader_bytes)
+        msg = decoder.decode()
+        assert isinstance(msg, LeaderResponse)
+        assert msg.node_id == 1
+        assert msg.address == "127.0.0.1:9001"
+
+    def test_decode_continuation_malformed_failure_body_still_poisons(self) -> None:
+        """The clean-failure path (above) is opt-in to well-formed
+        FailureResponse bodies only. A malformed body (e.g., missing
+        null terminator on the message text) routes through the broad
+        ``except`` and poisons the buffer — same discipline as the
+        malformed-empty case."""
+        import struct as _struct
+
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.base import Header
+
+        # Body: 8 bytes of code, then 8 bytes of a bareword without a NUL
+        # terminator. ``decode_text`` raises DecodeError on the missing NUL.
+        body = _struct.pack("<Q", 1) + b"abcdefgh"
+        header = Header(size_words=len(body) // 8, msg_type=0, schema=0)
+        bad_failure = header.encode() + body
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
+        decoder.feed(bad_failure)
+
+        with pytest.raises(DecodeError):
+            decoder.decode_continuation()
+        assert decoder.is_poisoned is True
+
     def test_decode_continuation_malformed_empty_still_poisons(self) -> None:
         """A malformed EmptyResponse (non-zero reserved field) must
         surface the underlying DecodeError and poison the buffer — the
@@ -1863,10 +1922,17 @@ class TestStreamingContinuation:
         msg3 = decoder.decode()
         assert isinstance(msg3, ResultResponse)
 
-    def test_failure_during_continuation_poisons(self) -> None:
-        """083: server sends FailureResponse instead of continuation."""
+    def test_failure_during_continuation_does_not_poison(self) -> None:
+        """083: server sends FailureResponse instead of continuation.
+
+        The well-formed failure decode is a clean operational signal —
+        the buffer is NOT poisoned and the connection remains usable
+        for subsequent requests. Upstream's ``query_work_done`` reaches
+        this path on mid-stream I/O / constraint failures after PART
+        rows have already been written; users should see a normal
+        OperationalError, not a forced reconnect."""
         from dqlitewire.constants import ValueType
-        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse, RowsResponse
 
         initial = RowsResponse(
@@ -1883,15 +1949,15 @@ class TestStreamingContinuation:
         msg = decoder.decode()
         assert isinstance(msg, RowsResponse) and msg.has_more
 
-        with pytest.raises(ProtocolError, match="disk I/O error"):
+        with pytest.raises(ServerFailure, match="disk I/O error"):
             decoder.decode_continuation()
 
-        assert decoder.is_poisoned
+        assert not decoder.is_poisoned
 
     def test_failure_during_continuation_clears_flag(self) -> None:
         """103: _continuation_expected must be False after FailureResponse."""
         from dqlitewire.constants import ValueType
-        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse, RowsResponse
 
         initial = RowsResponse(
@@ -1908,10 +1974,10 @@ class TestStreamingContinuation:
         msg = decoder.decode()
         assert isinstance(msg, RowsResponse) and msg.has_more
 
-        with pytest.raises(ProtocolError, match="disk I/O error"):
+        with pytest.raises(ServerFailure, match="disk I/O error"):
             decoder.decode_continuation()
 
-        # The continuation flag must be cleared even though the buffer is poisoned
+        # The continuation flag must be cleared on the clean-failure path.
         assert not decoder._continuation_expected
 
     def test_chained_continuations_part_part_done(self) -> None:

@@ -365,8 +365,15 @@ class MessageDecoder:
                 )
 
             if header.msg_type == ResponseType.FAILURE:
-                self._continuation_expected = False
+                # Decode the body BEFORE clearing the flag so a malformed
+                # body still goes through the broad ``except`` below and
+                # poisons the buffer (genuine wire desync). A well-formed
+                # FailureResponse mid-stream is a clean operational signal
+                # — clear the flag and re-raise outside the broad except
+                # so the buffer offset remains coherent for the next
+                # request on the connection.
                 failure = FailureResponse.decode_body(body, schema=header.schema)
+                self._continuation_expected = False
                 raise ServerFailure(failure.code, failure.message)
             if header.msg_type == ResponseType.EMPTY:
                 # The upstream C server emits an ``EmptyResponse`` when
@@ -393,6 +400,13 @@ class MessageDecoder:
             if not result.has_more:
                 self._continuation_expected = False
             return result
+        except ServerFailure:
+            # Clean server-emitted failure with a well-formed body. The
+            # buffer offset is at the start of the next response and the
+            # flag is cleared above; the connection is still wire-coherent
+            # so subsequent requests (after the user handles the
+            # OperationalError) decode normally. Do NOT poison.
+            raise
         except BaseException as e:
             self._buffer.poison(
                 e
