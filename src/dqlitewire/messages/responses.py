@@ -151,6 +151,16 @@ class FailureResponse(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("code", self.code)
+        if self.code == 0:
+            # SQLITE_OK (0) inside a FailureResponse is semantically
+            # incoherent — a successful operation cannot be a failure.
+            # Conforming servers cannot emit this; reject so a malformed
+            # peer surfaces here at the boundary rather than as a
+            # confusing OperationalError(code=0) downstream.
+            raise EncodeError(
+                "FailureResponse code must not be SQLITE_OK (0); "
+                "code=0 represents success and is incoherent in a failure"
+            )
 
     def encode_body(self) -> bytes:
         if len(self.message) > _MAX_FAILURE_MESSAGE_SIZE:

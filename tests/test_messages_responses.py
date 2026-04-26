@@ -47,11 +47,30 @@ class TestFailureResponse:
         assert decoded.message == "Something went wrong"
 
     def test_empty_message(self) -> None:
-        msg = FailureResponse(code=0, message="")
+        # Use code=1 (SQLITE_ERROR) — code=0 is now rejected as
+        # semantically incoherent (SQLITE_OK in a failure).
+        msg = FailureResponse(code=1, message="")
         encoded = msg.encode()
         decoded = FailureResponse.decode_body(encoded[HEADER_SIZE:])
-        assert decoded.code == 0
+        assert decoded.code == 1
         assert decoded.message == ""
+
+    def test_construct_with_code_zero_rejected(self) -> None:
+        """SQLITE_OK (0) inside a FailureResponse is incoherent — a
+        successful operation cannot be a failure. Conforming Go/C
+        servers cannot emit this; reject so the malformed peer
+        surfaces here at the boundary rather than as a confusing
+        ``OperationalError(code=0)`` downstream."""
+        with pytest.raises(EncodeError, match="SQLITE_OK"):
+            FailureResponse(code=0, message="huh?")
+
+    def test_decode_rejects_code_zero(self) -> None:
+        """Symmetric: bytes with code=0 also rejected via the
+        ``__post_init__`` chain (decode constructs via ``cls(code,
+        ...)`` which triggers the validation)."""
+        body = encode_uint64(0) + encode_text("huh?")
+        with pytest.raises(EncodeError, match="SQLITE_OK"):
+            FailureResponse.decode_body(body)
 
     @pytest.mark.parametrize("code", [4, 9, 10, 11, 13])
     def test_round_trip_auto_rollback_codes(self, code: int) -> None:
@@ -2173,7 +2192,9 @@ class TestResponsePostInitValidation:
 
     def test_in_range_values_construct_cleanly(self) -> None:
         """Negative pin: in-spec values do not raise."""
-        FailureResponse(code=0, message="")
+        # FailureResponse code=0 is now rejected (SQLITE_OK in a
+        # failure is incoherent — see test_construct_with_code_zero_rejected).
+        FailureResponse(code=1, message="")
         FailureResponse(code=2**64 - 1, message="x")
         LeaderResponse(node_id=0, address="")
         LeaderResponse(node_id=2**64 - 1, address="x")
