@@ -25,6 +25,8 @@ from dqlitewire.tuples import (
     encode_row_values,
 )
 from dqlitewire.types import (
+    _validate_uint32,
+    _validate_uint64,
     decode_text,
     decode_uint32,
     decode_uint64,
@@ -147,6 +149,9 @@ class FailureResponse(Message):
     code: int
     message: str
 
+    def __post_init__(self) -> None:
+        _validate_uint64("code", self.code)
+
     def encode_body(self) -> bytes:
         if len(self.message) > _MAX_FAILURE_MESSAGE_SIZE:
             raise EncodeError(
@@ -182,6 +187,9 @@ class LeaderResponse(Message):
 
     node_id: int
     address: str
+
+    def __post_init__(self) -> None:
+        _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
         if len(self.address) > _MAX_ADDRESS_SIZE:
@@ -267,6 +275,9 @@ class WelcomeResponse(Message):
 
     heartbeat_timeout: int
 
+    def __post_init__(self) -> None:
+        _validate_uint64("heartbeat_timeout", self.heartbeat_timeout)
+
     @property
     def heartbeat_timeout_seconds(self) -> float:
         """Heartbeat interval converted to seconds (milliseconds / 1000)."""
@@ -293,6 +304,9 @@ class DbResponse(Message):
     MSG_TYPE: ClassVar[int] = ResponseType.DB
 
     db_id: int
+
+    def __post_init__(self) -> None:
+        _validate_uint32("db_id", self.db_id)
 
     def encode_body(self) -> bytes:
         return encode_uint32(self.db_id) + encode_uint32(0)
@@ -437,6 +451,10 @@ class ResultResponse(Message):
 
     last_insert_id: int
     rows_affected: int
+
+    def __post_init__(self) -> None:
+        _validate_uint64("last_insert_id", self.last_insert_id)
+        _validate_uint64("rows_affected", self.rows_affected)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.last_insert_id) + encode_uint64(self.rows_affected)
@@ -975,6 +993,10 @@ class MetadataResponse(Message):
 
     failure_domain: int
     weight: int
+
+    def __post_init__(self) -> None:
+        _validate_uint64("failure_domain", self.failure_domain)
+        _validate_uint64("weight", self.weight)
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.failure_domain) + encode_uint64(self.weight)

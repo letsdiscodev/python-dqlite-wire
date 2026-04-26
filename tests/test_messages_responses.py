@@ -2100,3 +2100,68 @@ class TestFilesResponseEncodeCountCap:
         files = {f"f{i}": b"\x00" * 8 for i in range(_MAX_FILE_COUNT + 1)}
         with pytest.raises(EncodeError, match="exceeds maximum"):
             FilesResponse(files=files).encode_body()
+
+
+class TestResponsePostInitValidation:
+    """Construction-time uint validation on response dataclasses, symmetric
+    with the request-side __post_init__ validators. Without these, an
+    out-of-range value surfaces as a confusing EncodeError at encode time
+    instead of failing fast at construction."""
+
+    @pytest.mark.parametrize("code", [-1, 2**64, 2**64 + 1])
+    def test_failure_response_rejects_out_of_range_code(self, code: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            FailureResponse(code=code, message="")
+
+    def test_failure_response_rejects_bool_code(self) -> None:
+        with pytest.raises(EncodeError, match="must be int"):
+            FailureResponse(code=True, message="")  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("node_id", [-1, 2**64])
+    def test_leader_response_rejects_out_of_range_node_id(self, node_id: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            LeaderResponse(node_id=node_id, address="x")
+
+    @pytest.mark.parametrize("heartbeat_timeout", [-1, 2**64])
+    def test_welcome_response_rejects_out_of_range_heartbeat(self, heartbeat_timeout: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            WelcomeResponse(heartbeat_timeout=heartbeat_timeout)
+
+    @pytest.mark.parametrize("db_id", [-1, 2**32])
+    def test_db_response_rejects_out_of_range_db_id(self, db_id: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint32"):
+            DbResponse(db_id=db_id)
+
+    @pytest.mark.parametrize("last_insert_id", [-1, 2**64])
+    def test_result_response_rejects_out_of_range_last_insert_id(self, last_insert_id: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            ResultResponse(last_insert_id=last_insert_id, rows_affected=0)
+
+    @pytest.mark.parametrize("rows_affected", [-1, 2**64])
+    def test_result_response_rejects_out_of_range_rows_affected(self, rows_affected: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            ResultResponse(last_insert_id=0, rows_affected=rows_affected)
+
+    @pytest.mark.parametrize("failure_domain", [-1, 2**64])
+    def test_metadata_response_rejects_out_of_range_failure_domain(
+        self, failure_domain: int
+    ) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            MetadataResponse(failure_domain=failure_domain, weight=0)
+
+    @pytest.mark.parametrize("weight", [-1, 2**64])
+    def test_metadata_response_rejects_out_of_range_weight(self, weight: int) -> None:
+        with pytest.raises(EncodeError, match="out of range for uint64"):
+            MetadataResponse(failure_domain=0, weight=weight)
+
+    def test_in_range_values_construct_cleanly(self) -> None:
+        """Negative pin: in-spec values do not raise."""
+        FailureResponse(code=0, message="")
+        FailureResponse(code=2**64 - 1, message="x")
+        LeaderResponse(node_id=0, address="")
+        LeaderResponse(node_id=2**64 - 1, address="x")
+        WelcomeResponse(heartbeat_timeout=15000)
+        DbResponse(db_id=0)
+        DbResponse(db_id=2**32 - 1)
+        ResultResponse(last_insert_id=0, rows_affected=0)
+        MetadataResponse(failure_domain=0, weight=0)
