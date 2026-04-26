@@ -1,8 +1,10 @@
 """Tests for response message encoding/decoding."""
 
+from typing import Any
+
 import pytest
 
-from dqlitewire.constants import HEADER_SIZE, ResponseType, ValueType
+from dqlitewire.constants import HEADER_SIZE, NodeRole, ResponseType, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
@@ -1543,9 +1545,9 @@ class TestServersResponse:
 
     def test_roundtrip(self) -> None:
         nodes = [
-            NodeInfo(node_id=1, address="node1:9001", role=1),
-            NodeInfo(node_id=2, address="node2:9002", role=2),
-            NodeInfo(node_id=3, address="node3:9003", role=2),
+            NodeInfo(node_id=1, address="node1:9001", role=NodeRole.STANDBY),
+            NodeInfo(node_id=2, address="node2:9002", role=NodeRole.SPARE),
+            NodeInfo(node_id=3, address="node3:9003", role=NodeRole.SPARE),
         ]
         msg = ServersResponse(nodes=nodes)
         encoded = msg.encode()
@@ -1561,8 +1563,8 @@ class TestServersResponse:
         from dqlitewire.types import decode_uint64
 
         nodes = [
-            NodeInfo(node_id=1, address="node1:9001", role=1),
-            NodeInfo(node_id=2, address="node2:9002", role=2),
+            NodeInfo(node_id=1, address="node1:9001", role=NodeRole.STANDBY),
+            NodeInfo(node_id=2, address="node2:9002", role=NodeRole.SPARE),
         ]
         msg = ServersResponse(nodes=nodes)
         body = msg.encode_body()
@@ -1695,7 +1697,7 @@ class TestShortBodyDecoding:
             (EmptyResponse, 8),  # uint64 reserved
         ],
     )
-    def test_decode_body_raises_on_short(self, cls: type, min_body: int) -> None:
+    def test_decode_body_raises_on_short(self, cls: Any, min_body: int) -> None:
         for length in range(min_body):
             with pytest.raises(DecodeError):
                 cls.decode_body(b"\x00" * length)
@@ -1944,19 +1946,22 @@ class TestEncodeSideCaps:
         assert decoded.address == at_cap
 
     def test_servers_response_rejects_oversize_node_count(self) -> None:
-        nodes = [NodeInfo(node_id=i, address="n:9", role=2) for i in range(_MAX_NODE_COUNT + 1)]
+        nodes = [
+            NodeInfo(node_id=i, address="n:9", role=NodeRole.SPARE)
+            for i in range(_MAX_NODE_COUNT + 1)
+        ]
         with pytest.raises(EncodeError, match="node count"):
             ServersResponse(nodes=nodes).encode_body()
 
     def test_servers_response_rejects_oversize_address(self) -> None:
         oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
-        nodes = [NodeInfo(node_id=1, address=oversize, role=2)]
+        nodes = [NodeInfo(node_id=1, address=oversize, role=NodeRole.SPARE)]
         with pytest.raises(EncodeError, match="server address"):
             ServersResponse(nodes=nodes).encode_body()
 
     def test_servers_response_accepts_address_at_cap(self) -> None:
         at_cap = "a" * _MAX_ADDRESS_SIZE
-        nodes = [NodeInfo(node_id=1, address=at_cap, role=2)]
+        nodes = [NodeInfo(node_id=1, address=at_cap, role=NodeRole.SPARE)]
         body = ServersResponse(nodes=nodes).encode_body()
         decoded = ServersResponse.decode_body(body)
         assert decoded.nodes[0].address == at_cap
@@ -2018,13 +2023,13 @@ class TestNodeInfoFrozenSlotted:
     def test_is_frozen(self) -> None:
         import dataclasses
 
-        node = NodeInfo(node_id=1, address="host:1", role=2)
+        node = NodeInfo(node_id=1, address="host:1", role=NodeRole.SPARE)
         with pytest.raises(dataclasses.FrozenInstanceError):
             node.node_id = 2  # type: ignore[misc]
 
     def test_is_hashable(self) -> None:
-        a = NodeInfo(node_id=1, address="host:1", role=2)
-        b = NodeInfo(node_id=1, address="host:1", role=2)
+        a = NodeInfo(node_id=1, address="host:1", role=NodeRole.SPARE)
+        b = NodeInfo(node_id=1, address="host:1", role=NodeRole.SPARE)
         assert hash(a) == hash(b)
         assert {a, b} == {a}
 
@@ -2127,7 +2132,7 @@ class TestResponsePostInitValidation:
 
     def test_failure_response_rejects_bool_code(self) -> None:
         with pytest.raises(EncodeError, match="must be int"):
-            FailureResponse(code=True, message="")  # type: ignore[arg-type]
+            FailureResponse(code=True, message="")
 
     @pytest.mark.parametrize("node_id", [-1, 2**64])
     def test_leader_response_rejects_out_of_range_node_id(self, node_id: int) -> None:

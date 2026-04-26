@@ -972,9 +972,15 @@ class TestRoundTrip:
         assert isinstance(decoded, EmptyResponse)
 
     def test_servers_response(self) -> None:
+        from dqlitewire.constants import NodeRole
         from dqlitewire.messages.responses import NodeInfo
 
-        original = ServersResponse(nodes=[NodeInfo(1, "n1:9001", 0), NodeInfo(2, "n2:9001", 1)])
+        original = ServersResponse(
+            nodes=[
+                NodeInfo(1, "n1:9001", NodeRole.VOTER),
+                NodeInfo(2, "n2:9001", NodeRole.STANDBY),
+            ]
+        )
         encoded = encode_message(original)
         decoded = decode_message(encoded, is_request=False)
         assert isinstance(decoded, ServersResponse)
@@ -1397,12 +1403,13 @@ class TestDecoderContinuationExpected:
 
     def test_has_more_false_does_not_set_flag(self) -> None:
         """A RowsResponse with has_more=False should NOT set the flag."""
+        from dqlitewire.constants import ValueType
         from dqlitewire.messages.responses import RowsResponse
 
         decoder = MessageDecoder(is_request=False)
         msg = RowsResponse(
             column_names=["x"],
-            column_types=[1],
+            column_types=[ValueType.INTEGER],
             rows=[[1]],
             has_more=False,
         )
@@ -1633,7 +1640,7 @@ class TestDecoderPoisonedState:
         def boom(_data: bytes) -> object:
             raise sentinel
 
-        decoder.decode_bytes = boom  # type: ignore[method-assign]
+        decoder.decode_bytes = boom  # type: ignore[assignment]
 
         with pytest.raises(ValueError, match="simulated body parse failure"):
             decoder.decode()
@@ -1645,7 +1652,7 @@ class TestDecoderPoisonedState:
         # Per the poison-gate contract, feed() on a poisoned buffer also raises, so we
         # cannot push more bytes through without a reset — the poison
         # check fires directly on decode().
-        del decoder.decode_bytes  # type: ignore[attr-defined]
+        del decoder.decode_bytes
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.feed(msg)
         with pytest.raises(ProtocolError, match="poisoned"):

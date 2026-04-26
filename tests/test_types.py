@@ -473,15 +473,15 @@ class TestValue:
         with pytest.raises(EncodeError, match="BOOLEAN"):
             encode_value("hello", ValueType.BOOLEAN)
         with pytest.raises(EncodeError, match="BOOLEAN"):
-            encode_value([1, 2], ValueType.BOOLEAN)
+            encode_value([1, 2], ValueType.BOOLEAN)  # type: ignore[arg-type]
         with pytest.raises(EncodeError, match="BOOLEAN"):
-            encode_value({"key": "val"}, ValueType.BOOLEAN)
+            encode_value({"key": "val"}, ValueType.BOOLEAN)  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(
         "payload",
         [b"hello", bytearray(b"hello"), memoryview(b"hello")],
     )
-    def test_blob_roundtrip_bytes_like(self, payload: object) -> None:
+    def test_blob_roundtrip_bytes_like(self, payload: bytes | bytearray | memoryview[int]) -> None:
         """All three bytes-like inputs encode identically and decode
         back to ``bytes``."""
         encoded, vtype = encode_value(payload, ValueType.BLOB)
@@ -618,7 +618,7 @@ class TestValue:
 
         dt = datetime.datetime(2024, 1, 15, 12, 30, 0, tzinfo=datetime.UTC)
         with pytest.raises(EncodeError, match="Expected int for UNIXTIME"):
-            encode_value(dt, ValueType.UNIXTIME)
+            encode_value(dt, ValueType.UNIXTIME)  # type: ignore[arg-type]
 
     def test_boolean_roundtrip(self) -> None:
         """Test boolean encoding/decoding."""
@@ -671,6 +671,7 @@ class TestValue:
         encoded, vtype = encode_value(val)
         assert vtype == ValueType.FLOAT
         decoded, _ = decode_value(encoded, ValueType.FLOAT)
+        assert isinstance(decoded, float)
         assert math.copysign(1, decoded) == expected_sign, (
             f"sign bit lost on round-trip for {val!r}: decoded={decoded!r}"
         )
@@ -682,6 +683,7 @@ class TestValue:
         encoded, vtype = encode_value(float("nan"))
         assert vtype == ValueType.FLOAT
         decoded, _ = decode_value(encoded, ValueType.FLOAT)
+        assert isinstance(decoded, float)
         assert math.isnan(decoded)
 
     def test_infinity_accepted(self) -> None:
@@ -692,6 +694,7 @@ class TestValue:
             encoded, vtype = encode_value(val)
             assert vtype == ValueType.FLOAT
             decoded, _ = decode_value(encoded, ValueType.FLOAT)
+            assert isinstance(decoded, float)
             assert math.isinf(decoded)
             assert (decoded > 0) == (val > 0)
 
@@ -728,12 +731,12 @@ class TestValue:
 
         dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value(dt)
+            encode_value(dt)  # type: ignore[arg-type]
 
     def test_encode_value_unsupported_type_raises(self) -> None:
         """Unsupported Python types should raise EncodeError."""
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value({"key": "value"})
+            encode_value({"key": "value"})  # type: ignore[arg-type]
 
     def test_decode_value_unknown_type_raises(self) -> None:
         """Unknown ValueType should raise DecodeError."""
@@ -923,21 +926,21 @@ class TestEncodeValueUnsupportedTypes:
         from decimal import Decimal
 
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value(Decimal("3.14"))
+            encode_value(Decimal("3.14"))  # type: ignore[arg-type]
 
     def test_fraction_rejected(self) -> None:
         from fractions import Fraction
 
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value(Fraction(1, 3))
+            encode_value(Fraction(1, 3))  # type: ignore[arg-type]
 
     def test_complex_rejected(self) -> None:
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value(complex(1, 2))
+            encode_value(complex(1, 2))  # type: ignore[arg-type]
 
     def test_plain_object_rejected(self) -> None:
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value(object())
+            encode_value(object())  # type: ignore[arg-type]
 
     def test_index_only_class_rejected(self) -> None:
         """An object with ``__index__`` but no ``__int__`` or bool-ness
@@ -950,7 +953,7 @@ class TestEncodeValueUnsupportedTypes:
                 return 42
 
         with pytest.raises(EncodeError, match="Cannot infer wire type"):
-            encode_value(OnlyIndex())
+            encode_value(OnlyIndex())  # type: ignore[arg-type]
 
 
 class TestWireTypeAliases:

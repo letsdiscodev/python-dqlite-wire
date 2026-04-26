@@ -30,7 +30,7 @@ class TestParamsTuple:
         """
         from dqlitewire import tuples as tuples_mod
 
-        def fake_encode(value: object, value_type: object = None) -> tuple:
+        def fake_encode(value: object, value_type: object = None) -> tuple[bytes, ValueType]:
             return b"\x00" * 8, ValueType.UNIXTIME
 
         monkeypatch.setattr(tuples_mod, "encode_value", fake_encode)
@@ -585,7 +585,7 @@ class TestRowHeaderErrors:
         from dqlitewire.exceptions import EncodeError
 
         with pytest.raises(EncodeError, match="[Ii]nvalid.*type"):
-            encode_row_header([0])
+            encode_row_header([0])  # type: ignore[list-item]
 
     def test_encode_rejects_undefined_type_codes(self) -> None:
         """encode_row_header should reject type codes not defined in ValueType."""
@@ -596,7 +596,7 @@ class TestRowHeaderErrors:
         # Type codes 6, 7, 8 are undefined
         for code in [6, 7, 8, 12, 13, 14, 15]:
             with pytest.raises(EncodeError, match="[Ii]nvalid.*type"):
-                encode_row_header([code])
+                encode_row_header([code])  # type: ignore[list-item]
 
 
 class TestRowValuesBlob:

@@ -180,7 +180,7 @@ class TestOversizedErrorMessageUsesHex:
 def test_module_imports_cleanly_under_gil() -> None:
     """Sanity: on the standard GIL build, importing dqlitewire must still work."""
     # We are running under the standard interpreter right now; reimport to be explicit.
-    assert sys._is_gil_enabled()  # type: ignore[attr-defined]
+    assert sys._is_gil_enabled()
     import importlib
 
     import dqlitewire

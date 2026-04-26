@@ -19,6 +19,8 @@ Covers:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from dqlitewire.constants import ROW_DONE_MARKER, WORD_SIZE
@@ -63,7 +65,7 @@ class TestFixedSizeRequestStrictLength:
             FinalizeRequest,
         ],
     )
-    def test_too_long_body_rejected(self, cls: type) -> None:
+    def test_too_long_body_rejected(self, cls: Any) -> None:
         # Exactly 8 bytes should succeed; extra 8 should fail.
         body = encode_uint64(1) + encode_uint64(0)
         with pytest.raises(DecodeError, match="bytes"):
@@ -80,7 +82,7 @@ class TestFixedSizeRequestStrictLength:
             WeightRequest,
         ],
     )
-    def test_too_short_body_rejected(self, cls: type) -> None:
+    def test_too_short_body_rejected(self, cls: Any) -> None:
         with pytest.raises(DecodeError, match="bytes"):
             cls.decode_body(b"\x00" * 4)
 

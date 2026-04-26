@@ -17,9 +17,8 @@ from typing import cast
 
 import pytest
 
-from dqlitewire.buffer import HEADER_SIZE, WORD_SIZE
 from dqlitewire.codec import MessageDecoder
-from dqlitewire.constants import ResponseType, ValueType
+from dqlitewire.constants import HEADER_SIZE, WORD_SIZE, ResponseType, ValueType
 from dqlitewire.exceptions import DecodeError, PoisonedError
 from dqlitewire.messages.responses import RowsResponse
 
@@ -114,6 +113,10 @@ class TestContinuationFrameOverCap:
         decoder.feed(second.encode())
         cont = decoder.decode_continuation()
         assert cont is not None
+        # Narrow the union via isinstance — RowsResponse is the
+        # expected continuation shape here; EmptyResponse would mean
+        # the second frame was decoded as the wrong type.
+        assert isinstance(cont, RowsResponse)
         assert cont.has_more is False
         assert cont.rows == [[2]]
 

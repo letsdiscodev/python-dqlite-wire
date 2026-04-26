@@ -378,7 +378,7 @@ class TestDecodeHandshakeSignalSafety:
         def exploding_read_bytes(n: int) -> bytes:
             raise KeyboardInterrupt("simulated async cancel")
 
-        dec._buffer.read_bytes = exploding_read_bytes  # type: ignore[method-assign]
+        dec._buffer.read_bytes = exploding_read_bytes
 
         with pytest.raises(KeyboardInterrupt):
             dec.decode_handshake()
@@ -390,7 +390,7 @@ class TestDecodeHandshakeSignalSafety:
 
         # The 8 handshake bytes never consumed — retry on the restored
         # buffer returns PROTOCOL_VERSION.
-        dec._buffer.read_bytes = original_read_bytes  # type: ignore[method-assign]
+        dec._buffer.read_bytes = original_read_bytes
         assert dec._buffer.available() == 8
         assert dec.decode_handshake() == PROTOCOL_VERSION
         assert dec._handshake_done is True
@@ -408,7 +408,7 @@ class TestDecodeHandshakeSignalSafety:
         def exploding_read_bytes(n: int) -> bytes:
             raise SystemExit(1)
 
-        dec._buffer.read_bytes = exploding_read_bytes  # type: ignore[method-assign]
+        dec._buffer.read_bytes = exploding_read_bytes
 
         with pytest.raises(SystemExit):
             dec.decode_handshake()

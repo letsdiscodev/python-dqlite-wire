@@ -16,7 +16,7 @@ import struct
 import pytest
 
 from dqlitewire.codec import decode_message, encode_message
-from dqlitewire.constants import ValueType
+from dqlitewire.constants import NodeRole, ValueType
 from dqlitewire.messages import (
     AddRequest,
     AssignRequest,
@@ -718,7 +718,9 @@ class TestGoldenResponsesPriority1:
         Total body = 8 + 8 + 16 + 8 = 40 = 5 words
         """
         expected = _header(5, 3) + _u64(1) + _u64(1) + _text("10.0.0.1:9001") + _u64(0)
-        msg_obj = ServersResponse(nodes=[NodeInfo(node_id=1, address="10.0.0.1:9001", role=0)])
+        msg_obj = ServersResponse(
+            nodes=[NodeInfo(node_id=1, address="10.0.0.1:9001", role=NodeRole.VOTER)]
+        )
         assert encode_message(msg_obj) == expected
 
         msg = decode_message(expected, is_request=False)

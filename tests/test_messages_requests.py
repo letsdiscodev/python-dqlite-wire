@@ -837,7 +837,10 @@ class TestParamsBodySchemaRoundtrip:
 
         decoded = decode_message(original_bytes, is_request=True)
         assert isinstance(decoded, cls)
-        assert list(decoded.params) == list(original.params)
+        # ``cls`` is a TypeVar holding one of two request types; both
+        # have ``params`` at runtime but mypy can't follow the
+        # type-narrowing through a ``cls`` variable.
+        assert list(decoded.params) == list(original.params)  # type: ignore[attr-defined]
 
         re_encoded = encode_message(decoded)
         assert re_encoded == original_bytes
@@ -859,8 +862,10 @@ class TestParamsBodySchemaRoundtrip:
 
         decoded = decode_message(original_bytes, is_request=True)
         assert isinstance(decoded, cls)
-        assert list(decoded.params) == list(original.params)
-        assert decoded.sql == "SELECT 1"
+        # See sibling ``test_schema_1_small_params_roundtrip``: the
+        # cls-keyed isinstance narrows runtime but not mypy.
+        assert list(decoded.params) == list(original.params)  # type: ignore[attr-defined]
+        assert decoded.sql == "SELECT 1"  # type: ignore[attr-defined]
 
         re_encoded = encode_message(decoded)
         assert re_encoded == original_bytes
