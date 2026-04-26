@@ -113,6 +113,8 @@ class ReadBuffer:
         )
 
     def __init__(self, max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE) -> None:
+        if max_message_size < 1:
+            raise ValueError(f"max_message_size must be >= 1, got {max_message_size}")
         self._data = bytearray()
         self._pos = 0
         self._max_message_size = max_message_size

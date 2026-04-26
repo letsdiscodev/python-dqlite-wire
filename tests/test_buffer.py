@@ -104,6 +104,16 @@ class TestReadBuffer:
         assert buf.available() == 0
         assert not buf.has_message()
 
+    def test_rejects_zero_max_message_size(self) -> None:
+        """max_message_size < 1 should be rejected at construction time,
+        symmetric with MessageDecoder's max_rows validation."""
+        with pytest.raises(ValueError, match="max_message_size must be >= 1"):
+            ReadBuffer(max_message_size=0)
+
+    def test_rejects_negative_max_message_size(self) -> None:
+        with pytest.raises(ValueError, match="max_message_size must be >= 1"):
+            ReadBuffer(max_message_size=-1)
+
     def test_feed(self) -> None:
         buf = ReadBuffer()
         buf.feed(b"hello")

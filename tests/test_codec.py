@@ -151,6 +151,18 @@ class TestMessageDecoder:
         with pytest.raises(ValueError, match="max_rows must be >= 1"):
             MessageDecoder(max_rows=0)
 
+    def test_decoder_rejects_zero_max_message_size(self) -> None:
+        """max_message_size < 1 should be rejected at construction time,
+        symmetric with the max_rows validation. Otherwise feed() raises a
+        confusing 'projected ... > 0' error on first byte."""
+        with pytest.raises(ValueError, match="max_message_size must be >= 1"):
+            MessageDecoder(max_message_size=0)
+
+    def test_decoder_rejects_negative_max_message_size(self) -> None:
+        """Negative max_message_size is also invalid."""
+        with pytest.raises(ValueError, match="max_message_size must be >= 1"):
+            MessageDecoder(max_message_size=-1)
+
     def test_decoder_continuation_honors_max_rows(self) -> None:
         """231: decode_continuation should also honor max_rows.
 
