@@ -54,6 +54,17 @@ def encode_params_tuple(params: Sequence[Any], schema: int = 0, buffer_offset: i
             bodies happen to pass 8-aligned offsets (params tuple
             always starts at a word boundary) but the function is not
             restricted to that.
+
+    Empty parameters: this implementation matches go-dqlite and emits zero
+    bytes when ``params`` is empty. The C reference (``tuple_encoder__init``
+    in ``dqlite-upstream/src/tuple.c``) instead always writes 1 byte for the
+    count followed by 7 bytes of padding (8 bytes total). Both shapes
+    round-trip through ``decode_params_tuple`` (the decoder accepts a 0-byte
+    body returning ``([], 0)`` and an 8-byte zero body returning ``([], 8)``
+    — see ``test_decode_empty`` and ``test_decode_zero_count_v0_consumes_header``).
+    A C-encoded snapshot and a Python/Go-encoded snapshot will therefore
+    differ at the byte level for empty-params requests, even though both are
+    wire-conformant.
     """
     if schema not in (0, 1):
         raise EncodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
