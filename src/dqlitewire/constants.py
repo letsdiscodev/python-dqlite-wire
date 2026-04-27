@@ -103,6 +103,16 @@ class NodeRole(IntEnum):
     SPARE = 2
 
 
+# SQLite primary error codes upstream's gateway emits via
+# ``failure(req, ...)`` calls. Exported for grep-friendliness so
+# downstream callers can ``code == SQLITE_BUSY`` instead of
+# ``code == 5``. Source: ``dqlite-upstream/src/gateway.c`` emit
+# sites, ``include/dqlite.h`` (extended IOERR variants).
+SQLITE_ERROR = 1  # generic SQL error (e.g. nonempty statement tail)
+SQLITE_BUSY = 5  # busy retry-or-fail — engine-side OR Raft-side
+SQLITE_NOTFOUND = 12  # gateway.c LOOKUP_DB / LOOKUP_STMT
+SQLITE_PROTOCOL = 15  # gateway.c "bad format version" / wire mismatch
+
 # SQLite extended error codes that signal leader changes in a dqlite
 # cluster. Upstream definitions in ``dqlite-upstream/include/dqlite.h``:
 #
@@ -119,11 +129,38 @@ LEADER_ERROR_CODES: frozenset[int] = frozenset(
     {SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST}
 )
 
+# dqlite-namespace error codes (>= 1000). These do NOT belong to the
+# SQLite primary-code namespace and ``primary_sqlite_code`` returns
+# them unchanged so a downstream ``code == primary_sqlite_code(...)``
+# check does not collide with a real SQLite primary. Source:
+# ``dqlite-upstream/src/lib/registry.h`` (DQLITE_NOTFOUND) and
+# ``dqlite-upstream/src/lib/serialize.h`` (DQLITE_PARSE).
+DQLITE_NOTFOUND = 1002  # registry lookup miss (server-side scratch)
+DQLITE_PARSE = 1005  # gateway.c unrecognized request type / schema
+
 # Bit mask for extracting the primary (low-byte) code from an
 # extended SQLite error code. Upstream encodes extended codes as
 # ``primary | (sub << 8)``; ``code & SQLITE_PRIMARY_CODE_MASK``
 # recovers the primary. Use via :func:`primary_sqlite_code`.
 SQLITE_PRIMARY_CODE_MASK = 0xFF
+
+
+_DQLITE_NAMESPACE_CODES: frozenset[int] = frozenset({DQLITE_NOTFOUND, DQLITE_PARSE})
+
+
+def is_dqlite_namespace_code(code: int) -> bool:
+    """True if ``code`` is a dqlite-namespace error code.
+
+    dqlite uses non-SQLite codes for server-internal failure shapes
+    (``DQLITE_PARSE = 1005``, ``DQLITE_NOTFOUND = 1002``). The set is
+    enumerated here exactly — extended SQLite codes
+    (``SQLITE_IOERR_NOT_LEADER = 10250`` etc.) happen to fall in
+    ``code >= 1000`` too, but they decode via ``code & 0xFF`` to a
+    valid primary while dqlite-namespace codes mask to nonsense
+    bytes. Callers dispatching on these failure shapes should use
+    this helper to special-case them, rather than masking.
+    """
+    return code in _DQLITE_NAMESPACE_CODES
 
 
 def primary_sqlite_code(code: int) -> int:
@@ -132,12 +169,21 @@ def primary_sqlite_code(code: int) -> int:
     ``SQLITE_IOERR_NOT_LEADER`` (``10250``) → ``SQLITE_IOERR`` (``10``).
     A primary code (low byte only) passes through unchanged.
 
+    dqlite-namespace codes (``DQLITE_PARSE``, ``DQLITE_NOTFOUND``)
+    are returned UNCHANGED instead of masked. Masking
+    ``DQLITE_PARSE = 1005`` with 0xFF yields 237 — not a real SQLite
+    primary — and a future SQLite primary code 237 would silently
+    collide. Use :func:`is_dqlite_namespace_code` to dispatch on
+    those codes deliberately.
+
     Matches the ``code & 0xFF`` pattern used by dqlitedbapi for its
     ``Error`` subclass dispatch and by the no-transaction mask.
     Exposed so callers don't have to recompute the shift inline and
     so a future change to the extended-code layout has a single
     point of rework.
     """
+    if is_dqlite_namespace_code(code):
+        return code
     return code & SQLITE_PRIMARY_CODE_MASK
 
 
