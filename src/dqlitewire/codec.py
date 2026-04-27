@@ -2,6 +2,8 @@
 
 from dqlitewire.buffer import ReadBuffer
 from dqlitewire.constants import (
+    DEFAULT_MAX_CONTINUATION_FRAMES,
+    DEFAULT_MAX_TOTAL_ROWS,
     HEADER_SIZE,
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_LEGACY,
@@ -204,6 +206,8 @@ class MessageDecoder:
         version: int = PROTOCOL_VERSION,
         max_message_size: int = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE,
         max_rows: int = RowsResponse.DEFAULT_MAX_ROWS,
+        max_continuation_frames: int = DEFAULT_MAX_CONTINUATION_FRAMES,
+        max_total_rows: int = DEFAULT_MAX_TOTAL_ROWS,
     ) -> None:
         """Initialize decoder.
 
@@ -221,6 +225,16 @@ class MessageDecoder:
                     ``RowsResponse`` frame (including continuation frames).
                     Defaults to ``RowsResponse.DEFAULT_MAX_ROWS``. Exceeding
                     this limit raises ``DecodeError``.
+            max_continuation_frames: Maximum number of continuation
+                    frames permitted in a single ROWS stream. A
+                    slow-dripping server emitting many 1-row frames
+                    can pin the client on Python decode work; the cap
+                    bounds total CPU. Defaults to
+                    :data:`DEFAULT_MAX_CONTINUATION_FRAMES`.
+            max_total_rows: Cumulative row cap across continuation
+                    frames for a single ROWS stream. Bounds total
+                    memory irrespective of per-frame size. Defaults
+                    to :data:`DEFAULT_MAX_TOTAL_ROWS`.
         """
         if not is_request and version not in _SUPPORTED_VERSIONS:
             raise HandshakeError(
@@ -229,6 +243,10 @@ class MessageDecoder:
             )
         if max_rows < 1:
             raise ValueError(f"max_rows must be >= 1, got {max_rows}")
+        if max_continuation_frames < 1:
+            raise ValueError(f"max_continuation_frames must be >= 1, got {max_continuation_frames}")
+        if max_total_rows < 1:
+            raise ValueError(f"max_total_rows must be >= 1, got {max_total_rows}")
         self._buffer = ReadBuffer(max_message_size=max_message_size)
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
@@ -242,6 +260,12 @@ class MessageDecoder:
         self._handshake_done = not is_request
         self._continuation_expected = False
         self._max_rows = max_rows
+        self._max_continuation_frames = max_continuation_frames
+        self._max_total_rows = max_total_rows
+        # Per-stream counters reset whenever ``_continuation_expected``
+        # transitions to True via the initial ROWS frame in ``decode``.
+        self._continuation_frame_count = 0
+        self._continuation_total_rows = 0
 
     @property
     def version(self) -> int | None:
@@ -267,6 +291,8 @@ class MessageDecoder:
         """
         self._buffer.reset()
         self._continuation_expected = False
+        self._continuation_frame_count = 0
+        self._continuation_total_rows = 0
         if self._is_request:
             self._handshake_done = False
             self._version = None
@@ -397,8 +423,31 @@ class MessageDecoder:
                 )
 
             result = RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
+            # Per-stream caps: bound the number of continuation frames
+            # and the cumulative row count. A slow-dripping server
+            # emitting many 1-row frames would otherwise pin the
+            # client on Python decode work within whatever wall-clock
+            # budget the caller's outer deadline allows. The frame
+            # cap bounds CPU; the cumulative-row cap bounds memory.
+            self._continuation_frame_count += 1
+            if self._continuation_frame_count > self._max_continuation_frames:
+                raise DecodeError(
+                    f"ROWS continuation exceeded max_continuation_frames cap "
+                    f"({self._max_continuation_frames}); server may be "
+                    f"slow-dripping rows"
+                )
+            self._continuation_total_rows += len(result.rows)
+            if self._continuation_total_rows > self._max_total_rows:
+                raise DecodeError(
+                    f"ROWS continuation exceeded max_total_rows cap "
+                    f"({self._max_total_rows}); cumulative row count "
+                    f"{self._continuation_total_rows} across "
+                    f"{self._continuation_frame_count} frames"
+                )
             if not result.has_more:
                 self._continuation_expected = False
+                self._continuation_frame_count = 0
+                self._continuation_total_rows = 0
             return result
         except ServerFailure:
             # Clean server-emitted failure with a well-formed body. The
@@ -460,6 +509,18 @@ class MessageDecoder:
             # continuation frame as a top-level message.
             if isinstance(msg, RowsResponse) and msg.has_more:
                 self._continuation_expected = True
+                # Initialize per-stream cap counters with the first
+                # frame's row count so the cumulative-row check in
+                # decode_continuation can compare against the running
+                # total.
+                self._continuation_frame_count = 1
+                self._continuation_total_rows = len(msg.rows)
+                if self._continuation_total_rows > self._max_total_rows:
+                    raise DecodeError(
+                        f"ROWS initial frame already exceeded max_total_rows cap "
+                        f"({self._max_total_rows}); first frame had "
+                        f"{self._continuation_total_rows} rows"
+                    )
         except BaseException as e:
             # poison() stores Exception | None; wrap non-Exception
             # BaseException subclasses so the poison cause is still a
