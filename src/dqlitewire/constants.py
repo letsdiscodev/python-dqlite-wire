@@ -133,8 +133,15 @@ LEADER_ERROR_CODES: frozenset[int] = frozenset(
 # SQLite primary-code namespace and ``primary_sqlite_code`` returns
 # them unchanged so a downstream ``code == primary_sqlite_code(...)``
 # check does not collide with a real SQLite primary. Source:
-# ``dqlite-upstream/src/lib/registry.h`` (DQLITE_NOTFOUND) and
+# ``dqlite-upstream/src/protocol.h`` (DQLITE_PROTO),
+# ``dqlite-upstream/src/lib/registry.h`` (DQLITE_NOTFOUND), and
 # ``dqlite-upstream/src/lib/serialize.h`` (DQLITE_PARSE).
+DQLITE_PROTO = 1001  # protocol.h:9 — Raft FSM-internal protocol error.
+# Currently emitted only inside command.c / fsm.c
+# apply paths and never reaches gateway.c::failure(),
+# but included here for namespace completeness so a
+# future change that surfaces it through the gateway
+# passes through ``primary_sqlite_code`` cleanly.
 DQLITE_NOTFOUND = 1002  # registry lookup miss (server-side scratch)
 DQLITE_PARSE = 1005  # gateway.c unrecognized request type / schema
 
@@ -145,7 +152,7 @@ DQLITE_PARSE = 1005  # gateway.c unrecognized request type / schema
 SQLITE_PRIMARY_CODE_MASK = 0xFF
 
 
-_DQLITE_NAMESPACE_CODES: frozenset[int] = frozenset({DQLITE_NOTFOUND, DQLITE_PARSE})
+_DQLITE_NAMESPACE_CODES: frozenset[int] = frozenset({DQLITE_PROTO, DQLITE_NOTFOUND, DQLITE_PARSE})
 
 
 def is_dqlite_namespace_code(code: int) -> bool:

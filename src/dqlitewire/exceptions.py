@@ -80,11 +80,16 @@ class ServerFailure(ProtocolError):
     returns a ``FailureResponse`` *object* (not an exception), so no
     state is disturbed. This exception is raised only from
     ``decode_continuation()`` when FAILURE arrives mid-stream during
-    a multi-part ``RowsResponse``. In that path the buffer is also
-    poisoned: the remaining continuation frames the
-    caller was expecting will never arrive, and the next decode must
-    start fresh. Callers catching ``ServerFailure`` in that path
-    should treat the decoder as requiring ``reset()`` and reconnect.
+    a multi-part ``RowsResponse``. The codec does NOT poison the
+    buffer on a well-formed ``FailureResponse``: the wire is coherent
+    at the offset following the failure body and subsequent requests
+    on the connection decode normally. Callers should treat
+    ``ServerFailure`` as a normal operational error (their query
+    failed; the connection survived) — no ``reset()`` required.
+
+    A malformed ``FailureResponse`` body (truncated text, missing
+    null terminator, etc.) does poison the buffer via the standard
+    ``DecodeError`` path; that case requires ``reset()`` + reconnect.
 
     Attributes:
         code: SQLite error code (or extended dqlite code). Common codes

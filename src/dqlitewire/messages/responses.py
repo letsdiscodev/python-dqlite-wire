@@ -174,9 +174,18 @@ class FailureResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
-        if len(data) < 8:
+        # Require at least 9 bytes: 8 for code + 1 minimum for the
+        # null-terminator of an empty message. Without that, an
+        # exactly-8-byte body passes the size check and surfaces a
+        # less-actionable "Failure message not null-terminated"
+        # diagnostic from ``decode_text``. Wire-format alignment pads
+        # bodies to multiples of 8, so the realistic minimum is 16
+        # bytes (8 code + 1 NUL + 7 padding); the < 9 guard catches
+        # the degenerate 8-byte case at the boundary.
+        if len(data) < 9:
             raise DecodeError(
-                f"FailureResponse body too short: need at least 8 bytes for code, got {len(data)}"
+                f"FailureResponse body too short: need at least 9 bytes "
+                f"(8 for code + 1 for null terminator), got {len(data)}"
             )
         code = decode_uint64(data[:8])
         message, consumed = decode_text(

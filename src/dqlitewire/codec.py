@@ -400,6 +400,8 @@ class MessageDecoder:
                 # request on the connection.
                 failure = FailureResponse.decode_body(body, schema=header.schema)
                 self._continuation_expected = False
+                self._continuation_frame_count = 0
+                self._continuation_total_rows = 0
                 raise ServerFailure(failure.code, failure.message)
             if header.msg_type == ResponseType.EMPTY:
                 # The upstream C server emits an ``EmptyResponse`` when
@@ -414,9 +416,13 @@ class MessageDecoder:
                 # ``EmptyResponse.decode_body`` — see
                 # ``test_decode_continuation_malformed_empty_still_poisons``.
                 self._continuation_expected = False
+                self._continuation_frame_count = 0
+                self._continuation_total_rows = 0
                 return EmptyResponse.decode_body(body, schema=header.schema)
             if header.msg_type != ResponseType.ROWS:
                 self._continuation_expected = False
+                self._continuation_frame_count = 0
+                self._continuation_total_rows = 0
                 raise StreamError(
                     f"Expected ROWS continuation (type {ResponseType.ROWS}), "
                     f"got type {header.msg_type}"
