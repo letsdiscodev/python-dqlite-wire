@@ -174,7 +174,11 @@ class FailureResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
-        code = decode_uint64(data)
+        if len(data) < 8:
+            raise DecodeError(
+                f"FailureResponse body too short: need at least 8 bytes for code, got {len(data)}"
+            )
+        code = decode_uint64(data[:8])
         message, consumed = decode_text(
             data[8:], max_size=_MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
         )
@@ -211,14 +215,24 @@ class LeaderResponse(Message):
         return encode_uint64(self.node_id) + encode_text(self.address)
 
     def encode_body_legacy(self) -> bytes:
-        """Encode as legacy (V0) body: text address only, no node_id.
+        """Encode as legacy (V0) body: text address only.
 
         Upstream emits this shape via ``SUCCESS_V0(server_legacy,
         SERVER_LEGACY)`` when the negotiated protocol version is
-        ``PROTOCOL_VERSION_LEGACY``. Mirror of :meth:`decode_body_legacy`.
-        ``node_id`` is dropped — the legacy format carries only the
-        address.
+        ``PROTOCOL_VERSION_LEGACY``. Mirror of
+        :meth:`decode_body_legacy`. The legacy format does NOT carry
+        ``node_id`` and the decoder hard-codes 0 on the way back. To
+        prevent silent information loss, this method rejects any
+        non-zero ``node_id`` with ``EncodeError`` — callers with a
+        meaningful node_id must use :meth:`encode_body` (modern
+        format) on a non-legacy-version protocol negotiation.
         """
+        if self.node_id != 0:
+            raise EncodeError(
+                "LeaderResponse legacy encoding cannot carry node_id; "
+                f"got node_id={self.node_id}. Use encode_body() for the "
+                "modern format."
+            )
         address = self.address or ""
         if len(address) > _MAX_ADDRESS_SIZE:
             raise EncodeError(
@@ -281,6 +295,14 @@ class WelcomeResponse(Message):
             seconds-based APIs (``asyncio.wait_for``, ``time.sleep``)
             must divide by 1000 first. Prefer
             :attr:`heartbeat_timeout_seconds` to avoid the divisor.
+
+            A value of 0 is accepted (the wire layer does not enforce
+            a minimum) but is semantically ambiguous: upstream
+            ``config.c`` defaults to 15000 and never emits 0, so a 0
+            from the wire is either a misconfigured peer or a non-
+            conforming server. The in-tree client treats it as "no
+            heartbeat-driven timeout extension" — ``trust_server_heartbeat``
+            falls back to the static ``_read_timeout`` floor.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.WELCOME

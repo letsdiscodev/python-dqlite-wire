@@ -446,12 +446,20 @@ class QuerySqlRequest(Message):
 class InterruptRequest(Message):
     """Interrupt the current operation.
 
-    Body: uint64 db_id
+    Body: uint64 db_id (server-ignored)
+
+    The wire schema includes ``db_id`` for historical reasons but the
+    upstream server's ``handle_interrupt`` (``dqlite-upstream/src/
+    gateway.c``) does not read it — interrupt is per-connection
+    routing, not per-database. Defaulting to 0 keeps the wire
+    encoding stable and matches the Go reference's idiomatic
+    zero-value usage so callers without a meaningful db_id in scope
+    don't have to thread one through.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.INTERRUPT
 
-    db_id: int
+    db_id: int = 0
 
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
