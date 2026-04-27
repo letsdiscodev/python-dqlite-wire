@@ -214,6 +214,17 @@ SQLITE_NOMEM = 7  # out of memory
 SQLITE_INTERRUPT = 9  # query interrupted via INTERRUPT
 SQLITE_CORRUPT = 11  # database disk image malformed — defensive
 SQLITE_FULL = 13  # database/disk full
+# Auxiliary database-file format errors. Both surface from the engine
+# when the file on disk cannot be read as a SQLite database — schema
+# version mismatch, header magic mismatch, or a non-database file
+# opened by mistake. The SA dialect treats codes 11/24/26 as
+# slot-fatal during pre-ping (``do_ping``) and as disconnect-class
+# during failure dispatch (``is_disconnect``); keeping the constants
+# in the wire layer alongside the other SQLite primaries lets both
+# the dialect and the dbapi import them by name instead of inlining
+# magic literals.
+SQLITE_FORMAT = 24
+SQLITE_NOTADB = 26
 
 TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}

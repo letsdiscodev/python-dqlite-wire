@@ -343,3 +343,32 @@ class TestAutoRollbackPrimaryCodes:
         import dqlitewire
 
         assert getattr(dqlitewire, name) == expected
+
+
+class TestBareDatabaseErrorPrimaryCodes:
+    """Pin the SQLite primary codes that the SA dialect treats as
+    slot-fatal via the bare-``DatabaseError`` arm of ``is_disconnect``
+    and ``do_ping`` — codes 11 / 24 / 26 (CORRUPT / FORMAT / NOTADB).
+    Hosted in the wire layer alongside the other SQLite primaries so
+    every consumer (SA dialect, dbapi cursor, future tooling) imports
+    one source of truth."""
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("SQLITE_CORRUPT", 11),
+            ("SQLITE_FORMAT", 24),
+            ("SQLITE_NOTADB", 26),
+        ],
+    )
+    def test_constant_values(self, name: str, expected: int) -> None:
+        import dqlitewire
+
+        assert getattr(dqlitewire, name) == expected
+
+    def test_constants_importable_from_top_level(self) -> None:
+        from dqlitewire import SQLITE_CORRUPT, SQLITE_FORMAT, SQLITE_NOTADB
+
+        assert SQLITE_CORRUPT == 11
+        assert SQLITE_FORMAT == 24
+        assert SQLITE_NOTADB == 26
