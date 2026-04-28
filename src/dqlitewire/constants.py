@@ -1,16 +1,17 @@
 """Protocol constants for dqlite wire protocol."""
 
 from enum import IntEnum
+from typing import Final
 
 # Protocol versions
-PROTOCOL_VERSION = 1
-PROTOCOL_VERSION_LEGACY = 0x86104DD760433FE5  # Pre-1.0 dqlite servers
+PROTOCOL_VERSION: Final[int] = 1
+PROTOCOL_VERSION_LEGACY: Final[int] = 0x86104DD760433FE5  # Pre-1.0 dqlite servers
 
 # Word size in bytes (all messages are padded to 8-byte boundaries)
-WORD_SIZE = 8
+WORD_SIZE: Final[int] = 8
 
 # Header size in bytes
-HEADER_SIZE = 8
+HEADER_SIZE: Final[int] = 8
 
 # Row markers — written as full uint64 words on the wire. Detection
 # validates all 8 bytes of the sentinel (via ``_ROW_DONE_MARKER`` /
@@ -20,10 +21,10 @@ HEADER_SIZE = 8
 # or 0xEE could be confused with a marker. Use the uint64 constants
 # below for encoding and the single-byte constants to build the detection
 # byte sequences.
-ROW_DONE_BYTE = 0xFF
-ROW_PART_BYTE = 0xEE
-ROW_DONE_MARKER = 0xFFFFFFFFFFFFFFFF
-ROW_PART_MARKER = 0xEEEEEEEEEEEEEEEE
+ROW_DONE_BYTE: Final[int] = 0xFF
+ROW_PART_BYTE: Final[int] = 0xEE
+ROW_DONE_MARKER: Final[int] = 0xFFFFFFFFFFFFFFFF
+ROW_PART_MARKER: Final[int] = 0xEEEEEEEEEEEEEEEE
 
 
 class RequestType(IntEnum):
@@ -108,10 +109,10 @@ class NodeRole(IntEnum):
 # downstream callers can ``code == SQLITE_BUSY`` instead of
 # ``code == 5``. Source: ``dqlite-upstream/src/gateway.c`` emit
 # sites, ``include/dqlite.h`` (extended IOERR variants).
-SQLITE_ERROR = 1  # generic SQL error (e.g. nonempty statement tail)
-SQLITE_BUSY = 5  # busy retry-or-fail — engine-side OR Raft-side
-SQLITE_NOTFOUND = 12  # gateway.c LOOKUP_DB / LOOKUP_STMT
-SQLITE_PROTOCOL = 15  # gateway.c "bad format version" / wire mismatch
+SQLITE_ERROR: Final[int] = 1  # generic SQL error (e.g. nonempty statement tail)
+SQLITE_BUSY: Final[int] = 5  # busy retry-or-fail — engine-side OR Raft-side
+SQLITE_NOTFOUND: Final[int] = 12  # gateway.c LOOKUP_DB / LOOKUP_STMT
+SQLITE_PROTOCOL: Final[int] = 15  # gateway.c "bad format version" / wire mismatch
 
 # SQLite extended error codes that signal leader changes in a dqlite
 # cluster. Upstream definitions in ``dqlite-upstream/include/dqlite.h``:
@@ -122,9 +123,9 @@ SQLITE_PROTOCOL = 15  # gateway.c "bad format version" / wire mismatch
 # where ``SQLITE_IOERR = 10``. Callers (``dqliteclient`` and
 # ``sqlalchemy-dqlite``) import these to decide whether to invalidate a
 # connection and retry against a fresh leader.
-SQLITE_IOERR = 10
-SQLITE_IOERR_NOT_LEADER = SQLITE_IOERR | (40 << 8)  # 10250
-SQLITE_IOERR_LEADERSHIP_LOST = SQLITE_IOERR | (41 << 8)  # 10506
+SQLITE_IOERR: Final[int] = 10
+SQLITE_IOERR_NOT_LEADER: Final[int] = SQLITE_IOERR | (40 << 8)  # 10250
+SQLITE_IOERR_LEADERSHIP_LOST: Final[int] = SQLITE_IOERR | (41 << 8)  # 10506
 LEADER_ERROR_CODES: frozenset[int] = frozenset(
     {SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST}
 )
@@ -136,20 +137,20 @@ LEADER_ERROR_CODES: frozenset[int] = frozenset(
 # ``dqlite-upstream/src/protocol.h`` (DQLITE_PROTO),
 # ``dqlite-upstream/src/lib/registry.h`` (DQLITE_NOTFOUND), and
 # ``dqlite-upstream/src/lib/serialize.h`` (DQLITE_PARSE).
-DQLITE_PROTO = 1001  # protocol.h:9 — Raft FSM-internal protocol error.
+DQLITE_PROTO: Final[int] = 1001  # protocol.h:9 — Raft FSM-internal protocol error.
 # Currently emitted only inside command.c / fsm.c
 # apply paths and never reaches gateway.c::failure(),
 # but included here for namespace completeness so a
 # future change that surfaces it through the gateway
 # passes through ``primary_sqlite_code`` cleanly.
-DQLITE_NOTFOUND = 1002  # registry lookup miss (server-side scratch)
-DQLITE_PARSE = 1005  # gateway.c unrecognized request type / schema
+DQLITE_NOTFOUND: Final[int] = 1002  # registry lookup miss (server-side scratch)
+DQLITE_PARSE: Final[int] = 1005  # gateway.c unrecognized request type / schema
 
 # Bit mask for extracting the primary (low-byte) code from an
 # extended SQLite error code. Upstream encodes extended codes as
 # ``primary | (sub << 8)``; ``code & SQLITE_PRIMARY_CODE_MASK``
 # recovers the primary. Use via :func:`primary_sqlite_code`.
-SQLITE_PRIMARY_CODE_MASK = 0xFF
+SQLITE_PRIMARY_CODE_MASK: Final[int] = 0xFF
 
 
 _DQLITE_NAMESPACE_CODES: frozenset[int] = frozenset({DQLITE_PROTO, DQLITE_NOTFOUND, DQLITE_PARSE})
@@ -209,11 +210,11 @@ def primary_sqlite_code(code: int) -> int:
 # without inspecting the message text; the client-side handler at
 # ``dqliteclient.connection`` carves out the Raft-side
 # "checkpoint in progress" case explicitly.
-SQLITE_ABORT = 4  # operation aborted (e.g., sqlite3_interrupt) — defensive
-SQLITE_NOMEM = 7  # out of memory
-SQLITE_INTERRUPT = 9  # query interrupted via INTERRUPT
-SQLITE_CORRUPT = 11  # database disk image malformed — defensive
-SQLITE_FULL = 13  # database/disk full
+SQLITE_ABORT: Final[int] = 4  # operation aborted (e.g., sqlite3_interrupt) — defensive
+SQLITE_NOMEM: Final[int] = 7  # out of memory
+SQLITE_INTERRUPT: Final[int] = 9  # query interrupted via INTERRUPT
+SQLITE_CORRUPT: Final[int] = 11  # database disk image malformed — defensive
+SQLITE_FULL: Final[int] = 13  # database/disk full
 # Auxiliary database-file format errors. Both surface from the engine
 # when the file on disk cannot be read as a SQLite database — schema
 # version mismatch, header magic mismatch, or a non-database file
@@ -223,8 +224,8 @@ SQLITE_FULL = 13  # database/disk full
 # in the wire layer alongside the other SQLite primaries lets both
 # the dialect and the dbapi import them by name instead of inlining
 # magic literals.
-SQLITE_FORMAT = 24
-SQLITE_NOTADB = 26
+SQLITE_FORMAT: Final[int] = 24
+SQLITE_NOTADB: Final[int] = 26
 
 TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
@@ -237,10 +238,10 @@ TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
 # any realistic legitimate result set. Forwarded to every
 # :class:`DqliteConnection` the public ``connect()`` /
 # ``ConnectionPool`` / dbapi ``connect()`` entry points hand out.
-DEFAULT_MAX_TOTAL_ROWS = 10_000_000
+DEFAULT_MAX_TOTAL_ROWS: Final[int] = 10_000_000
 
 # Per-query continuation-frame cap. Complements
 # ``DEFAULT_MAX_TOTAL_ROWS``: a server sending one row per frame can
 # inflict O(n) Python decode work where n is the row cap; the frame
 # cap bounds that work even when the row cap is large.
-DEFAULT_MAX_CONTINUATION_FRAMES = 100_000
+DEFAULT_MAX_CONTINUATION_FRAMES: Final[int] = 100_000
