@@ -372,3 +372,21 @@ class TestBareDatabaseErrorPrimaryCodes:
         assert SQLITE_CORRUPT == 11
         assert SQLITE_FORMAT == 24
         assert SQLITE_NOTADB == 26
+
+
+class TestDefaultRowsAndFramesCaps:
+    """The default per-query caps (row count and continuation-frame
+    count) are operational defenses against slow-drip / amplification
+    attacks from a hostile or buggy server. Pin the literal values so
+    a refactor that "factors out" the constants (e.g. divides by
+    1000 by accident) cannot silently change the magnitude."""
+
+    def test_default_max_total_rows_is_ten_million(self) -> None:
+        from dqlitewire import DEFAULT_MAX_TOTAL_ROWS
+
+        assert DEFAULT_MAX_TOTAL_ROWS == 10_000_000
+
+    def test_default_max_continuation_frames_is_one_hundred_thousand(self) -> None:
+        from dqlitewire import DEFAULT_MAX_CONTINUATION_FRAMES
+
+        assert DEFAULT_MAX_CONTINUATION_FRAMES == 100_000
