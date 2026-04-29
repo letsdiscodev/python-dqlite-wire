@@ -457,7 +457,19 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
-        return encode_blob(bytes(value)), value_type
+        # Materialise via ``bytes(value)``. For ``bytes`` / ``bytearray``
+        # / open ``memoryview`` this cannot fail; for a closed
+        # ``mmap.mmap`` it raises ``ValueError("mmap closed or invalid")``,
+        # for a released ``memoryview`` it raises ``BufferError``. Wrap
+        # both as ``EncodeError`` to maintain the wire-layer convention
+        # that all encode failures surface as ``EncodeError``; callers
+        # using ``except EncodeError`` would otherwise silently miss the
+        # failure.
+        try:
+            materialized = bytes(value)
+        except (ValueError, BufferError) as e:
+            raise EncodeError(f"Cannot materialise BLOB from {type(value).__name__}: {e}") from e
+        return encode_blob(materialized), value_type
     elif value_type == ValueType.NULL:
         # None is already handled in the early-return branch above, so reaching
         # here means value is not None with explicit NULL type — always a bug.
