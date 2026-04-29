@@ -10,6 +10,7 @@ driver/DBAPI layer, matching the split used by the C reference client and
 by Go's ``database/sql`` driver.
 """
 
+import mmap
 import struct
 
 from dqlitewire.constants import WORD_SIZE, ValueType
@@ -18,10 +19,11 @@ from dqlitewire.exceptions import DecodeError, EncodeError
 # Exact set of Python types ``encode_value`` accepts. Callers see a
 # type-checker error if they pass something else, instead of a runtime
 # EncodeError at the first wire round-trip. ``bytes``-like siblings
-# (``bytearray``, ``memoryview``) are accepted because the BLOB encoder
-# normalises them through ``bytes(value)``; the inference path maps
-# them to ValueType.BLOB for the same reason stdlib ``sqlite3`` does.
-type WireInput = bool | int | float | str | bytes | bytearray | memoryview | None
+# (``bytearray``, ``memoryview``, ``mmap.mmap``) are accepted because
+# the BLOB encoder normalises them through ``bytes(value)``; the
+# inference path maps them to ValueType.BLOB for the same reason
+# stdlib ``sqlite3`` does.
+type WireInput = bool | int | float | str | bytes | bytearray | memoryview | mmap.mmap | None
 
 # Exact set of Python types ``decode_value`` may return (first element
 # of the ``(value, consumed)`` tuple). Narrower than ``Any`` — wire
@@ -387,12 +389,17 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             value_type = ValueType.FLOAT
         elif isinstance(value, str):
             value_type = ValueType.TEXT
-        elif isinstance(value, (bytes, bytearray, memoryview)):
+        elif isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             # Parity with the explicit BLOB branch and with stdlib
-            # ``sqlite3``: all three bytes-like types infer to BLOB.
-            # Callers building payloads via mutation (bytearray) or
-            # zero-copy slicing (memoryview) no longer need to wrap
+            # ``sqlite3``: bytes-like types (incl. memoryview and
+            # memory-mapped regions) infer to BLOB. Callers building
+            # payloads via mutation (bytearray), zero-copy slicing
+            # (memoryview), or mmap-backed I/O no longer need to wrap
             # values in ``bytes(...)`` before passing them here.
+            # ``array.array`` is intentionally NOT accepted: typed
+            # numeric arrays have platform-dependent bytes
+            # representation, so silent acceptance would yield
+            # non-portable BLOBs.
             value_type = ValueType.BLOB
         else:
             raise EncodeError(
@@ -448,7 +455,7 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
         return encode_text(value), value_type
     elif value_type == ValueType.BLOB:
-        if not isinstance(value, (bytes, bytearray, memoryview)):
+        if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
         return encode_blob(bytes(value)), value_type
     elif value_type == ValueType.NULL:

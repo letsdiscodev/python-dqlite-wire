@@ -967,6 +967,7 @@ class TestWireTypeAliases:
         accepts. Drift it and a downstream caller would believe their
         bound parameter is acceptable when it isn't (or vice-versa).
         """
+        import mmap
         import typing
 
         from dqlitewire.types import WireInput
@@ -981,6 +982,7 @@ class TestWireTypeAliases:
             bytes,
             bytearray,
             memoryview,
+            mmap.mmap,
             type(None),
         }
         assert set(typing.get_args(WireInput.__value__)) == expected_members
