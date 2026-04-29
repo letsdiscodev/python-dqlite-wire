@@ -154,21 +154,28 @@ SQLITE_PRIMARY_CODE_MASK: Final[int] = 0xFF
 
 
 _DQLITE_NAMESPACE_CODES: frozenset[int] = frozenset({DQLITE_PROTO, DQLITE_NOTFOUND, DQLITE_PARSE})
+# dqlite-namespace error codes live in ``[1000, 1024)``. Extended
+# SQLite codes (``SQLITE_IOERR_NOT_LEADER = 10250``) never land in
+# this range — extended codes are ``primary | (subcode << 8)`` and
+# the only way to produce a value in [1000, 1024) is primary=232..255
+# with subcode=3, but valid SQLite primaries top out at ~28.
+_DQLITE_NAMESPACE_MIN: Final[int] = 1000
+_DQLITE_NAMESPACE_MAX_EXCLUSIVE: Final[int] = 1024
 
 
 def is_dqlite_namespace_code(code: int) -> bool:
     """True if ``code`` is a dqlite-namespace error code.
 
     dqlite uses non-SQLite codes for server-internal failure shapes
-    (``DQLITE_PARSE = 1005``, ``DQLITE_NOTFOUND = 1002``). The set is
-    enumerated here exactly — extended SQLite codes
-    (``SQLITE_IOERR_NOT_LEADER = 10250`` etc.) happen to fall in
-    ``code >= 1000`` too, but they decode via ``code & 0xFF`` to a
-    valid primary while dqlite-namespace codes mask to nonsense
-    bytes. Callers dispatching on these failure shapes should use
-    this helper to special-case them, rather than masking.
+    (``DQLITE_PARSE = 1005``, ``DQLITE_NOTFOUND = 1002``,
+    ``DQLITE_PROTO = 1001``). The discriminator is a numeric range:
+    namespace codes live in ``[1000, 1024)``, which extended SQLite
+    codes never enter (extended = ``primary | (subcode << 8)``, and
+    no valid SQLite primary lands at 232–255). A range check
+    auto-includes any future namespace addition upstream without
+    requiring a manual sync commit.
     """
-    return code in _DQLITE_NAMESPACE_CODES
+    return _DQLITE_NAMESPACE_MIN <= code < _DQLITE_NAMESPACE_MAX_EXCLUSIVE
 
 
 def primary_sqlite_code(code: int) -> int:
