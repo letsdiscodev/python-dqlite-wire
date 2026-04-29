@@ -374,6 +374,46 @@ class TestBareDatabaseErrorPrimaryCodes:
         assert SQLITE_NOTADB == 26
 
 
+class TestDqliteErrorCollidesWithSqliteErrorOnWire:
+    """``dqlite-upstream/include/dqlite.h`` defines ``DQLITE_ERROR = 1``,
+    which shares the wire low-byte with ``SQLITE_ERROR = 1``. Upstream
+    emits ``DQLITE_ERROR`` from ``gateway.c::handle_request_transfer``
+    (``failure(req, DQLITE_ERROR, "leadership transfer failed")``) on the
+    ``REQUEST_TRANSFER`` path. The Python client does NOT currently
+    invoke that request type, so the collision is latent — but the
+    architectural shape relies on message-text disambiguation in
+    ``dbapi.connection._is_no_transaction_error``.
+
+    Pin the collision so a future audit cycle finds the breadcrumbs
+    and a future maintainer adding ``REQUEST_TRANSFER`` support sees the
+    risk."""
+
+    def test_dqlite_error_value_one_shares_low_byte_with_sqlite_error(self) -> None:
+        from dqlitewire.constants import primary_sqlite_code
+
+        # ``DQLITE_ERROR = 1`` is NOT exported as a named constant —
+        # exporting it under the same value as a SQLite primary would
+        # invite a use-site to import the wrong one. Inline the literal
+        # here so the collision is documented at exactly the place a
+        # maintainer would look to disambiguate.
+        DQLITE_ERROR_LITERAL = 1
+        SQLITE_ERROR_LITERAL = 1
+        assert DQLITE_ERROR_LITERAL == SQLITE_ERROR_LITERAL
+        assert primary_sqlite_code(DQLITE_ERROR_LITERAL) == 1
+
+    def test_dqlite_error_is_not_in_namespace_set(self) -> None:
+        """``_DQLITE_NAMESPACE_CODES`` covers only the codes >= 1000
+        that pass through ``primary_sqlite_code`` unchanged. Adding
+        ``DQLITE_ERROR=1`` to the set would mask SQLITE_ERROR=1
+        from primary-code dispatch — a worse bug than the existing
+        latent collision. Pin that the set excludes 1, 2, 3."""
+        from dqlitewire.constants import _DQLITE_NAMESPACE_CODES
+
+        assert 1 not in _DQLITE_NAMESPACE_CODES
+        assert 2 not in _DQLITE_NAMESPACE_CODES  # DQLITE_MISUSE — also collides
+        assert 3 not in _DQLITE_NAMESPACE_CODES  # DQLITE_NOMEM — also collides
+
+
 class TestDefaultRowsAndFramesCaps:
     """The default per-query caps (row count and continuation-frame
     count) are operational defenses against slow-drip / amplification
