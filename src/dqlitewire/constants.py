@@ -227,6 +227,29 @@ SQLITE_FULL: Final[int] = 13  # database/disk full
 SQLITE_FORMAT: Final[int] = 24
 SQLITE_NOTADB: Final[int] = 26
 
+
+# Message-text substrings that mark a benign "no transaction was
+# active" reply from the server. The full reply is a SQLite-engine-
+# emitted ``SQLITE_ERROR`` (primary code 1) with one of these clauses.
+# Both the dbapi (``commit``/``rollback`` swallow) and the client
+# layer (``transaction()`` context manager / ``_reset_connection``)
+# need to recognise this shape; the substrings are pinned here so
+# both layers cannot drift apart.
+#
+# The integration test ``test_no_transaction_error_wording.py``
+# (in dbapi) verifies the wording against a live cluster — this
+# constant is the single source of truth that test inspects.
+#
+# A primary-code-1 substring guard is also why ``DQLITE_ERROR=1``
+# (which shares the wire low-byte with ``SQLITE_ERROR=1``; see
+# ``include/dqlite.h``) is not silently swallowed when an upstream
+# ``failure(req, DQLITE_ERROR, ...)`` reply arrives — the dqlite
+# emission's wording does not match these substrings.
+NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
+    "no transaction is active",
+    "cannot rollback",
+)
+
 TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
 )
