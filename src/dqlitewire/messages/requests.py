@@ -260,7 +260,12 @@ class ExecRequest(Message):
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
-        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
+        result += encode_params_tuple(
+            self.params,
+            schema=schema,
+            buffer_offset=len(result),
+            emit_empty_header=self._decoded_schema is not None,
+        )
         return result
 
     @classmethod
@@ -305,7 +310,12 @@ class QueryRequest(Message):
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
-        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
+        result += encode_params_tuple(
+            self.params,
+            schema=schema,
+            buffer_offset=len(result),
+            emit_empty_header=self._decoded_schema is not None,
+        )
         return result
 
     @classmethod
@@ -378,7 +388,12 @@ class ExecSqlRequest(Message):
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
         result += encode_text(self.sql)
-        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
+        result += encode_params_tuple(
+            self.params,
+            schema=schema,
+            buffer_offset=len(result),
+            emit_empty_header=self._decoded_schema is not None,
+        )
         return result
 
     @classmethod
@@ -424,7 +439,12 @@ class QuerySqlRequest(Message):
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
         result += encode_text(self.sql)
-        result += encode_params_tuple(self.params, schema=schema, buffer_offset=len(result))
+        result += encode_params_tuple(
+            self.params,
+            schema=schema,
+            buffer_offset=len(result),
+            emit_empty_header=self._decoded_schema is not None,
+        )
         return result
 
     @classmethod
