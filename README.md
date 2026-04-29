@@ -58,9 +58,10 @@ network contexts and are all opt-out-able.
   — per-query row cap.
 - `DEFAULT_MAX_MESSAGE_SIZE` (`ReadBuffer(max_message_size=...)`, default
   64 MiB) — envelope cap on a single frame.
-- `_MAX_PARAM_COUNT` (100,000), `_MAX_COLUMN_COUNT` (10,000),
-  `_MAX_FILE_COUNT` (100), `_MAX_NODE_COUNT` (10,000) — internal
-  sanity bounds on decoded tuple / response sizes.
+- `_MAX_PARAM_COUNT` (100,000), `_MAX_COLUMN_COUNT` (32,767 — matches
+  SQLite's `SQLITE_MAX_COLUMN`), `_MAX_FILE_COUNT` (100),
+  `_MAX_NODE_COUNT` (10,000) — internal sanity bounds on decoded
+  tuple / response sizes.
 
 **Stricter-than-Go validations** (match the C server's intent):
 

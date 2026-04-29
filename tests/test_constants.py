@@ -390,3 +390,35 @@ class TestDefaultRowsAndFramesCaps:
         from dqlitewire import DEFAULT_MAX_CONTINUATION_FRAMES
 
         assert DEFAULT_MAX_CONTINUATION_FRAMES == 100_000
+
+
+class TestInternalDecodeBoundsPinnedAgainstReadme:
+    """The README's "Internal sanity bounds" section enumerates four
+    decode-time cap constants. Pin each value so a future refactor
+    that bumps a constant without updating the README produces a test
+    failure — exactly the drift this test catches today
+    (``_MAX_COLUMN_COUNT`` was bumped from 10,000 to 32,767 to match
+    SQLite's ``SQLITE_MAX_COLUMN`` ceiling, but the README was not
+    updated)."""
+
+    def test_max_param_count_is_one_hundred_thousand(self) -> None:
+        from dqlitewire.tuples import _MAX_PARAM_COUNT
+
+        assert _MAX_PARAM_COUNT == 100_000
+
+    def test_max_column_count_matches_sqlite_max_column(self) -> None:
+        from dqlitewire.messages.responses import _MAX_COLUMN_COUNT
+
+        # SQLite's documented hard ceiling for column count, exposed
+        # as SQLITE_MAX_COLUMN. dqlite inherits.
+        assert _MAX_COLUMN_COUNT == 32767
+
+    def test_max_file_count_is_one_hundred(self) -> None:
+        from dqlitewire.messages.responses import _MAX_FILE_COUNT
+
+        assert _MAX_FILE_COUNT == 100
+
+    def test_max_node_count_is_ten_thousand(self) -> None:
+        from dqlitewire.messages.responses import _MAX_NODE_COUNT
+
+        assert _MAX_NODE_COUNT == 10_000
