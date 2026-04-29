@@ -1990,6 +1990,14 @@ class TestEncodeSideCaps:
         decoded = LeaderResponse.decode_body_legacy(body)
         assert decoded.address == at_cap
 
+    def test_leader_response_legacy_rejects_non_zero_node_id(self) -> None:
+        """Legacy encoding has no field for ``node_id``; non-zero
+        callers must use ``encode_body()`` (modern format) instead.
+        Pin the rejection so a future refactor cannot silently drop a
+        meaningful ``node_id`` on the wire."""
+        with pytest.raises(EncodeError, match="cannot carry node_id"):
+            LeaderResponse(node_id=7, address="x:1").encode_body_legacy()
+
     def test_servers_response_rejects_oversize_node_count(self) -> None:
         nodes = [
             NodeInfo(node_id=i, address="n:9", role=NodeRole.SPARE)

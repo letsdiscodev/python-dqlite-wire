@@ -163,6 +163,27 @@ class TestMessageDecoder:
         with pytest.raises(ValueError, match="max_message_size must be >= 1"):
             MessageDecoder(max_message_size=-1)
 
+    def test_decoder_rejects_zero_max_continuation_frames(self) -> None:
+        """``max_continuation_frames < 1`` rejected at construction so a
+        bug that defaults the cap to 0 cannot silently let any
+        continuation frame through."""
+        with pytest.raises(ValueError, match="max_continuation_frames must be >= 1"):
+            MessageDecoder(max_continuation_frames=0)
+
+    def test_decoder_rejects_negative_max_continuation_frames(self) -> None:
+        with pytest.raises(ValueError, match="max_continuation_frames must be >= 1"):
+            MessageDecoder(max_continuation_frames=-5)
+
+    def test_decoder_rejects_zero_max_total_rows(self) -> None:
+        """``max_total_rows < 1`` rejected at construction symmetric
+        with the other two caps."""
+        with pytest.raises(ValueError, match="max_total_rows must be >= 1"):
+            MessageDecoder(max_total_rows=0)
+
+    def test_decoder_rejects_negative_max_total_rows(self) -> None:
+        with pytest.raises(ValueError, match="max_total_rows must be >= 1"):
+            MessageDecoder(max_total_rows=-1)
+
     def test_decoder_continuation_honors_max_rows(self) -> None:
         """231: decode_continuation should also honor max_rows.
 
@@ -188,6 +209,102 @@ class TestMessageDecoder:
         decoder.feed(cont_bytes)
         with pytest.raises(DecodeError, match="reached maximum 2"):
             decoder.decode_continuation()
+
+    def test_decoder_continuation_rejects_total_rows_overflow(self) -> None:
+        """Cumulative ``max_total_rows`` cap fires across frames in a
+        ROWS continuation. Pin the runtime check so a future refactor
+        that drops the running total cannot silently let an unbounded
+        stream through (DoS surface)."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.responses import RowsResponse
+
+        first = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[1]],
+            has_more=True,
+        )
+        second = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[2]],
+            has_more=False,
+        )
+        decoder = MessageDecoder(max_total_rows=1)
+        decoder.feed(first.encode())
+        # First frame is exactly at the cap; allowed.
+        msg = decoder.decode()
+        assert isinstance(msg, RowsResponse)
+        # Second frame pushes cumulative count over the cap.
+        decoder.feed(second.encode())
+        with pytest.raises(DecodeError, match="max_total_rows"):
+            decoder.decode_continuation()
+
+    def test_decoder_continuation_rejects_too_many_frames(self) -> None:
+        """``max_continuation_frames`` cap fires after the runtime
+        decoder sees one frame too many. Pin the slow-drip DoS
+        defence."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.responses import RowsResponse
+
+        first = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[1]],
+            has_more=True,
+        )
+        next_frame = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[2]],
+            has_more=True,
+        )
+        last_frame = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER]],
+            rows=[[3]],
+            has_more=False,
+        )
+        # The decoder counts the initial frame as frame 1, so
+        # max_continuation_frames=2 admits the initial frame plus
+        # exactly one continuation frame; the second continuation
+        # frame (third overall) trips the cap.
+        decoder = MessageDecoder(max_continuation_frames=2, max_total_rows=100)
+        decoder.feed(first.encode())
+        decoder.decode()
+        decoder.feed(next_frame.encode())
+        decoder.decode_continuation()
+        decoder.feed(last_frame.encode())
+        with pytest.raises(DecodeError, match="max_continuation_frames"):
+            decoder.decode_continuation()
+
+    def test_decoder_initial_frame_already_exceeded_max_total_rows(self) -> None:
+        """When the first ROWS frame already overflows
+        ``max_total_rows`` (server-side aggregation bug, attacker
+        flood, etc.), the decoder must fail at ``decode()`` time on
+        the initial frame, not delay until ``decode_continuation``."""
+        from dqlitewire.constants import ValueType
+        from dqlitewire.exceptions import DecodeError
+        from dqlitewire.messages.responses import RowsResponse
+
+        first = RowsResponse(
+            column_names=["a"],
+            column_types=[ValueType.INTEGER],
+            row_types=[[ValueType.INTEGER], [ValueType.INTEGER]],
+            rows=[[1], [2]],
+            has_more=True,
+        )
+        decoder = MessageDecoder(max_total_rows=1)
+        decoder.feed(first.encode())
+        with pytest.raises(DecodeError, match="max_total_rows"):
+            decoder.decode()
 
     def test_decode_handshake(self) -> None:
         decoder = MessageDecoder(is_request=True)
