@@ -253,8 +253,17 @@ SQLITE_NOTADB: Final[int] = 26
 # ``failure(req, DQLITE_ERROR, ...)`` reply arrives — the dqlite
 # emission's wording does not match these substrings.
 NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
+    # Anchored to the canonical SQLite phrasing — the bare token
+    # "cannot rollback" was previously also matched but is too
+    # permissive: any unrelated SQLite (or future DQLITE_ERROR=1)
+    # error message that happens to contain that bare phrase would
+    # trigger the silent-swallow path. Both upstream wordings
+    # ("cannot rollback ..." / "cannot commit ...") contain
+    # "no transaction is active" so a single anchored substring
+    # covers both legitimate cases. Pinned by
+    # ``test_no_transaction_error_wording.py`` against a live
+    # cluster.
     "no transaction is active",
-    "cannot rollback",
 )
 
 TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
