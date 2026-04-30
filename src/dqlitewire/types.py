@@ -300,11 +300,18 @@ def decode_text(
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
         else:
             # Chunked fallback for pathologically long text payloads.
+            # Bound the total scan window to ``max_size + 1`` bytes so
+            # a small caller-supplied cap (e.g. 4 KiB column-name) on
+            # a 16 MiB memoryview does not allocate megabytes of
+            # chunks before the cap-after-scan check fires. Symmetric
+            # with the one-shot path's ``min(data_len, max_size+1)``
+            # window.
+            scan_limit = min(data_len, max_size + 1)
             chunks: list[bytes] = []
             scanned = 0
             null_pos = -1
-            while scanned < data_len:
-                chunk_end = min(scanned + _TEXT_SCAN_CHUNK, data_len)
+            while scanned < scan_limit:
+                chunk_end = min(scanned + _TEXT_SCAN_CHUNK, scan_limit)
                 chunk = bytes(data[scanned:chunk_end])
                 local = chunk.find(b"\x00")
                 if local >= 0:
@@ -314,6 +321,8 @@ def decode_text(
                 chunks.append(chunk)
                 scanned = chunk_end
             if null_pos < 0:
+                if scan_limit < data_len:
+                    raise DecodeError(f"{label} length exceeds maximum ({max_size})")
                 raise DecodeError(f"{label} not null-terminated")
             try:
                 text = b"".join(chunks).decode("utf-8")
@@ -324,6 +333,13 @@ def decode_text(
             null_pos = data.index(b"\x00")
         except ValueError as e:
             raise DecodeError(f"{label} not null-terminated") from e
+        # Cap on bytes BEFORE the UTF-8 decode allocation. Without
+        # this, a 100 MiB hostile-peer payload that happens to be
+        # NUL-terminated near the end is materialised in full just to
+        # be rejected. Symmetric with the memoryview branch's
+        # ``scan_window = min(data_len, max_size+1)``.
+        if null_pos > max_size:
+            raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
         try:
             text = data[:null_pos].decode("utf-8")
         except UnicodeDecodeError as e:

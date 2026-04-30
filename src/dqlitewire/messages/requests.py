@@ -569,6 +569,19 @@ class AssignRequest(Message):
     ASSIGN and PROMOTE share type code 13. They are distinguished by body size:
     - PROMOTE (legacy): uint64 node_id (1 word)
     - ASSIGN: uint64 node_id, uint64 role (2 words)
+
+    **Legacy round-trip asymmetry (intentional).** A peer-emitted
+    1-word PROMOTE body decodes to ``AssignRequest(node_id=N,
+    role=NodeRole.VOTER)`` because PROMOTE upstream-semantically
+    elevates the node to voter. Re-encoding the resulting dataclass
+    via :meth:`encode_body` produces the modern 2-word ASSIGN shape
+    (16 bytes). This is a deliberate one-way upgrade: the legacy
+    PROMOTE wire form has no role field, so on decode we MUST pick
+    one (VOTER per upstream semantics) and on re-encode the modern
+    form is the only safe shape against current servers. Callers
+    that genuinely need to re-emit the legacy 1-word shape (for
+    relaying to an old server or for round-trip-identity tests) must
+    call :meth:`encode_body_legacy` explicitly.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.ASSIGN
