@@ -21,6 +21,28 @@ def _align(n: int) -> int:
 
 
 class TestDecodeTextChunkedErrors:
+    def test_chunked_no_null_within_cap_raises_exceeds_maximum(self) -> None:
+        """Cycle 22 added a ``scan_limit = min(data_len, max_size+1)``
+        window to the chunked branch so a small caller-supplied cap
+        on a large memoryview does not allocate megabytes of chunks
+        before rejecting. Pin the cap-exceeded diagnostic: a 70 KiB
+        non-NUL-terminated payload at ``max_size=4 KiB`` raises
+        "exceeds maximum" — NOT "not null-terminated"."""
+        payload = b"a" * (70 * 1024) + b"\x00" * 8
+        buf = memoryview(payload)
+        with pytest.raises(DecodeError, match="(?i)exceeds maximum"):
+            decode_text(buf, max_size=4 * 1024)
+
+    def test_chunked_null_just_past_cap_raises_exceeds_maximum(self) -> None:
+        """A NUL just past the cap must surface as the cap-exceeded
+        diagnostic — the cycle-22 arm guards against the "bytes
+        past the cap could legally contain a terminator" path."""
+        # NUL at byte 4097, exactly past max_size=4096.
+        payload = b"a" * 4097 + b"\x00" + b"b" * (70 * 1024) + b"\x00" * 8
+        buf = memoryview(payload)
+        with pytest.raises(DecodeError, match="(?i)exceeds maximum"):
+            decode_text(buf, max_size=4096)
+
     def test_chunked_missing_null_terminator_raises(self) -> None:
         # 70 KiB > 64 KiB threshold, forcing the chunked branch.
         payload = b"a" * (70 * 1024)
