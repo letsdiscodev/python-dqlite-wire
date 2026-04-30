@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 from dqlitewire.constants import NodeRole, RequestType
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
@@ -599,17 +599,32 @@ class AssignRequest(Message):
         result = encode_uint64(self.node_id)
         if self.role is not None:
             result += encode_uint64(int(self.role))
-        else:
-            import warnings
+            return result
+        # Legacy PROMOTE shape (1-word body) is emitted only by very
+        # old dqlite clients. Go-dqlite's canonical EncodeAssign
+        # never produces it; modern servers always expect the
+        # 2-word ASSIGN body. Reject explicitly so a typo like
+        # ``AssignRequest(node_id=42)`` (forgetting role=) doesn't
+        # silently downgrade to the legacy shape and surface as a
+        # cryptic protocol error on the wire. Callers that genuinely
+        # need legacy emission should construct
+        # ``AssignRequest(node_id=42, role=None)`` and call
+        # :meth:`encode_body_legacy` instead.
+        raise EncodeError(
+            "AssignRequest with role=None cannot be encoded via encode_body — "
+            "modern dqlite servers and Go-dqlite always send both node_id and role. "
+            "Use role=NodeRole.VOTER (or another role) for the modern ASSIGN body, "
+            "or call encode_body_legacy() explicitly for the legacy PROMOTE shape."
+        )
 
-            warnings.warn(
-                "Encoding AssignRequest without role sends a legacy Promote message "
-                "(1-word body). Modern dqlite servers and the Go client always send "
-                "both node_id and role. Use role=0 (VOTER) for equivalent behavior.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        return result
+    def encode_body_legacy(self) -> bytes:
+        """Encode as legacy PROMOTE body (1 word: node_id only).
+
+        Mirror of ``LeaderResponse.encode_body_legacy``. The legacy
+        wire shape is explicit-opt-in only; ``encode_body`` rejects
+        ``role=None`` so accidental omission can't silently downgrade.
+        """
+        return encode_uint64(self.node_id)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "AssignRequest":
@@ -617,8 +632,14 @@ class AssignRequest(Message):
         # bytes. Reject anything else rather than silently dropping
         # trailing bytes — parity with the C cursor-cap semantics.
         if len(data) == 8:
+            # Legacy PROMOTE: no role on the wire. Map to
+            # NodeRole.VOTER per the documented upstream semantics
+            # (PROMOTE elevates a non-voter to voter). Without this,
+            # the dataclass would carry role=None which round-trips
+            # to encode_body and raises EncodeError — the legacy
+            # shape would no longer round-trip.
             node_id = decode_uint64(data)
-            return cls(node_id, None)
+            return cls(node_id, NodeRole.VOTER)
         if len(data) == 16:
             node_id = decode_uint64(data)
             raw = decode_uint64(data[8:])

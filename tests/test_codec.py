@@ -928,8 +928,11 @@ class TestRoundTrip:
         decoded = decode_message(data, is_request=True)
         assert isinstance(decoded, AssignRequest)
         assert decoded.node_id == 42
-        # Must be None (Promote), not 99 (which would happen if trailing leaked)
-        assert decoded.role is None
+        # Legacy PROMOTE decodes to VOTER (not 99 from trailing
+        # bytes; the body slice is bounded by the header word count).
+        from dqlitewire.constants import NodeRole
+
+        assert decoded.role == NodeRole.VOTER
 
     def test_decode_bytes_rejects_short_body(self) -> None:
         """decode_bytes() must raise DecodeError if body is shorter than header claims."""

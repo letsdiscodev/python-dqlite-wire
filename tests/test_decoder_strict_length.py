@@ -91,8 +91,14 @@ class TestAssignRequestStrictLength:
     """ISSUE-321: `len(data) >= 16` was a threshold; must be equality."""
 
     def test_eight_byte_body_is_promote(self) -> None:
+        from dqlitewire.constants import NodeRole
+
         body = encode_uint64(1)
-        assert AssignRequest.decode_body(body) == AssignRequest(1, None)
+        # Legacy PROMOTE (1-word body) maps to NodeRole.VOTER on
+        # decode so the dataclass round-trips through encode_body
+        # cleanly. PROMOTE upstream-semantically elevates the node
+        # to voter.
+        assert AssignRequest.decode_body(body) == AssignRequest(1, NodeRole.VOTER)
 
     def test_sixteen_byte_body_is_assign(self) -> None:
         body = encode_uint64(1) + encode_uint64(0)

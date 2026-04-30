@@ -457,55 +457,55 @@ class TestAssignRequest:
         assert decoded.node_id == 1
         assert decoded.role == 2
 
-    def test_decode_promote_single_field(self) -> None:
-        """Legacy PROMOTE request shares type code 13 but has only node_id.
+    def test_decode_promote_single_field_maps_to_voter(self) -> None:
+        """Legacy PROMOTE request shares type code 13 but has only
+        node_id. The Go/C server distinguishes PROMOTE from ASSIGN by
+        body size:
 
-        The Go/C server distinguishes PROMOTE from ASSIGN by body size:
         - PROMOTE: 1 word (8 bytes) = just node_id
         - ASSIGN: 2 words (16 bytes) = node_id + role
-        decode_body must handle both.
+
+        decode_body maps the legacy PROMOTE shape to
+        ``NodeRole.VOTER`` (PROMOTE elevates a non-voter to voter,
+        per upstream semantics) so the dataclass round-trips through
+        ``encode_body`` cleanly. Storing ``role=None`` from the
+        legacy decode would mean encode_body raises EncodeError for
+        any decoded legacy frame.
         """
+        from dqlitewire.constants import NodeRole
         from dqlitewire.types import encode_uint64
 
-        # Simulate a PROMOTE body: just node_id, no role field
         promote_body = encode_uint64(5)
         decoded = AssignRequest.decode_body(promote_body)
         assert decoded.node_id == 5
-        assert decoded.role is None
+        assert decoded.role == NodeRole.VOTER
 
-    def test_encode_without_role_emits_deprecation_warning(self) -> None:
-        """Encoding AssignRequest without role should warn about legacy Promote."""
-        import warnings
+    def test_encode_without_role_raises_encode_error(self) -> None:
+        """Encoding AssignRequest with role=None via the modern
+        encode_body now raises EncodeError so an accidental omission
+        (typo: forgetting the role= kwarg) doesn't silently downgrade
+        to the legacy 1-word PROMOTE shape."""
+        from dqlitewire.exceptions import EncodeError
 
         msg = AssignRequest(node_id=1)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+        with pytest.raises(EncodeError, match="(?i)role=None"):
             msg.encode()
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "legacy" in str(w[0].message).lower() or "promote" in str(w[0].message).lower()
 
-    def test_encode_without_role_warning_points_at_encode_body_caller(self) -> None:
-        """153: stacklevel should point at the caller of encode_body()."""
-        import warnings
+    def test_encode_body_legacy_explicit_opt_in(self) -> None:
+        """encode_body_legacy() is the explicit opt-in for the
+        1-word PROMOTE wire shape; it does not warn or raise."""
+        from dqlitewire.types import encode_uint64
 
-        msg = AssignRequest(node_id=1)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            # Call encode_body() directly — the warning should point here.
-            msg.encode_body()
-            assert len(w) == 1
-            assert w[0].filename == __file__
+        msg = AssignRequest(node_id=42)
+        body = msg.encode_body_legacy()
+        assert body == encode_uint64(42)
 
-    def test_encode_with_role_no_warning(self) -> None:
-        """Encoding AssignRequest with role should not warn."""
-        import warnings
-
+    def test_encode_with_role_succeeds(self) -> None:
+        """Encoding AssignRequest with role goes through cleanly."""
         msg = AssignRequest(node_id=1, role=0)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            msg.encode()
-            assert len(w) == 0
+        encoded = msg.encode()
+        # 16-byte body (modern ASSIGN).
+        assert len(encoded[HEADER_SIZE:]) == 16
 
 
 class TestAssignRequestDecodeRoleValidation:
