@@ -114,7 +114,17 @@ def decode_uint64(data: bytes | memoryview) -> int:
 
 
 def encode_int64(value: int) -> bytes:
-    """Encode a signed 64-bit integer (little-endian)."""
+    """Encode a signed 64-bit integer (little-endian).
+
+    Rejects ``bool`` explicitly (``isinstance(True, int)`` is True
+    and would silently encode as ``1``); symmetric with the
+    ``encode_uint32`` / ``encode_uint64`` validators that reject
+    bool too. A caller-side typo like ``encode_int64(True)`` is more
+    likely a bug than a deliberate ``True → 1`` coercion; the
+    rejection surfaces it.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise EncodeError(f"value must be int, got {type(value).__name__}")
     if not -(2**63) <= value < 2**63:
         raise EncodeError(f"Value {_bounded_repr(value)} out of range for int64")
     return struct.pack("<q", value)

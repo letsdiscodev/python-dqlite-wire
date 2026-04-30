@@ -25,6 +25,17 @@ class Header:
     schema: int = 0
     reserved: int = 0
 
+    def __post_init__(self) -> None:
+        # Enforce ``reserved == 0`` symmetrically on encode and decode.
+        # The decoder rejects non-zero ``reserved`` so peer corruption
+        # surfaces as DecodeError; without this construction-time
+        # check, ``Header(reserved=42).encode()`` would produce wire
+        # bytes the same decoder rejects, breaking encode→decode
+        # round-trip identity. Upstream C (message.h) keeps the field
+        # zero in every emit path.
+        if self.reserved != 0:
+            raise EncodeError(f"Header reserved field must be 0, got {self.reserved}")
+
     def encode(self) -> bytes:
         """Encode header to bytes."""
         try:

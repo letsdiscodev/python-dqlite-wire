@@ -7,6 +7,7 @@ from typing import ClassVar
 from dqlitewire.constants import NodeRole, RequestType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
+from dqlitewire.messages.responses import _MAX_ADDRESS_SIZE, _MAX_FILENAME_SIZE
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
     WireInput,
@@ -163,9 +164,9 @@ class OpenRequest(Message):
         _validate_uint64("flags", self.flags)
 
     def encode_body(self) -> bytes:
-        result = encode_text(self.name)
+        result = encode_text(self.name, max_size=_MAX_FILENAME_SIZE, label="database name")
         result += encode_uint64(self.flags)
-        result += encode_text(self.vfs)
+        result += encode_text(self.vfs, max_size=_MAX_FILENAME_SIZE, label="vfs name")
         return result
 
     @classmethod
@@ -175,10 +176,10 @@ class OpenRequest(Message):
         # decoders (RowsResponse, FilesResponse, ServersResponse) that
         # already use this pattern.
         view = memoryview(data)
-        name, offset = decode_text(view)
+        name, offset = decode_text(view, max_size=_MAX_FILENAME_SIZE, label="database name")
         flags = decode_uint64(view[offset:])
         offset += 8
-        vfs, consumed = decode_text(view[offset:])
+        vfs, consumed = decode_text(view[offset:], max_size=_MAX_FILENAME_SIZE, label="vfs name")
         offset += consumed
         if offset != len(data):
             raise DecodeError(f"OpenRequest has {len(data) - offset} trailing bytes")
@@ -522,12 +523,16 @@ class _ConnectRequest(Message):
         _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
-        return encode_uint64(self.node_id) + encode_text(self.address)
+        return encode_uint64(self.node_id) + encode_text(
+            self.address, max_size=_MAX_ADDRESS_SIZE, label="connect address"
+        )
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "_ConnectRequest":
         node_id = decode_uint64(data)
-        address, consumed = decode_text(data[8:])
+        address, consumed = decode_text(
+            data[8:], max_size=_MAX_ADDRESS_SIZE, label="connect address"
+        )
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"_ConnectRequest has {len(data) - offset} trailing bytes")
@@ -550,12 +555,14 @@ class AddRequest(Message):
         _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
-        return encode_uint64(self.node_id) + encode_text(self.address)
+        return encode_uint64(self.node_id) + encode_text(
+            self.address, max_size=_MAX_ADDRESS_SIZE, label="add address"
+        )
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "AddRequest":
         node_id = decode_uint64(data)
-        address, consumed = decode_text(data[8:])
+        address, consumed = decode_text(data[8:], max_size=_MAX_ADDRESS_SIZE, label="add address")
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"AddRequest has {len(data) - offset} trailing bytes")
@@ -703,11 +710,11 @@ class DumpRequest(Message):
     name: str
 
     def encode_body(self) -> bytes:
-        return encode_text(self.name)
+        return encode_text(self.name, max_size=_MAX_FILENAME_SIZE, label="database name")
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
-        name, consumed = decode_text(data)
+        name, consumed = decode_text(data, max_size=_MAX_FILENAME_SIZE, label="database name")
         if consumed != len(data):
             raise DecodeError(f"DumpRequest has {len(data) - consumed} trailing bytes")
         return cls(name)
