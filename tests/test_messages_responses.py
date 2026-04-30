@@ -158,6 +158,22 @@ class TestLeaderResponse:
         assert decoded.node_id == 0
         assert decoded.address == "192.168.1.1:9001"
 
+    def test_legacy_decode_encode_byte_identical(self) -> None:
+        """Pin: a captured legacy body round-trips byte-identically
+        through ``decode_body_legacy → encode_body_legacy``. The
+        encoder is a niche compatibility primitive whose entire
+        purpose is reproducing the legacy wire shape exactly; without
+        a captured-fixture pin, a future refactor (e.g. sharing
+        helper code with the modern encoder, changing pad
+        calculation) could silently break legacy-server compat and
+        no test would catch it.
+        """
+        from dqlitewire.types import encode_text
+
+        captured_legacy = encode_text("10.0.0.1:9001")
+        decoded = LeaderResponse.decode_body_legacy(captured_legacy)
+        assert decoded.encode_body_legacy() == captured_legacy
+
 
 class TestLeaderResponseAddressSize:
     """Per-address length cap applies to modern and legacy decoders.

@@ -500,6 +500,19 @@ class TestAssignRequest:
         body = msg.encode_body_legacy()
         assert body == encode_uint64(42)
 
+    def test_legacy_decode_encode_byte_identical(self) -> None:
+        """Pin: a captured 8-byte legacy PROMOTE body round-trips
+        byte-identically through ``decode_body → encode_body_legacy``.
+        ``encode_body`` itself rejects ``role=None`` by design; the
+        legacy round-trip path uses ``encode_body_legacy`` to
+        reproduce the captured shape exactly.
+        """
+        from dqlitewire.types import encode_uint64
+
+        captured_legacy = encode_uint64(42)
+        decoded = AssignRequest.decode_body(captured_legacy)
+        assert decoded.encode_body_legacy() == captured_legacy
+
     def test_encode_with_role_succeeds(self) -> None:
         """Encoding AssignRequest with role goes through cleanly."""
         msg = AssignRequest(node_id=1, role=0)
