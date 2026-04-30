@@ -513,6 +513,35 @@ class TestAssignRequest:
         decoded = AssignRequest.decode_body(captured_legacy)
         assert decoded.encode_body_legacy() == captured_legacy
 
+    def test_decode_legacy_then_encode_body_yields_modern_16_byte_assign(self) -> None:
+        """Pin: cycle 22's documented one-way upgrade.
+
+        Decode a 1-word PROMOTE body → role defaults to VOTER (the
+        upstream-semantic of PROMOTE). Re-encoding via
+        ``encode_body()`` (the modern path) produces the 2-word
+        (16-byte) ASSIGN shape — NOT the legacy 1-word body.
+
+        The docstring on ``AssignRequest`` is the spec; without
+        this pin a regression that defaulted ``role=None`` on
+        legacy decode (or kept ``encode_body`` emitting the legacy
+        shape) would not surface in unit CI.
+        """
+        from dqlitewire.constants import NodeRole
+        from dqlitewire.types import encode_uint64
+
+        legacy_body = encode_uint64(7)  # 8 bytes, just node_id
+        decoded = AssignRequest.decode_body(legacy_body)
+        # Docstring promises VOTER (the upstream-semantic of PROMOTE).
+        assert decoded.role == NodeRole.VOTER
+
+        re_encoded = decoded.encode_body()
+        # Modern shape: 2 words (16 bytes).
+        assert len(re_encoded) == 16, (
+            "encode_body() of a legacy-decoded AssignRequest must "
+            "produce the modern 2-word (16-byte) ASSIGN shape. The "
+            "docstring documents this as a deliberate one-way upgrade."
+        )
+
     def test_encode_with_role_succeeds(self) -> None:
         """Encoding AssignRequest with role goes through cleanly."""
         msg = AssignRequest(node_id=1, role=0)
