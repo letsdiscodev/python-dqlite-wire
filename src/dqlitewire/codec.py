@@ -481,7 +481,6 @@ class MessageDecoder:
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
                 self._continuation_column_count = None
-                self._continuation_column_count = None
             return result
         except ServerFailure:
             # Clean server-emitted failure with a well-formed body. The
