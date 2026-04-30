@@ -178,7 +178,7 @@ def pad_to_word(size: int) -> int:
     return WORD_SIZE - remainder
 
 
-def encode_text(value: str) -> bytes:
+def encode_text(value: str, *, max_size: int | None = None, label: str = "Text") -> bytes:
     """Encode text as null-terminated UTF-8, padded to 8-byte boundary.
 
     Wire-protocol limitation: TEXT is NUL-terminated, so the encoder
@@ -189,6 +189,18 @@ def encode_text(value: str) -> bytes:
     reliably read back through the dqlite wire protocol (``decode_text``
     stops at the first NUL). This matches Go / C client behaviour;
     it is a protocol-level asymmetry, not a Python-side design choice.
+
+    ``max_size`` (UTF-8 byte cap, NOT codepoints) caps the encoded
+    payload. The decoder caps on bytes too (``decode_text`` uses
+    ``max_size`` against ``null_pos`` which is a byte offset), so
+    matching units here means encode → decode round-trip is symmetric:
+    a string the encoder accepts, the decoder also accepts. Caller-side
+    inline ``len(s)`` (codepoints) checks would admit non-ASCII payloads
+    near the boundary that the decoder then rejects, breaking the
+    round-trip. ``label`` is forwarded into the ``EncodeError`` message
+    so a caller passing ``label="leader address"`` gets ``"leader
+    address length N exceeds maximum (M)"`` rather than the generic
+    ``"Text length..."``.
     """
     if not isinstance(value, str):
         raise EncodeError(f"encode_text expected str, got {type(value).__name__}")
@@ -196,6 +208,8 @@ def encode_text(value: str) -> bytes:
         utf8 = value.encode("utf-8")
     except UnicodeEncodeError as e:
         raise EncodeError(f"Text contains invalid UTF-8: {e}") from e
+    if max_size is not None and len(utf8) > max_size:
+        raise EncodeError(f"{label} length {len(utf8)} exceeds maximum ({max_size})")
     nul_byte_offset = utf8.find(b"\x00")
     if nul_byte_offset != -1:
         # Report the byte offset of the embedded NUL rather than the
@@ -263,9 +277,22 @@ def decode_text(
         data_len = len(data)
         if data_len <= _TEXT_ONE_SHOT_MAX:
             # One-shot path: single materialization + C-level find.
-            materialized = bytes(data)
+            # Bound the materialization to ``max_size + 1`` bytes so a
+            # caller-supplied small cap (e.g. 4 KiB column-name) does
+            # not allocate a 16 MiB scratch buffer just to scan a few
+            # bytes for the NUL. Keeps the cap-before-allocate
+            # invariant symmetric with ``decode_blob`` (which checks
+            # the length prefix BEFORE materialising the payload).
+            scan_window = min(data_len, max_size + 1)
+            materialized = bytes(data[:scan_window])
             null_pos = materialized.find(b"\x00")
             if null_pos < 0:
+                if scan_window < data_len:
+                    # The remaining bytes (past the cap) cannot legally
+                    # contain the terminator since `null_pos > max_size`
+                    # would fail the cap check below anyway. Surface
+                    # the cap-exceeded error directly.
+                    raise DecodeError(f"{label} length exceeds maximum ({max_size})")
                 raise DecodeError(f"{label} not null-terminated")
             try:
                 text = materialized[:null_pos].decode("utf-8")
@@ -457,6 +484,25 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
+        # Cap the size BEFORE materialising via ``bytes(value)`` —
+        # symmetric with ``decode_blob``'s cap-before-allocate
+        # ordering. Without this, a 100 MB ``bytearray`` is copied
+        # to ``bytes`` first, then rejected by ``encode_blob``'s
+        # length check; the materialise allocation is wasted.
+        # ``len()`` works on every supported open container without
+        # materialising. A closed ``mmap.mmap`` raises
+        # ``ValueError("mmap closed or invalid")`` from ``len()``;
+        # a released ``memoryview`` raises ``ValueError`` likewise.
+        # Fall through to the materialise step in that case so the
+        # original ``EncodeError`` shape (with the same message
+        # prefix) surfaces — preserving backwards compatibility for
+        # callers catching on the existing message text.
+        try:
+            length: int | None = len(value)
+        except (ValueError, BufferError, TypeError):
+            length = None
+        if length is not None and length > _MAX_BLOB_SIZE:
+            raise EncodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
         # Materialise via ``bytes(value)``. For ``bytes`` / ``bytearray``
         # / open ``memoryview`` this cannot fail; for a closed
         # ``mmap.mmap`` it raises ``ValueError("mmap closed or invalid")``,

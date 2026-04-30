@@ -165,12 +165,9 @@ class FailureResponse(Message):
         _validate_uint64("code", self.code)
 
     def encode_body(self) -> bytes:
-        if len(self.message) > _MAX_FAILURE_MESSAGE_SIZE:
-            raise EncodeError(
-                f"Failure message length {len(self.message)} "
-                f"exceeds maximum {_MAX_FAILURE_MESSAGE_SIZE}"
-            )
-        return encode_uint64(self.code) + encode_text(self.message)
+        return encode_uint64(self.code) + encode_text(
+            self.message, max_size=_MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
+        )
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
@@ -217,11 +214,9 @@ class LeaderResponse(Message):
         _validate_uint64("node_id", self.node_id)
 
     def encode_body(self) -> bytes:
-        if len(self.address) > _MAX_ADDRESS_SIZE:
-            raise EncodeError(
-                f"leader address length {len(self.address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
-            )
-        return encode_uint64(self.node_id) + encode_text(self.address)
+        return encode_uint64(self.node_id) + encode_text(
+            self.address, max_size=_MAX_ADDRESS_SIZE, label="leader address"
+        )
 
     def encode_body_legacy(self) -> bytes:
         """Encode as legacy (V0) body: text address only.
@@ -243,11 +238,7 @@ class LeaderResponse(Message):
                 "modern format."
             )
         address = self.address or ""
-        if len(address) > _MAX_ADDRESS_SIZE:
-            raise EncodeError(
-                f"leader address length {len(address)} exceeds maximum {_MAX_ADDRESS_SIZE}"
-            )
-        return encode_text(address)
+        return encode_text(address, max_size=_MAX_ADDRESS_SIZE, label="leader address")
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
@@ -403,12 +394,33 @@ class StmtResponse(Message):
     schema: int | None = None
 
     def __post_init__(self) -> None:
+        # Range and bool-rejection validation, parity with the sibling
+        # responses (FailureResponse / LeaderResponse / HeartbeatResponse
+        # at lines ~155, ~213, ~312). Without this, ``StmtResponse(...)``
+        # silently accepts negative ints, ints exceeding the wire field
+        # width, and bool-as-int (``True`` → 1) — every other Response
+        # rejects these.
+        _validate_uint32("db_id", self.db_id)
+        _validate_uint32("stmt_id", self.stmt_id)
+        _validate_uint64("num_params", self.num_params)
+        if self.tail_offset is not None:
+            _validate_uint64("tail_offset", self.tail_offset)
         if self.schema is not None and self.schema not in (0, 1):
             raise ValueError(f"StmtResponse.schema must be 0 or 1, got {self.schema}")
         if self.schema == 0 and self.tail_offset is not None:
             raise ValueError(
                 "StmtResponse: schema=0 (V0 body) cannot carry tail_offset; pass schema=1 for V1"
             )
+        # Normalise the V1-implicit-zero form so encode/decode round-
+        # trip preserves dataclass equality. ``StmtResponse(schema=1,
+        # tail_offset=None)`` and ``StmtResponse(schema=1,
+        # tail_offset=0)`` produce identical wire bytes; without this
+        # the decoder reconstructs as the latter and the dataclass
+        # comparison fails. Construction-time normalisation matches
+        # ``AssignRequest.__post_init__``'s int→NodeRole coercion
+        # for the same reason.
+        if self.schema == 1 and self.tail_offset is None:
+            self.tail_offset = 0
 
     def _get_schema(self) -> int:
         if self.schema is not None:
@@ -616,12 +628,11 @@ class RowsResponse(Message):
             raise EncodeError(
                 f"RowsResponse column count {col_count} exceeds maximum ({_MAX_COLUMN_COUNT})"
             )
-        for name in self.column_names:
-            if len(name) > _MAX_COLUMN_NAME_SIZE:
-                raise EncodeError(
-                    f"RowsResponse column name length {len(name)} exceeds maximum "
-                    f"({_MAX_COLUMN_NAME_SIZE})"
-                )
+        # Per-name byte cap is enforced inside encode_text below;
+        # keeping the loop here would re-check against codepoints
+        # rather than UTF-8 bytes (the unit the decoder caps on),
+        # admitting non-ASCII names near the boundary that the
+        # decoder rejects.
         if self.column_types and len(self.column_types) != col_count:
             raise EncodeError(
                 f"column_types length ({len(self.column_types)}) != "
@@ -658,7 +669,7 @@ class RowsResponse(Message):
 
         # Column names
         for name in self.column_names:
-            result += encode_text(name)
+            result += encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="Column name")
 
         # Rows - each row gets its own type header
         for i, row in enumerate(self.rows):
@@ -845,12 +856,7 @@ class FilesResponse(Message):
             raise EncodeError(
                 f"FilesResponse count {len(self.files)} exceeds maximum ({_MAX_FILE_COUNT})"
             )
-        for name in self.files:
-            if len(name) > _MAX_FILENAME_SIZE:
-                raise EncodeError(
-                    f"FilesResponse filename length {len(name)} exceeds maximum "
-                    f"({_MAX_FILENAME_SIZE})"
-                )
+        # Per-filename byte cap is enforced inside encode_text below.
         result = encode_uint64(len(self.files))
         for name, content in self.files.items():
             # The upstream C server (gateway.c::dumpFile) asserts
@@ -865,7 +871,7 @@ class FilesResponse(Message):
                     f"(got {len(content)} bytes); dqlite file entries carry no "
                     "per-file padding"
                 )
-            result += encode_text(name)
+            result += encode_text(name, max_size=_MAX_FILENAME_SIZE, label="filename")
             result += encode_uint64(len(content))
             result += content
         return result
@@ -964,13 +970,8 @@ class ServersResponse(Message):
             )
         result = encode_uint64(len(self.nodes))
         for node in self.nodes:
-            if len(node.address) > _MAX_ADDRESS_SIZE:
-                raise EncodeError(
-                    f"server address length {len(node.address)} exceeds maximum "
-                    f"({_MAX_ADDRESS_SIZE})"
-                )
             result += encode_uint64(node.node_id)
-            result += encode_text(node.address)
+            result += encode_text(node.address, max_size=_MAX_ADDRESS_SIZE, label="server address")
             result += encode_uint64(node.role)
         return result
 

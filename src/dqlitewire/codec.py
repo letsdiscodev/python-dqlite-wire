@@ -266,6 +266,12 @@ class MessageDecoder:
         # transitions to True via the initial ROWS frame in ``decode``.
         self._continuation_frame_count = 0
         self._continuation_total_rows = 0
+        # Column count snapshotted on the initial frame. Continuation
+        # frames must agree — a server emitting different column_count
+        # values mid-stream is corrupt; without this check the decoder
+        # would silently truncate (column_count=0) or overrun
+        # (column_count > original).
+        self._continuation_column_count: int | None = None
 
     @property
     def version(self) -> int | None:
@@ -293,6 +299,7 @@ class MessageDecoder:
         self._continuation_expected = False
         self._continuation_frame_count = 0
         self._continuation_total_rows = 0
+        self._continuation_column_count = None
         if self._is_request:
             self._handshake_done = False
             self._version = None
@@ -402,6 +409,7 @@ class MessageDecoder:
                 self._continuation_expected = False
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
+                self._continuation_column_count = None
                 raise ServerFailure(failure.code, failure.message)
             if header.msg_type == ResponseType.EMPTY:
                 # The upstream C server emits an ``EmptyResponse`` when
@@ -418,11 +426,13 @@ class MessageDecoder:
                 self._continuation_expected = False
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
+                self._continuation_column_count = None
                 return EmptyResponse.decode_body(body, schema=header.schema)
             if header.msg_type != ResponseType.ROWS:
                 self._continuation_expected = False
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
+                self._continuation_column_count = None
                 raise StreamError(
                     f"Expected ROWS continuation (type {ResponseType.ROWS}), "
                     f"got type {header.msg_type}"
@@ -450,10 +460,28 @@ class MessageDecoder:
                     f"{self._continuation_total_rows} across "
                     f"{self._continuation_frame_count} frames"
                 )
+            # Cross-frame column-count consistency: the initial frame
+            # established the schema; subsequent frames MUST agree.
+            # A server that drops to column_count=0 mid-stream would
+            # silently truncate the result; a server that grows
+            # column_count would overrun the row buffer with phantom
+            # NULL values. Either is a corrupt-stream signal.
+            if (
+                self._continuation_column_count is not None
+                and len(result.column_names) != self._continuation_column_count
+            ):
+                raise DecodeError(
+                    f"ROWS continuation column count drift: initial frame had "
+                    f"{self._continuation_column_count} columns, frame "
+                    f"{self._continuation_frame_count} has "
+                    f"{len(result.column_names)}"
+                )
             if not result.has_more:
                 self._continuation_expected = False
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
+                self._continuation_column_count = None
+                self._continuation_column_count = None
             return result
         except ServerFailure:
             # Clean server-emitted failure with a well-formed body. The
@@ -521,6 +549,8 @@ class MessageDecoder:
                 # total.
                 self._continuation_frame_count = 1
                 self._continuation_total_rows = len(msg.rows)
+                # Snapshot column count for cross-frame consistency.
+                self._continuation_column_count = len(msg.column_names)
                 if self._continuation_total_rows > self._max_total_rows:
                     raise DecodeError(
                         f"ROWS initial frame already exceeded max_total_rows cap "

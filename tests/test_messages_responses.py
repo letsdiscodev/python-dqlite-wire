@@ -2027,7 +2027,7 @@ class TestEncodeSideCaps:
 
     def test_rows_response_rejects_oversize_column_name(self) -> None:
         oversize = "a" * (_MAX_COLUMN_NAME_SIZE + 1)
-        with pytest.raises(EncodeError, match="column name"):
+        with pytest.raises(EncodeError, match="(?i)column name"):
             RowsResponse(column_names=[oversize], rows=[]).encode_body()
 
     def test_rows_response_accepts_column_name_at_cap(self) -> None:
