@@ -410,31 +410,30 @@ class TestMessageDecoder:
         assert decoded.msg_type == 0
 
     def test_header_encode_overflow_raises_encode_error(self) -> None:
-        """Header with size_words exceeding uint32 must raise EncodeError."""
+        """Header with size_words exceeding uint32 must raise EncodeError
+        at construction time (not at encode()) with a precise field
+        name + observed value diagnostic."""
         from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.base import Header
 
-        header = Header(size_words=2**32, msg_type=0, schema=0)
-        with pytest.raises(EncodeError, match="header"):
-            header.encode()
+        with pytest.raises(EncodeError, match="size_words.*out of range"):
+            Header(size_words=2**32, msg_type=0, schema=0)
 
     def test_header_encode_msg_type_overflow_raises_encode_error(self) -> None:
-        """Header with msg_type exceeding uint8 must raise EncodeError."""
+        """Header with msg_type exceeding uint8 must raise at construction."""
         from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.base import Header
 
-        header = Header(size_words=1, msg_type=256, schema=0)
-        with pytest.raises(EncodeError, match="header"):
-            header.encode()
+        with pytest.raises(EncodeError, match="msg_type.*out of range"):
+            Header(size_words=1, msg_type=256, schema=0)
 
     def test_header_encode_schema_overflow_raises_encode_error(self) -> None:
-        """Header with schema exceeding uint8 must raise EncodeError."""
+        """Header with schema exceeding uint8 must raise at construction."""
         from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.base import Header
 
-        header = Header(size_words=1, msg_type=0, schema=256)
-        with pytest.raises(EncodeError, match="header"):
-            header.encode()
+        with pytest.raises(EncodeError, match="schema.*out of range"):
+            Header(size_words=1, msg_type=0, schema=256)
 
     def test_unknown_schema_version_raises(self) -> None:
         """Unknown schema versions should raise DecodeError, not silently default."""

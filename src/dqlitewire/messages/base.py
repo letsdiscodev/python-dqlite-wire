@@ -35,6 +35,27 @@ class Header:
         # zero in every emit path.
         if self.reserved != 0:
             raise EncodeError(f"Header reserved field must be 0, got {self.reserved}")
+        # Range-validate the remaining three fields at construction
+        # time so an invalid value surfaces here (with a precise
+        # field name + observed value) rather than at ``encode()``
+        # time as an opaque ``struct.error → EncodeError`` wrap.
+        # ``bool`` is rejected first (cycle-23 ISSUE-1184 pattern):
+        # ``True == 1`` would silently coerce to a valid uint8 and
+        # mask caller bugs.
+        if isinstance(self.size_words, bool) or not isinstance(self.size_words, int):
+            raise EncodeError(
+                f"Header size_words must be int, got {type(self.size_words).__name__}"
+            )
+        if not 0 <= self.size_words < 2**32:
+            raise EncodeError(f"Header size_words {self.size_words} out of range for uint32")
+        if isinstance(self.msg_type, bool) or not isinstance(self.msg_type, int):
+            raise EncodeError(f"Header msg_type must be int, got {type(self.msg_type).__name__}")
+        if not 0 <= self.msg_type < 2**8:
+            raise EncodeError(f"Header msg_type {self.msg_type} out of range for uint8")
+        if isinstance(self.schema, bool) or not isinstance(self.schema, int):
+            raise EncodeError(f"Header schema must be int, got {type(self.schema).__name__}")
+        if not 0 <= self.schema < 2**8:
+            raise EncodeError(f"Header schema {self.schema} out of range for uint8")
 
     def encode(self) -> bytes:
         """Encode header to bytes."""

@@ -88,6 +88,46 @@ class TestHeaderReservedField:
         # frozen=True makes the dataclass hashable
         assert hash(h) == hash(Header(size_words=1, msg_type=0, schema=0, reserved=0))
 
+    def test_post_init_rejects_out_of_range_size_words(self) -> None:
+        """Range-validate uint32 ``size_words`` at construction so
+        an invalid value surfaces with a precise field name +
+        observed value, not as an opaque ``struct.error`` wrap at
+        ``encode()`` time. Mirrors the existing ``reserved`` check."""
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="size_words.*out of range"):
+            Header(size_words=2**32, msg_type=0, schema=0, reserved=0)
+        with pytest.raises(EncodeError, match="size_words.*out of range"):
+            Header(size_words=-1, msg_type=0, schema=0, reserved=0)
+
+    def test_post_init_rejects_out_of_range_msg_type(self) -> None:
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="msg_type.*out of range"):
+            Header(size_words=1, msg_type=256, schema=0, reserved=0)
+        with pytest.raises(EncodeError, match="msg_type.*out of range"):
+            Header(size_words=1, msg_type=-1, schema=0, reserved=0)
+
+    def test_post_init_rejects_out_of_range_schema(self) -> None:
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="schema.*out of range"):
+            Header(size_words=1, msg_type=0, schema=256, reserved=0)
+        with pytest.raises(EncodeError, match="schema.*out of range"):
+            Header(size_words=1, msg_type=0, schema=-1, reserved=0)
+
+    def test_post_init_rejects_bool_in_int_fields(self) -> None:
+        """``True == 1`` would silently coerce to uint8 and mask
+        caller bugs. Reject explicitly (cycle-23 ISSUE-1184 pattern)."""
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="size_words must be int"):
+            Header(size_words=True, msg_type=0, schema=0, reserved=0)
+        with pytest.raises(EncodeError, match="msg_type must be int"):
+            Header(size_words=1, msg_type=True, schema=0, reserved=0)
+        with pytest.raises(EncodeError, match="schema must be int"):
+            Header(size_words=1, msg_type=0, schema=True, reserved=0)
+
 
 class TestLeaderRequest:
     def test_encode_has_body(self) -> None:
