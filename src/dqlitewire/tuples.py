@@ -291,9 +291,16 @@ def decode_row_header(
     """Decode row column type header.
 
     Format: 4-bit type codes packed two per byte, padded to word boundary.
-    Detects row markers (0xFF=done, 0xEE=part) by checking the first byte
-    before validating header size, matching the Go reference implementation.
-    Returns (types_or_marker, bytes_consumed).
+    Detects row markers (DONE=0xFF..FF, PART=0xEE..EE) by checking all
+    8 bytes of the leading word against the full uint64 sentinel — strictly
+    tighter than the Go reference (which checks only the first byte) and
+    matching the upstream C sentinel comparison; torn/corrupt markers like
+    ``0xff 0x00 ..`` are rejected as malformed rather than silently
+    truncating the result stream. The marker check runs before the column-
+    count-driven size validation because for large column counts the type
+    header would be >8 bytes, and the marker (always exactly 8 bytes) must
+    not be misread as a too-short header. Returns
+    (types_or_marker, bytes_consumed).
     """
     # Check for markers first — markers are always exactly one 8-byte word
     # of a repeated sentinel byte, regardless of column count. Must check
