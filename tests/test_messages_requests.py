@@ -238,6 +238,23 @@ class TestPrepareRequest:
         with pytest.raises(ValueError, match="schema must be 0 or 1"):
             PrepareRequest(db_id=1, sql="SELECT 1", schema=-1)
 
+    def test_encode_body_caps_sql_at_decode_max_size(self) -> None:
+        """Pin: encode/decode round-trip is symmetric on the SQL
+        text field. ``encode_text`` accepts any byte length the
+        outer frame admits; ``decode_text`` defaults to a 16 MiB
+        cap. Without an explicit ``max_size`` on encode the
+        outbound body could be larger than the inbound decoder
+        accepts — the same cap mismatch the OpenRequest /
+        DumpRequest / AddRequest / _ConnectRequest fields fixed
+        in cycle 23. Pin the rejection."""
+        import pytest
+
+        from dqlitewire.exceptions import EncodeError
+
+        oversize = "x" * (16 * 1024 * 1024 + 1)  # one byte over 16 MiB
+        with pytest.raises(EncodeError):
+            PrepareRequest(db_id=1, sql=oversize).encode_body()
+
 
 class TestExecRequest:
     def test_schema_v0_for_small_params(self) -> None:

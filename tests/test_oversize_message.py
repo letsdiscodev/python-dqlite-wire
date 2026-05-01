@@ -58,21 +58,19 @@ class TestOversizeSqlEncode:
         assert isinstance(decoded, QuerySqlRequest)
         assert decoded.sql == big_sql
 
-    def test_just_over_default_cap_is_rejected(self) -> None:
-        """Boundary test against the real 64 MiB default. Construct a
-        SQL string whose frame size is slightly over the default cap.
-        The test uses a custom buffer at the default size so the
-        assertion is explicit."""
-        # Each '?' + comma = 2 bytes; padding overhead is small. Aim
-        # for ~64 MiB + a margin.
-        target_bytes = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE + 1024 * 1024  # 65 MiB
-        n_placeholders = target_bytes // 2
-        # Build the string in one go to avoid quadratic concatenation.
-        big_sql = "SELECT " + ",".join(["?"] * n_placeholders)
-        msg = QuerySqlRequest(db_id=0, sql=big_sql)
-        encoded = encode_message(msg)
-        assert len(encoded) > ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE
+    def test_just_over_sql_text_cap_is_rejected_at_encode(self) -> None:
+        """SQL text fields are now capped on encode at the same
+        ``_MAX_TEXT_VALUE_SIZE`` (16 MiB) the decoder applies, so an
+        oversize SQL is rejected at construction time rather than
+        producing bytes the decoder will refuse. Mirrors the
+        cap-symmetry pattern applied to other text fields."""
+        from dqlitewire.exceptions import EncodeError
 
-        buf = ReadBuffer()  # default cap
-        with pytest.raises(DecodeError, match="exceeds maximum"):
-            buf.feed(encoded)
+        # 16 MiB + 1 byte; the SQL-text cap fires before the outer
+        # frame cap (which is at 64 MiB). The EncodeError is the
+        # caller-actionable diagnostic — without the cap, the
+        # encoder produced bytes that decode_text would reject on
+        # the receive side with a non-actionable wire error.
+        oversize = "x" * (16 * 1024 * 1024 + 1)
+        with pytest.raises(EncodeError):
+            QuerySqlRequest(db_id=0, sql=oversize).encode_body()

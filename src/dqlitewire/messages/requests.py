@@ -10,6 +10,7 @@ from dqlitewire.messages.base import Message
 from dqlitewire.messages.responses import _MAX_ADDRESS_SIZE, _MAX_FILENAME_SIZE
 from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
+    _MAX_TEXT_VALUE_SIZE,
     WireInput,
     _validate_uint32,
     _validate_uint64,
@@ -213,7 +214,13 @@ class PrepareRequest(Message):
         return self.schema
 
     def encode_body(self) -> bytes:
-        return encode_uint64(self.db_id) + encode_text(self.sql)
+        # Pass the same ``max_size`` the decoder uses by default so
+        # encode/decode round-trip is symmetric — without this, an
+        # over-cap SQL string serialises successfully then fails its
+        # own decoder. Mirrors the cap-symmetry pattern already
+        # applied to OpenRequest / DumpRequest / AddRequest /
+        # _ConnectRequest text fields.
+        return encode_uint64(self.db_id) + encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
@@ -388,7 +395,8 @@ class ExecSqlRequest(Message):
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
-        result += encode_text(self.sql)
+        # Symmetric cap with decode (see PrepareRequest.encode_body).
+        result += encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE)
         result += encode_params_tuple(
             self.params,
             schema=schema,
@@ -439,7 +447,8 @@ class QuerySqlRequest(Message):
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
-        result += encode_text(self.sql)
+        # Symmetric cap with decode (see PrepareRequest.encode_body).
+        result += encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE)
         result += encode_params_tuple(
             self.params,
             schema=schema,
