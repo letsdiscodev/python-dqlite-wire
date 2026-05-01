@@ -226,9 +226,26 @@ def decode_params_tuple(
     for i in range(count):
         raw_type = data[count_size + i]
         try:
-            types.append(ValueType(raw_type))
+            value_type = ValueType(raw_type)
         except ValueError as e:
             raise DecodeError(f"Invalid value type code {raw_type} at param index {i}") from e
+        # Symmetric with the encode-side reject in
+        # ``encode_params_tuple``: the upstream C server's
+        # ``tuple_decoder__next`` (``src/tuple.c`` lines 130-167)
+        # treats ``DQLITE_UNIXTIME`` as ``default → DQLITE_PARSE``
+        # for the inbound params decode. UNIXTIME is server-to-
+        # client only — a peer (or python mock-server) producing
+        # the tag on a params body must be rejected here just as
+        # a real C gateway would. Without this guard,
+        # mock-server harnesses silently accept malformed traffic
+        # that regresses when migrated to a real cluster.
+        if value_type == ValueType.UNIXTIME:
+            raise DecodeError(
+                f"UNIXTIME tag at param index {i}: server-to-client only; "
+                "the upstream C gateway rejects DQLITE_UNIXTIME on inbound "
+                "params with DQLITE_PARSE"
+            )
+        types.append(value_type)
     offset = padded_header_len
 
     # Read values

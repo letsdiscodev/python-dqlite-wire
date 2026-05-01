@@ -37,6 +37,28 @@ class TestParamsTuple:
         with pytest.raises(EncodeError, match="UNIXTIME"):
             encode_params_tuple([1_700_000_000])
 
+    def test_decode_params_tuple_rejects_unixtime_tag(self) -> None:
+        """Symmetric with the encode-side rejection: a peer that
+        constructs a params-tuple body with type tag 9 (UNIXTIME)
+        must be rejected just as the upstream C server's
+        ``tuple_decoder__next`` does (``default → DQLITE_PARSE``).
+
+        Without this guard, a Python mock-server built on
+        ``decode_params_tuple`` silently accepts what a real C
+        gateway would reject — integration tests on the mock pass
+        and regress when migrated to a real cluster.
+        """
+        import struct
+
+        body = (
+            b"\x01"  # count
+            + bytes([ValueType.UNIXTIME])  # type tag = 9
+            + b"\x00" * 6
+            + struct.pack("<q", 1_700_000_000)
+        )
+        with pytest.raises(DecodeError, match="(?i)UNIXTIME"):
+            decode_params_tuple(body)
+
     def test_encode_single_integer(self) -> None:
         encoded = encode_params_tuple([42])
         assert len(encoded) == 16
