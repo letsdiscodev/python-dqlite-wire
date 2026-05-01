@@ -306,6 +306,25 @@ class MessageDecoder:
         handshake state to "not yet received". Use this after a reconnect.
         """
         self._buffer.reset()
+        self._finalize_continuation_state()
+
+    def _finalize_continuation_state(self) -> None:
+        """Reset all per-stream continuation counters and flags.
+
+        Called from every termination arm of ``decode_continuation`` —
+        clean (FAILURE, EMPTY, wrong-type, has_more=False) and dirty
+        (oversized read_message, broad-BaseException catch) — and from
+        ``reset()``. Centralising the discipline keeps the asymmetry
+        between clean-exit and poison-exit arms from drifting back into
+        partial clears, and makes the pattern grep-able for any future
+        sixth termination path.
+
+        Counter staleness is functionally inaccessible behind the
+        buffer's poison flag (``_check_poisoned`` short-circuits every
+        post-poison decoder call), but a future telemetry accessor or a
+        partial reset would surface the stale data; the helper closes
+        that hazard now.
+        """
         self._continuation_expected = False
         self._continuation_frame_count = 0
         self._continuation_total_rows = 0
@@ -387,9 +406,9 @@ class MessageDecoder:
             data = self._buffer.read_message()
         except DecodeError:
             # Oversized continuation frame — no skip_message() recovery
-            # available during continuation mode. Clear the flag and
+            # available during continuation mode. Finalise counters and
             # poison so the caller knows reset() is required.
-            self._continuation_expected = False
+            self._finalize_continuation_state()
             self._buffer.poison(
                 DecodeError("Oversized ROWS continuation frame; call reset() to recover")
             )
@@ -417,11 +436,7 @@ class MessageDecoder:
                 # so the buffer offset remains coherent for the next
                 # request on the connection.
                 failure = FailureResponse.decode_body(body, schema=header.schema)
-                self._continuation_expected = False
-                self._continuation_frame_count = 0
-                self._continuation_total_rows = 0
-                self._continuation_column_count = None
-                self._continuation_column_names = None
+                self._finalize_continuation_state()
                 raise ServerFailure(failure.code, failure.message)
             if header.msg_type == ResponseType.EMPTY:
                 # The upstream C server emits an ``EmptyResponse`` when
@@ -435,18 +450,10 @@ class MessageDecoder:
                 # buffer via the standard DecodeError path raised from
                 # ``EmptyResponse.decode_body`` — see
                 # ``test_decode_continuation_malformed_empty_still_poisons``.
-                self._continuation_expected = False
-                self._continuation_frame_count = 0
-                self._continuation_total_rows = 0
-                self._continuation_column_count = None
-                self._continuation_column_names = None
+                self._finalize_continuation_state()
                 return EmptyResponse.decode_body(body, schema=header.schema)
             if header.msg_type != ResponseType.ROWS:
-                self._continuation_expected = False
-                self._continuation_frame_count = 0
-                self._continuation_total_rows = 0
-                self._continuation_column_count = None
-                self._continuation_column_names = None
+                self._finalize_continuation_state()
                 raise StreamError(
                     f"Expected ROWS continuation (type {ResponseType.ROWS}), "
                     f"got type {header.msg_type}"
@@ -509,11 +516,7 @@ class MessageDecoder:
                     f"{list(result.column_names)}"
                 )
             if not result.has_more:
-                self._continuation_expected = False
-                self._continuation_frame_count = 0
-                self._continuation_total_rows = 0
-                self._continuation_column_count = None
-                self._continuation_column_names = None
+                self._finalize_continuation_state()
             return result
         except ServerFailure:
             # Clean server-emitted failure with a well-formed body. The
@@ -523,6 +526,12 @@ class MessageDecoder:
             # OperationalError) decode normally. Do NOT poison.
             raise
         except BaseException as e:
+            # Counter-finalise BEFORE poisoning so the discipline is
+            # symmetric with the clean-exit arms — staleness is
+            # functionally inaccessible behind the poison flag, but a
+            # future telemetry accessor or partial reset would
+            # otherwise surface stale per-stream data.
+            self._finalize_continuation_state()
             self._buffer.poison(
                 e
                 if isinstance(e, Exception)
