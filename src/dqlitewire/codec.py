@@ -272,6 +272,16 @@ class MessageDecoder:
         # would silently truncate (column_count=0) or overrun
         # (column_count > original).
         self._continuation_column_count: int | None = None
+        # Cross-frame column-name consistency: identical to the count
+        # check above, but on the names tuple. The user-facing
+        # ``column_names`` accessor reports the initial frame's names
+        # only (the protocol-layer drain merges only ``rows``); a
+        # buggy / hostile peer that holds count constant but rotates
+        # the names list per continuation frame would silently
+        # mis-attribute the per-row data the rest of the way. Matches
+        # the strict-decode posture of column-count drift, BOOLEAN
+        # narrowing, NULL-zero distinction, and Header.reserved == 0.
+        self._continuation_column_names: tuple[str, ...] | None = None
 
     @property
     def version(self) -> int | None:
@@ -300,6 +310,7 @@ class MessageDecoder:
         self._continuation_frame_count = 0
         self._continuation_total_rows = 0
         self._continuation_column_count = None
+        self._continuation_column_names = None
         if self._is_request:
             self._handshake_done = False
             self._version = None
@@ -410,6 +421,7 @@ class MessageDecoder:
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
                 self._continuation_column_count = None
+                self._continuation_column_names = None
                 raise ServerFailure(failure.code, failure.message)
             if header.msg_type == ResponseType.EMPTY:
                 # The upstream C server emits an ``EmptyResponse`` when
@@ -427,12 +439,14 @@ class MessageDecoder:
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
                 self._continuation_column_count = None
+                self._continuation_column_names = None
                 return EmptyResponse.decode_body(body, schema=header.schema)
             if header.msg_type != ResponseType.ROWS:
                 self._continuation_expected = False
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
                 self._continuation_column_count = None
+                self._continuation_column_names = None
                 raise StreamError(
                     f"Expected ROWS continuation (type {ResponseType.ROWS}), "
                     f"got type {header.msg_type}"
@@ -476,11 +490,30 @@ class MessageDecoder:
                     f"{self._continuation_frame_count} has "
                     f"{len(result.column_names)}"
                 )
+            # Cross-frame column-name consistency: the user-facing
+            # ``column_names`` accessor reports the initial frame's
+            # names only (the protocol-layer drain merges only
+            # ``rows``). A buggy / hostile peer that holds count
+            # constant but rotates the names list per continuation
+            # frame would silently mis-attribute the per-row data the
+            # rest of the way. Sibling-shaped to the count check
+            # above; same strict-decode posture.
+            if (
+                self._continuation_column_names is not None
+                and tuple(result.column_names) != self._continuation_column_names
+            ):
+                raise DecodeError(
+                    f"ROWS continuation column name drift: initial frame had "
+                    f"{list(self._continuation_column_names)}, frame "
+                    f"{self._continuation_frame_count} has "
+                    f"{list(result.column_names)}"
+                )
             if not result.has_more:
                 self._continuation_expected = False
                 self._continuation_frame_count = 0
                 self._continuation_total_rows = 0
                 self._continuation_column_count = None
+                self._continuation_column_names = None
             return result
         except ServerFailure:
             # Clean server-emitted failure with a well-formed body. The
@@ -548,8 +581,12 @@ class MessageDecoder:
                 # total.
                 self._continuation_frame_count = 1
                 self._continuation_total_rows = len(msg.rows)
-                # Snapshot column count for cross-frame consistency.
+                # Snapshot column count and names for cross-frame
+                # consistency. A continuation frame whose names tuple
+                # differs from this snapshot is rejected as a corrupt
+                # stream — see decode_continuation.
                 self._continuation_column_count = len(msg.column_names)
+                self._continuation_column_names = tuple(msg.column_names)
                 if self._continuation_total_rows > self._max_total_rows:
                     raise DecodeError(
                         f"ROWS initial frame already exceeded max_total_rows cap "
