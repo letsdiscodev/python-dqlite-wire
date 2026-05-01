@@ -16,8 +16,13 @@ class Header:
     Format (8 bytes):
     - size: uint32 - Size of message body in words (8-byte units)
     - type: uint8 - Message type code
-    - schema: uint8 - Schema version (0 or 1; V1 extends param tuples and StmtResponse)
-    - reserved: uint16 - Reserved (always 0)
+    - schema: uint8 - Schema version. Construction accepts any uint8
+      (0..255); the per-message-type ceiling (``MAX_SUPPORTED_SCHEMA``,
+      typically 0 or 1 — V1 extends param tuples and StmtResponse) is
+      enforced at decode-dispatch in ``codec.py``, not at construction
+      time, to avoid a circular import on the per-type tables.
+    - reserved: uint16 - Reserved (always 0; enforced symmetrically
+      on encode and decode).
     """
 
     size_words: int
