@@ -126,7 +126,7 @@ SQLITE_PROTOCOL: Final[int] = 15  # gateway.c "bad format version" / wire mismat
 SQLITE_IOERR: Final[int] = 10
 SQLITE_IOERR_NOT_LEADER: Final[int] = SQLITE_IOERR | (40 << 8)  # 10250
 SQLITE_IOERR_LEADERSHIP_LOST: Final[int] = SQLITE_IOERR | (41 << 8)  # 10506
-LEADER_ERROR_CODES: frozenset[int] = frozenset(
+LEADER_ERROR_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST}
 )
 
@@ -275,7 +275,7 @@ NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
     "no transaction is active",
 )
 
-TX_AUTO_ROLLBACK_PRIMARY_CODES: frozenset[int] = frozenset(
+TX_AUTO_ROLLBACK_PRIMARY_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
 )
 
