@@ -39,9 +39,8 @@ class Header:
         # time so an invalid value surfaces here (with a precise
         # field name + observed value) rather than at ``encode()``
         # time as an opaque ``struct.error → EncodeError`` wrap.
-        # ``bool`` is rejected first (cycle-23 ISSUE-1184 pattern):
-        # ``True == 1`` would silently coerce to a valid uint8 and
-        # mask caller bugs.
+        # ``bool`` is rejected first because ``True == 1`` would
+        # silently coerce to a valid uint8 and mask caller bugs.
         if isinstance(self.size_words, bool) or not isinstance(self.size_words, int):
             raise EncodeError(
                 f"Header size_words must be int, got {type(self.size_words).__name__}"
