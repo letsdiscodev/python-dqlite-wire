@@ -177,9 +177,31 @@ class ReadBuffer:
 
         Raises ``ProtocolError`` if the buffer is poisoned — callers must
         ``reset()`` (or ``clear()``) before feeding further data.
-        Raises ``DecodeError`` (non-poisoning, recoverable via
-        ``reset()``/``clear()``) if the resulting buffer size would
-        exceed ``max_message_size``.
+        Raises ``DecodeError`` (non-poisoning) if the resulting buffer size
+        would exceed ``max_message_size``.
+
+        **Recovery semantics on the size-projection ``DecodeError`` are
+        narrower than the read-side oversize path.** The rejected ``data``
+        argument is silently dropped (never appended). Two cases:
+
+        - If the rejection fired because the caller's accumulated buffer
+          happened to exceed the cap on this feed (no over-large *single
+          message* is mid-flight on the wire), ``reset()`` / ``clear()`` is
+          safe — there is no in-flight message body to drain.
+        - If the rejection fired because the **server emitted a single
+          message larger than the cap** (the rejected chunk contains body
+          bytes for that message, plus any unconsumed tail still on the
+          wire), ``reset()`` is **NOT** safe: the next bytes from the same
+          socket are continuation of the rejected message body, but the
+          buffer has no way to identify where that body ends. The only
+          correct recovery is to drop the connection.
+
+        The read-side oversize path (``read_message()`` raising
+        ``DecodeError`` after the header is decoded) IS genuinely
+        recoverable via ``skip_message()``: the bytes are still in the
+        buffer, the declared length is known from the header, and
+        ``skip_message`` consumes the over-large message (using
+        ``_skip_remaining`` to drain any tail still on the wire).
 
         Signal-safety note: the mutation block below is
         wrapped in ``try/except BaseException`` so that any async
@@ -187,9 +209,9 @@ class ReadBuffer:
         ``_maybe_compact()`` return and the subsequent
         ``_data.extend(data)``, a reachable RESUME delivery point in
         3.11+ — poisons the buffer. The ``DecodeError`` size check
-        is deliberately kept OUTSIDE the try block so that the
-        documented "recoverable oversized-buffer" contract is
-        preserved.
+        is deliberately kept OUTSIDE the try block so the buffer is
+        not poisoned: a caller in the safe-reset case above can
+        recover.
         """
         self._check_poisoned()
         # Early oversize reject: a caller that hands in a chunk larger
