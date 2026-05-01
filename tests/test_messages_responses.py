@@ -1619,6 +1619,27 @@ class TestServersResponse:
             assert decoded.nodes[i].address == expected.address
             assert decoded.nodes[i].role == expected.role
 
+    def test_v0_format_body_rejected_by_existing_safety_nets(self) -> None:
+        """Pin: a hostile peer that emits a V0-format body
+        (id + address only, no role) is rejected by the existing
+        24-byte-per-node bound and trailing-bytes reject when its
+        layout doesn't align with V1's ``id + addr + role``.
+
+        The decoder unconditionally parses V1; ``ClusterRequest``
+        rejects ``format=0`` outbound so no in-tree client can
+        receive a V0 body. This pin guards the residual hostile-
+        peer path against silent-misparse regressions.
+        """
+        from dqlitewire.types import encode_text, encode_uint64
+
+        # A V0 body for one node: count=1, id=1, address (no role
+        # field). The V1 parser would read role from the next 8
+        # bytes and either run off the end or report a trailing
+        # bytes mismatch.
+        body = encode_uint64(1) + encode_uint64(1) + encode_text("a:1")
+        with pytest.raises(DecodeError):
+            ServersResponse.decode_body(body)
+
     def test_wire_format_starts_with_count(self) -> None:
         """Body must start with uint64 node count per Go reference."""
         from dqlitewire.types import decode_uint64

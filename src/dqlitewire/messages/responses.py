@@ -977,6 +977,29 @@ class ServersResponse(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ServersResponse":
+        """Decode the modern V1 cluster body shape (id + address + role).
+
+        The decoder unconditionally parses the V1 (3-field-per-node)
+        layout. The upstream C gateway's ``handle_cluster``
+        (``src/gateway.c``) historically supported a V0 cluster
+        request whose response carried only ``id + address`` (no
+        role). Our outbound ``ClusterRequest.__post_init__``
+        (``requests.py``) rejects ``format=0`` so an in-tree client
+        cannot ask for the V0 shape — making the V0 response a
+        contract no in-tree call site triggers.
+
+        For hostile / malformed peer traffic that emits a V0 body
+        anyway, the existing ``count > remaining // 24`` bounds check
+        and the trailing-bytes reject below catch the misalignment in
+        the common case (V0 nodes are 16 bytes; the V1 parser would
+        read 24 and either fall short on the first node or accumulate
+        a trailing-bytes mismatch). The narrow silent-misparse residual
+        — V0 bytes whose layout happens to align with V1's
+        ``id + addr + role`` and yield raw_role values in {0,1,2} — is
+        not addressed here; format-aware decoding would ripple
+        ``format=`` plumbing into the client layer for a shape no
+        in-tree path emits.
+        """
         # Memoryview for O(1) slicing in the per-node loop.
         view = memoryview(data)
         nodes: list[NodeInfo] = []
