@@ -339,15 +339,24 @@ def decode_text(
             except UnicodeDecodeError as e:
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
     else:
-        try:
-            null_pos = data.index(b"\x00")
-        except ValueError as e:
-            raise DecodeError(f"{label} not null-terminated") from e
+        # Bound the NUL scan at ``max_size + 1`` bytes — a hostile peer
+        # supplying a 100 MiB payload with the terminator (or no
+        # terminator at all) past the cap previously caused
+        # ``data.index`` to ``memchr``-scan the full buffer before
+        # the cap check fired. ``bytes.find`` is bounded; if the NUL
+        # is not within the window, ``find`` returns -1. Symmetric
+        # with the memoryview branch's
+        # ``scan_window = min(data_len, max_size+1)`` cap-before-scan.
+        scan_end = min(len(data), max_size + 1)
+        null_pos = data.find(b"\x00", 0, scan_end)
+        if null_pos < 0:
+            if scan_end < len(data):
+                raise DecodeError(f"{label} length exceeds maximum ({max_size})")
+            raise DecodeError(f"{label} not null-terminated")
         # Cap on bytes BEFORE the UTF-8 decode allocation. Without
         # this, a 100 MiB hostile-peer payload that happens to be
         # NUL-terminated near the end is materialised in full just to
-        # be rejected. Symmetric with the memoryview branch's
-        # ``scan_window = min(data_len, max_size+1)``.
+        # be rejected. Symmetric with the memoryview branch.
         if null_pos > max_size:
             raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
         try:
