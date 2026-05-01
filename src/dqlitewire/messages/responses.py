@@ -247,6 +247,22 @@ class LeaderResponse(Message):
         Modern format: uint64 node_id + text address.
         For pre-1.0 (legacy) servers that send only text address without
         node_id, use decode_body_legacy() instead.
+
+        **Version selection is caller-locked.** ``MessageDecoder``
+        chooses between this method and ``decode_body_legacy`` based
+        on its constructor-time ``version`` argument; the decoder
+        does NOT auto-detect the body shape from the bytes themselves.
+        A misaligned encoder/decoder version pair (e.g. encoder set to
+        ``PROTOCOL_VERSION_LEGACY`` so the server replies in legacy
+        shape, but decoder constructed with ``PROTOCOL_VERSION``
+        default) silently misdecodes the legacy body's leading 8
+        bytes of address text as ``node_id`` and returns the address
+        tail past the misaligned cursor — both fields are then
+        garbage and the address routes downstream into a non-
+        existent host. The only safe recovery for a mixed-version
+        cluster is to reconstruct the ``MessageDecoder`` with the
+        constructor ``version`` matching the per-connection
+        negotiated value (the same value the encoder used).
         """
         node_id = decode_uint64(data)
         address, consumed = decode_text(

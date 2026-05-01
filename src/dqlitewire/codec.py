@@ -653,7 +653,17 @@ class MessageDecoder:
             )
 
         # LeaderResponse has a version-dependent format: legacy servers
-        # send only text address (no node_id prefix).
+        # send only text address (no node_id prefix). The selector is
+        # caller-locked via the constructor-time ``self._version``;
+        # there is no auto-fallback on the inbound bytes themselves.
+        # A misaligned encoder/decoder version (one of them at
+        # ``PROTOCOL_VERSION_LEGACY``, the other at the modern
+        # default) silently misdecodes the LEADER body — the legacy
+        # text address's first 8 bytes are interpreted as a uint64
+        # ``node_id`` and the address-text decode resumes past the
+        # misaligned cursor, both fields garbage. Callers must
+        # construct ``MessageDecoder`` with the same ``version``
+        # negotiated on the wire.
         if (
             header.msg_type == ResponseType.LEADER
             and self._version == PROTOCOL_VERSION_LEGACY
