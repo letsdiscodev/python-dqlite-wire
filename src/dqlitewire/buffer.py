@@ -1,5 +1,7 @@
 """Buffer utilities for streaming protocol data."""
 
+from typing import NoReturn
+
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, PoisonedError
 
@@ -17,7 +19,7 @@ class WriteBuffer:
     narrow defense, not a general thread-safety guarantee.
     """
 
-    def __reduce__(self) -> None:  # type: ignore[override]
+    def __reduce__(self) -> NoReturn:
         raise TypeError(
             "WriteBuffer cannot be pickled. Each instance is bound to a "
             "single connection stream and must not be duplicated across processes."
@@ -106,7 +108,7 @@ class ReadBuffer:
 
     DEFAULT_MAX_MESSAGE_SIZE = 64 * 1024 * 1024  # 64 MiB
 
-    def __reduce__(self) -> None:  # type: ignore[override]
+    def __reduce__(self) -> NoReturn:
         raise TypeError(
             "ReadBuffer cannot be pickled. Each instance is bound to a "
             "single connection stream and must not be duplicated across processes."

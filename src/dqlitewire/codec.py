@@ -1,5 +1,7 @@
 """Message encoder and decoder for dqlite wire protocol."""
 
+from typing import NoReturn
+
 from dqlitewire.buffer import ReadBuffer
 from dqlitewire.constants import (
     DEFAULT_MAX_CONTINUATION_FRAMES,
@@ -136,7 +138,7 @@ class MessageEncoder:
     the class docstring on ``MessageDecoder`` / ``ReadBuffer``.
     """
 
-    def __reduce__(self) -> None:  # type: ignore[override]
+    def __reduce__(self) -> NoReturn:
         raise TypeError(
             "MessageEncoder cannot be pickled. Each instance is bound to a "
             "single connection and must not be duplicated across processes."
@@ -194,7 +196,7 @@ class MessageDecoder:
     the socket.
     """
 
-    def __reduce__(self) -> None:  # type: ignore[override]
+    def __reduce__(self) -> NoReturn:
         raise TypeError(
             "MessageDecoder cannot be pickled. Each instance is bound to a "
             "single connection and must not be duplicated across processes."
