@@ -84,6 +84,16 @@ class TestInt64:
         with pytest.raises(EncodeError):
             encode_int64(-(2**63) - 1)
 
+    def test_encode_int64_rejects_bool(self) -> None:
+        """``isinstance(True, int)`` is True, so ``encode_int64(True)``
+        would silently encode as ``1`` and round-trip through decode_int64
+        as ``int(1)`` — a caller-side typo never surfaces. Reject bool
+        explicitly, symmetric with encode_uint32 / encode_uint64."""
+        with pytest.raises(EncodeError, match="must be int"):
+            encode_int64(True)
+        with pytest.raises(EncodeError, match="must be int"):
+            encode_int64(False)
+
     def test_encode_overflow_error_message_is_bounded(self) -> None:
         """A pathologically large int must not produce a multi-kB error
         message. Parity with _truncate_error in client.cluster and the

@@ -74,3 +74,30 @@ class TestOversizeSqlEncode:
         oversize = "x" * (16 * 1024 * 1024 + 1)
         with pytest.raises(EncodeError):
             QuerySqlRequest(db_id=0, sql=oversize).encode_body()
+
+    def test_oversize_frame_header_rejected_at_decode(self) -> None:
+        """The frame-level ``ReadBuffer`` cap protects against a hostile
+        peer announcing a > cap body in the header — distinct from the
+        encode-side text cap above. Hostile peers do NOT route through
+        our encode path; the decode-side cap is the load-bearing
+        defense, and a regression to the boundary check (e.g. ``>=``
+        vs ``>``, or removal) must fail this pin.
+
+        Construct the oversize frame header as raw bytes (bypassing the
+        encode-side cap that would otherwise reject) and exercise
+        ``peek_header`` / ``has_message`` / ``read_message`` against a
+        small cap. The cap fires on the size_words → total_size check
+        (peek_header / read_message both raise; has_message returns
+        True so the consume-loop reaches the raise).
+        """
+        small_cap = 1024 * 1024  # 1 MiB — keep the test cheap
+        oversize_words = (small_cap // 8) + 16  # declared body > cap
+        # Header: size_words=oversize_words (uint32 LE), msg_type=0,
+        # schema=0, reserved=0
+        header = oversize_words.to_bytes(4, "little") + b"\x00\x00\x00\x00"
+
+        buf = ReadBuffer(max_message_size=small_cap)
+        buf.feed(header)
+        # peek_header is the strict-raise variant per its docstring.
+        with pytest.raises(DecodeError, match="exceeds maximum"):
+            buf.peek_header()
