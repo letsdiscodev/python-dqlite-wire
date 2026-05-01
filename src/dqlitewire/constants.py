@@ -144,7 +144,14 @@ DQLITE_PROTO: Final[int] = 1001  # protocol.h:9 — Raft FSM-internal protocol e
 # future change that surfaces it through the gateway
 # passes through ``primary_sqlite_code`` cleanly.
 DQLITE_NOTFOUND: Final[int] = 1002  # registry lookup miss (server-side scratch)
-DQLITE_PARSE: Final[int] = 1005  # gateway.c unrecognized request type / schema
+DQLITE_PARSE: Final[int] = 1005  # gateway.c::INIT_V0 — unrecognized request type
+# or unrecognized schema for the eleven canonical-INIT_V0 handlers.
+# The five params-schema-aware handlers (handle_prepare /
+# handle_exec / handle_query / handle_exec_sql / handle_query_sql)
+# bypass INIT_V0 to admit both V0 and V1 params schema, and on
+# unrecognized schema instead emit ``SQLITE_ERROR`` (= 1) with the
+# same ``"unrecognized schema version"`` message. Tests synthesising
+# the failure shape for those five handlers must pin code=1, not 1005.
 
 # Bit mask for extracting the primary (low-byte) code from an
 # extended SQLite error code. Upstream encodes extended codes as
