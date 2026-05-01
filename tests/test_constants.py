@@ -401,17 +401,19 @@ class TestDqliteErrorCollidesWithSqliteErrorOnWire:
         assert DQLITE_ERROR_LITERAL == SQLITE_ERROR_LITERAL
         assert primary_sqlite_code(DQLITE_ERROR_LITERAL) == 1
 
-    def test_dqlite_error_is_not_in_namespace_set(self) -> None:
-        """``_DQLITE_NAMESPACE_CODES`` covers only the codes >= 1000
-        that pass through ``primary_sqlite_code`` unchanged. Adding
-        ``DQLITE_ERROR=1`` to the set would mask SQLITE_ERROR=1
-        from primary-code dispatch — a worse bug than the existing
-        latent collision. Pin that the set excludes 1, 2, 3."""
-        from dqlitewire.constants import _DQLITE_NAMESPACE_CODES
+    def test_dqlite_error_is_not_classified_as_namespace_code(self) -> None:
+        """``is_dqlite_namespace_code`` covers only codes >= 1000
+        that pass through ``primary_sqlite_code`` unchanged.
+        ``DQLITE_ERROR=1`` collides numerically with ``SQLITE_ERROR=1``
+        but must NOT be classified as a namespace code — that would
+        mask the SQLite primary from dispatch. Pin that 1, 2, 3 are
+        outside the namespace range so a regression that widens the
+        range or repurposes the discriminator surfaces here."""
+        from dqlitewire.constants import is_dqlite_namespace_code
 
-        assert 1 not in _DQLITE_NAMESPACE_CODES
-        assert 2 not in _DQLITE_NAMESPACE_CODES  # DQLITE_MISUSE — also collides
-        assert 3 not in _DQLITE_NAMESPACE_CODES  # DQLITE_NOMEM — also collides
+        assert is_dqlite_namespace_code(1) is False
+        assert is_dqlite_namespace_code(2) is False  # DQLITE_MISUSE collides
+        assert is_dqlite_namespace_code(3) is False  # DQLITE_NOMEM collides
 
 
 class TestDefaultRowsAndFramesCaps:
