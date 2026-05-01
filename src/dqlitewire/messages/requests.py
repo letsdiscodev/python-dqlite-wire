@@ -649,9 +649,18 @@ class AssignRequest(Message):
     def encode_body_legacy(self) -> bytes:
         """Encode as legacy PROMOTE body (1 word: node_id only).
 
-        Mirror of ``LeaderResponse.encode_body_legacy``. The legacy
-        wire shape is explicit-opt-in only; ``encode_body`` rejects
-        ``role=None`` so accidental omission can't silently downgrade.
+        The legacy wire shape is explicit-opt-in only; ``encode_body``
+        rejects ``role=None`` so accidental omission can't silently
+        downgrade.
+
+        Unlike ``LeaderResponse.encode_body_legacy``, which raises
+        ``EncodeError`` if a non-zero ``node_id`` would be lost in the
+        legacy shape, this method silently drops ``role`` (the legacy
+        PROMOTE body has no role field — the upstream-semantic VOTER
+        elevation is implicit). Callers asking for the legacy shape have
+        already opted into that information loss; the class-level
+        docstring's "Legacy round-trip asymmetry (intentional)" section
+        is the canonical reference.
         """
         return encode_uint64(self.node_id)
 
