@@ -422,6 +422,23 @@ class MessageDecoder:
             header = Header.decode(data[:HEADER_SIZE])
             body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
 
+            # Type-recognition check FIRST, then schema cap. Mirrors
+            # ``decode_bytes``'s ordering at the bottom of this file.
+            # An unknown msg_type combined with schema=1 would
+            # otherwise raise "unsupported schema" — misleading; the
+            # actual root cause is "unknown type". Recognised types
+            # for the continuation path: FAILURE, EMPTY, ROWS.
+            if header.msg_type not in (
+                ResponseType.FAILURE,
+                ResponseType.EMPTY,
+                ResponseType.ROWS,
+            ):
+                self._finalize_continuation_state()
+                raise StreamError(
+                    f"Expected ROWS continuation (type {ResponseType.ROWS}), "
+                    f"got type {header.msg_type}"
+                )
+
             max_schema = self._max_schema.get(header.msg_type, 0)
             if header.schema > max_schema:
                 raise DecodeError(
@@ -454,12 +471,8 @@ class MessageDecoder:
                 # ``test_decode_continuation_malformed_empty_still_poisons``.
                 self._finalize_continuation_state()
                 return EmptyResponse.decode_body(body, schema=header.schema)
-            if header.msg_type != ResponseType.ROWS:
-                self._finalize_continuation_state()
-                raise StreamError(
-                    f"Expected ROWS continuation (type {ResponseType.ROWS}), "
-                    f"got type {header.msg_type}"
-                )
+            # ``msg_type`` is ROWS here (the early type-recognition
+            # check above narrowed the universe to FAILURE/EMPTY/ROWS).
 
             result = RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
             # Per-stream caps: bound the number of continuation frames
