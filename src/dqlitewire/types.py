@@ -515,7 +515,15 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
-        return encode_text(value), value_type
+        # Cap the row-cell text length symmetric with the BLOB branch
+        # below and with ``decode_text``'s ``_MAX_TEXT_VALUE_SIZE`` cap
+        # — without ``max_size=`` here, a >16 MiB string encodes
+        # successfully but the same Python decoder rejects the bytes,
+        # so a same-process Python encode → decode round-trip can
+        # fail. Pass ``label=value_type.name`` so the diagnostic names
+        # the wire-cell type (TEXT / ISO8601), not the generic
+        # "Text".
+        return encode_text(value, max_size=_MAX_TEXT_VALUE_SIZE, label=value_type.name), value_type
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
