@@ -12,6 +12,7 @@ by Go's ``database/sql`` driver.
 
 import mmap
 import struct
+from typing import Final
 
 from dqlitewire.constants import WORD_SIZE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
@@ -39,7 +40,7 @@ type WireValue = bool | int | float | str | bytes | None
 # well before large allocations or arithmetic on attacker-controlled
 # lengths. Sits beside ``_MAX_PARAM_COUNT`` / ``_MAX_COLUMN_COUNT`` /
 # ``_MAX_FILE_COUNT`` / ``_MAX_NODE_COUNT`` in spirit.
-_MAX_BLOB_SIZE = 16 * 1024 * 1024  # 16 MiB
+_MAX_BLOB_SIZE: Final[int] = 16 * 1024 * 1024  # 16 MiB
 
 # Per-TEXT cell byte cap. Symmetric with ``_MAX_BLOB_SIZE`` — a TEXT
 # row cell (TEXT or ISO8601 wire type) is NUL-terminated UTF-8 and
@@ -48,7 +49,7 @@ _MAX_BLOB_SIZE = 16 * 1024 * 1024  # 16 MiB
 # columns over the wire, and this defensive cap keeps ``decode_text``
 # from scanning or allocating attacker-controlled lengths that
 # exceed the BLOB ceiling.
-_MAX_TEXT_VALUE_SIZE = 16 * 1024 * 1024  # 16 MiB
+_MAX_TEXT_VALUE_SIZE: Final[int] = 16 * 1024 * 1024  # 16 MiB
 
 # Cap on the stringified representation of an out-of-range integer in
 # EncodeError messages. A hostile or buggy caller passing ``10 ** 500``
@@ -56,7 +57,7 @@ _MAX_TEXT_VALUE_SIZE = 16 * 1024 * 1024  # 16 MiB
 # every log line / traceback that quotes it). Parity with
 # ``_truncate_error`` in the client layer and ``_MAX_FAILURE_MESSAGE_SIZE``
 # on the decode side.
-_MAX_VALUE_REPR = 64
+_MAX_VALUE_REPR: Final[int] = 64
 
 
 def _bounded_repr(value: int) -> str:

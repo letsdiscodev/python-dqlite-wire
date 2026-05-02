@@ -58,6 +58,13 @@ class WriteBuffer:
         """
         remainder = len(data) % WORD_SIZE
         if remainder:
+            # Single ``extend`` so no torn write is possible: a thread
+            # switch between two ``extend`` calls (one for payload,
+            # one for padding) could land another thread's payload
+            # inside the first thread's padding window, producing
+            # ``b'BBBBBAAA'`` instead of ``b'AAAAA\x00\x00\x00'``.
+            # See ``test_write_padded_no_interleaved_tearing_under_contention``
+            # for the race shape this guards against.
             self._data.extend(data + b"\x00" * (WORD_SIZE - remainder))
         else:
             self._data.extend(data)

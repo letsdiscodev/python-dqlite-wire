@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 from dqlitewire.constants import (
     ROW_DONE_MARKER,
@@ -42,9 +42,9 @@ from dqlitewire.types import (
 # build uses 2000, but custom builds can go up to 32767 — anything
 # above that is provably malformed and could only come from a hostile
 # or corrupted peer.
-_MAX_COLUMN_COUNT = 32767
-_MAX_FILE_COUNT = 100
-_MAX_NODE_COUNT = 10_000
+_MAX_COLUMN_COUNT: Final[int] = 32767
+_MAX_FILE_COUNT: Final[int] = 100
+_MAX_NODE_COUNT: Final[int] = 10_000
 
 # Upper bound on ``StmtResponse.tail_offset``. The field is a byte
 # offset into the prepared-SQL text; a malicious peer could emit an
@@ -52,25 +52,25 @@ _MAX_NODE_COUNT = 10_000
 # ``""`` on ``sql[offset:]``, dropping later statements with no
 # diagnostic. 1 MiB is far above any realistic multi-statement SQL
 # size.
-_MAX_TAIL_OFFSET = 1 * 1024 * 1024
+_MAX_TAIL_OFFSET: Final[int] = 1 * 1024 * 1024
 
 # Per-field cap on ``FailureResponse.message``. The frame-size cap
 # in ``buffer.py`` (64 MiB) bounds total bytes, but error messages in
 # practice are short (SQLite's own error strings are under ~200 chars).
 # A peer sending megabytes of text is malicious or broken; cap well
 # above any realistic message so legitimate cases are never clipped.
-_MAX_FAILURE_MESSAGE_SIZE = 64 * 1024
+_MAX_FAILURE_MESSAGE_SIZE: Final[int] = 64 * 1024
 
 # Per-column-name cap on ``RowsResponse``. SQLite column-name identifiers
 # are short by any realistic standard; 4 KiB is orders of magnitude above
 # legitimate use and well below any memory-exhaustion concern. Same
 # defense-in-depth policy as ``_MAX_FAILURE_MESSAGE_SIZE``.
-_MAX_COLUMN_NAME_SIZE = 4096
+_MAX_COLUMN_NAME_SIZE: Final[int] = 4096
 
 # Per-filename cap on ``FilesResponse``. dqlite file entries are the
 # on-disk page-backed database files (``main``, ``wal``, etc.); POSIX
 # PATH_MAX is 4 KiB and mirrors the column-name cap.
-_MAX_FILENAME_SIZE = 4096
+_MAX_FILENAME_SIZE: Final[int] = 4096
 
 # Per-address cap on ``LeaderResponse`` / ``ServersResponse`` (and their
 # legacy variants). Legitimate cluster addresses are small (hostname
@@ -78,7 +78,7 @@ _MAX_FILENAME_SIZE = 4096
 # names at ≤253 bytes and 256 leaves margin for the port. A multi-MB
 # "address" is malicious or broken and would amplify through log /
 # exception messages even after ``_sanitize_server_text``.
-_MAX_ADDRESS_SIZE = 256
+_MAX_ADDRESS_SIZE: Final[int] = 256
 
 # Sanitize server-supplied text destined for exception messages and
 # logs. The C server promises UTF-8 but makes no promise about terminal

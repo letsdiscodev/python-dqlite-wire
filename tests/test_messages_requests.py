@@ -52,6 +52,19 @@ class TestHeaderReservedField:
         header = Header.decode(msg.encode()[:HEADER_SIZE])
         assert header.reserved == 0
 
+    def test_post_init_rejects_nonzero_reserved(self) -> None:
+        """Header construction-time rejection of ``reserved != 0``.
+
+        Symmetric with the decode-side rejection below: the encode/
+        decode pair must reject the same bad inputs at both boundaries
+        so a future code path that builds a Header directly cannot
+        smuggle a non-zero reserved value into the encoder.
+        """
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="reserved.*must be 0"):
+            Header(size_words=1, msg_type=0, schema=0, reserved=42)
+
     def test_decode_rejects_nonzero_reserved(self) -> None:
         """Header.decode must reject non-zero reserved bytes.
 

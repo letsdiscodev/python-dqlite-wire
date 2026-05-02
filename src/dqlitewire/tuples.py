@@ -8,7 +8,7 @@ Row tuples and parameter tuples have different formats:
 import struct
 from collections.abc import Sequence
 from enum import Enum
-from typing import Any
+from typing import Any, Final
 
 from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
@@ -26,7 +26,7 @@ _ROW_PART_MARKER = bytes([ROW_PART_BYTE]) * 8
 # Defense-in-depth cap on parameter count, matching the pattern used by
 # _MAX_COLUMN_COUNT, _MAX_FILE_COUNT, and _MAX_NODE_COUNT in responses.py.
 # SQLite's default limit is 999 (compile-time max 32766).
-_MAX_PARAM_COUNT = 100_000
+_MAX_PARAM_COUNT: Final[int] = 100_000
 
 
 class RowMarker(Enum):
