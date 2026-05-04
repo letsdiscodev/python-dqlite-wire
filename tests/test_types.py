@@ -869,15 +869,20 @@ class TestValue:
             b"\xde\xad\xbe\xef\xde\xad\xbe\xef",
         ],
     )
-    def test_decode_null_rejects_non_zero_payload(self, payload: bytes) -> None:
-        """A well-sized but non-zero NULL payload is either peer corruption
-        or a buggy encoder. ``decode_value`` must reject it rather than
-        silently returning ``None`` and discarding the garbage bits.
-        Mirrors the reserved-field hygiene pinned on Header / DbResponse /
-        LeaderRequest decoders.
+    def test_decode_null_accepts_any_payload(self, payload: bytes) -> None:
+        """Match Go's ``r.message.getUint64()`` discard
+        (``internal/protocol/message.go:539``) and C's
+        ``uint64__decode(... &value->null)`` (``tuple.c:147``) where the
+        value is read into the union and never inspected. Our encoder
+        still writes 8 zero bytes (encode_null), but a peer / future
+        server / mock that emits non-zero NULL bytes is wire-conformant
+        per upstream's tuple_decoder semantics. Strict-rejection here
+        provided no defensive value (the field is documented as unused)
+        and was an interop hazard.
         """
-        with pytest.raises(DecodeError, match="NULL payload must be 8 zero bytes"):
-            decode_value(payload, ValueType.NULL)
+        value, consumed = decode_value(payload, ValueType.NULL)
+        assert value is None
+        assert consumed == 8
 
     def test_encode_value_null_type_with_non_none_raises(self) -> None:
         """Explicit ValueType.NULL with a non-None value should raise EncodeError."""
