@@ -577,13 +577,19 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
     Returns (value, bytes_consumed).
     """
     if value_type == ValueType.BOOLEAN:
-        # Symmetric with encode_value: BOOLEAN must be exactly 0 or 1 on
-        # the wire. Silently coercing any uint64 to True/False would make
-        # round-trips lossy (encoding restores 1/0) and hide malformed
-        # frames produced by a broken or hostile peer.
+        # Permissive truthiness decode matching Go's
+        # ``r.message.getInt64() != 0`` (``internal/protocol/message.go:566``)
+        # and C's ``tuple.c:155`` (decode reads raw uint64 and the consumer
+        # interprets truthiness). The dqlite C server emits a
+        # ``DQLITE_BOOLEAN`` cell whenever the column's decltype is
+        # ``BOOLEAN`` and the value comes from
+        # ``sqlite3_column_int64`` (``query.c:82``) — i.e. any int the
+        # column actually contains. SQLite typing is dynamic, so a row
+        # inserted as ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives
+        # with raw=5 on the wire. Strict-rejection would deterministically
+        # poison the decoder for legitimate cluster data while Go and C
+        # clients work fine.
         raw = decode_uint64(data)
-        if raw not in (0, 1):
-            raise DecodeError(f"BOOLEAN wire value must be 0 or 1, got {raw}")
         return bool(raw), 8
     elif value_type == ValueType.INTEGER:
         return decode_int64(data), 8

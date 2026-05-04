@@ -541,17 +541,41 @@ class TestValue:
         assert value is False
         assert consumed == 8
 
-    def test_decode_boolean_rejects_non_bit(self) -> None:
-        """Decoder is symmetric with encoder: only {0, 1} are valid BOOLEAN
-        wire values. Silently coercing any uint64 via ``bool(...)`` would
-        make round-trips lossy (e.g., uint64=2 → True → re-encodes as 1)
-        and would mask protocol violations that we want to surface.
-        """
-        from dqlitewire.exceptions import DecodeError
+    def test_decode_boolean_accepts_any_uint64_via_truthiness(self) -> None:
+        """The C server emits a DQLITE_BOOLEAN cell whenever the column's
+        decltype is BOOLEAN, and the value comes from
+        ``sqlite3_column_int64(stmt, i)`` — i.e. any int the column
+        contains. SQLite typing is dynamic; a row inserted as
+        ``INSERT INTO t(b BOOLEAN) VALUES (5)`` puts a 5 on the wire
+        with type tag BOOLEAN.
 
-        for bad in (2, 3, 255, 2**63 - 1):
-            with pytest.raises(DecodeError, match="BOOLEAN"):
-                decode_value(encode_int64(bad), ValueType.BOOLEAN)
+        Match Go's ``r.message.getInt64() != 0`` truthiness check
+        (``internal/protocol/message.go:566``) and C's permissive
+        decode (``tuple.c:155``) so a real-cluster row with a
+        non-canonical boolean integer is decoded as ``bool(raw)``
+        rather than poisoning the stream with ``DecodeError``.
+        """
+        # Non-zero values decode as True; zero decodes as False.
+        for raw, expected in (
+            (2, True),
+            (3, True),
+            (255, True),
+            (2**63 - 1, True),
+            (0xFFFFFFFFFFFFFFFF, True),  # all-ones uint64 (== int64 -1 reinterpreted)
+            (0, False),
+        ):
+            value, consumed = decode_value(encode_uint64(raw), ValueType.BOOLEAN)
+            assert value is expected, f"raw={raw} expected {expected!r}, got {value!r}"
+            assert consumed == 8
+
+        # Negative int64 written via encode_int64 also decodes as True
+        # (truthiness over the uint64 reinterpretation). Pinned because
+        # Go's reference reads getInt64() and treats != 0 as True; the
+        # bytes are identical regardless of the encoder's signed/unsigned
+        # framing.
+        value, consumed = decode_value(encode_int64(-1), ValueType.BOOLEAN)
+        assert value is True
+        assert consumed == 8
 
     def test_encode_decode_iso8601_roundtrips_as_text(self) -> None:
         """ISO8601 is stored as text at the wire level — datetime conversion
