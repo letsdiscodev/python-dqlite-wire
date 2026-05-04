@@ -366,9 +366,13 @@ class DbResponse(Message):
         if len(data) != 8:
             raise DecodeError(f"DbResponse body must be exactly 8 bytes, got {len(data)}")
         db_id = decode_uint32(data)
-        reserved = decode_uint32(data[4:])
-        if reserved != 0:
-            raise DecodeError(f"DbResponse reserved field must be 0, got {reserved}")
+        # Read-and-discard the reserved uint32 to match Go's
+        # ``response.getUint32()`` discard at
+        # ``internal/protocol/response.go:140``. The field is
+        # documented as ``__pad__`` in C (response.h:18-20) and
+        # reusing it for a future feature is a forward-compat
+        # concern strictly; we add no defensive value by rejecting
+        # non-zero values here while Go silently accepts.
         return cls(db_id)
 
 
@@ -845,9 +849,13 @@ class EmptyResponse(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "EmptyResponse":
         if len(data) != 8:
             raise DecodeError(f"EmptyResponse body must be exactly 8 bytes, got {len(data)}")
-        reserved = decode_uint64(data)
-        if reserved != 0:
-            raise DecodeError(f"EmptyResponse reserved field must be 0, got {reserved}")
+        # Read-and-discard the reserved uint64 to match Go's
+        # ``response.getUint64()`` discard at
+        # ``internal/protocol/response.go:186``. The field is
+        # documented as unused; rejecting non-zero values gives no
+        # defensive value while creating a forward-compat hazard if
+        # the field is ever re-used by a future server.
+        decode_uint64(data)
         return cls()
 
 

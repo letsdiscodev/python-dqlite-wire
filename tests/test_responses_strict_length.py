@@ -39,11 +39,14 @@ class TestEmptyResponseStrictLength:
         with pytest.raises(DecodeError, match="EmptyResponse body must be exactly 8 bytes"):
             EmptyResponse.decode_body(b"\x00" * 9)
 
-    def test_reserved_nonzero_still_rejected(self) -> None:
-        """Length check comes first; reserved-field check must still
-        apply on exactly-8-byte bodies."""
-        with pytest.raises(DecodeError, match="reserved field must be 0"):
-            EmptyResponse.decode_body(b"\x01" + b"\x00" * 7)
+    def test_reserved_nonzero_accepted(self) -> None:
+        """Match Go's ``response.getUint64()`` discard
+        (``internal/protocol/response.go:186``). The reserved field
+        is documented as unused; a future server reusing it must not
+        break Python clients while Go clients continue working.
+        """
+        msg = EmptyResponse.decode_body(b"\x01" + b"\x00" * 7)
+        assert isinstance(msg, EmptyResponse)
 
 
 class TestDbResponseStrictLength:

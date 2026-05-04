@@ -1968,29 +1968,33 @@ class TestServerTextSanitization:
         assert decoded.nodes[0].address == f"node{bad_char}1:9001", f"failed on {label}"
 
 
-class TestReservedFieldValidation:
-    """Non-zero reserved bytes must fail to decode across all message
-    types that declare a reserved field, matching LeaderRequest's
-    strict posture. Silently accepting non-zero reserved would hide
-    peer corruption and block reusing those bits for any future schema
-    signal.
+class TestReservedFieldDiscard:
+    """``DbResponse`` and ``EmptyResponse`` reserved fields are read-and-
+    discarded on decode, matching Go's
+    ``response.getUint32()`` / ``getUint64()`` discard at
+    ``internal/protocol/response.go:140`` and ``:186``. The C field is
+    documented as ``__pad__`` in ``response.h`` and is reserved for
+    future protocol extensions; rejecting non-zero values would create
+    a forward-compat hazard with no defensive value (the field is not
+    a checksum or invariant).
+
+    NOTE: ``LeaderRequest`` and other request-side fields keep strict
+    rejection — the asymmetry is intentional, mirroring Go's split
+    between request encoders (we must produce zero) and response
+    decoders (we must accept whatever upstream emits).
     """
 
-    def test_db_response_rejects_nonzero_reserved(self) -> None:
-        # uint32 db_id + uint32 reserved (0xFFFFFFFF)
+    def test_db_response_accepts_nonzero_reserved(self) -> None:
         body = b"\x01\x00\x00\x00" + b"\xff\xff\xff\xff"
-        with pytest.raises(DecodeError, match="DbResponse reserved field must be 0"):
-            DbResponse.decode_body(body)
+        assert DbResponse.decode_body(body).db_id == 1
 
     def test_db_response_accepts_zero_reserved(self) -> None:
         # Round-trip form stays accepted.
         body = b"\x01\x00\x00\x00" + b"\x00\x00\x00\x00"
         assert DbResponse.decode_body(body).db_id == 1
 
-    def test_empty_response_rejects_nonzero_reserved(self) -> None:
-        body = b"\xff" * 8
-        with pytest.raises(DecodeError, match="EmptyResponse reserved field must be 0"):
-            EmptyResponse.decode_body(body)
+    def test_empty_response_accepts_nonzero_reserved(self) -> None:
+        assert isinstance(EmptyResponse.decode_body(b"\xff" * 8), EmptyResponse)
 
     def test_empty_response_accepts_zero_reserved(self) -> None:
         assert isinstance(EmptyResponse.decode_body(b"\x00" * 8), EmptyResponse)

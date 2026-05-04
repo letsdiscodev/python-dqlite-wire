@@ -1436,25 +1436,28 @@ class TestDecoderContinuation:
             decoder.decode_continuation()
         assert decoder.is_poisoned is True
 
-    def test_decode_continuation_malformed_empty_still_poisons(self) -> None:
-        """A malformed EmptyResponse (non-zero reserved field) must
-        surface the underlying DecodeError and poison the buffer — the
-        clean-terminator path is opt-in to well-formed frames only."""
+    def test_decode_continuation_malformed_empty_size_poisons(self) -> None:
+        """A malformed EmptyResponse (wrong body length, e.g. 16 bytes
+        instead of 8) must surface the underlying DecodeError and
+        poison the buffer. The reserved field itself is now permissive
+        on decode (matching Go), so we use a length mismatch to
+        trigger the malformed path."""
         import struct
 
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.base import Header
 
-        # EMPTY body is a single uint64 reserved field, must be 0.
-        body = struct.pack("<Q", 1)
-        header = Header(size_words=1, msg_type=8, schema=0)  # ResponseType.EMPTY = 8
+        # EmptyResponse body must be exactly 8 bytes; provide 16 to trip
+        # the strict-length check.
+        body = struct.pack("<QQ", 0, 0)
+        header = Header(size_words=2, msg_type=8, schema=0)  # ResponseType.EMPTY = 8
         empty_bad = header.encode() + body
 
         decoder = MessageDecoder(is_request=False)
         decoder._continuation_expected = True
         decoder.feed(empty_bad)
 
-        with pytest.raises(DecodeError, match="reserved field must be 0"):
+        with pytest.raises(DecodeError, match="EmptyResponse body must be exactly 8 bytes"):
             decoder.decode_continuation()
         assert decoder.is_poisoned is True
 
