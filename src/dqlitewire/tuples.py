@@ -25,8 +25,13 @@ _ROW_PART_MARKER = bytes([ROW_PART_BYTE]) * 8
 
 # Defense-in-depth cap on parameter count, matching the pattern used by
 # _MAX_COLUMN_COUNT, _MAX_FILE_COUNT, and _MAX_NODE_COUNT in responses.py.
-# SQLite's default limit is 999 (compile-time max 32766).
-_MAX_PARAM_COUNT: Final[int] = 100_000
+# Tightened to SQLite's standard-build compile-time max
+# (``SQLITE_MAX_VARIABLE_NUMBER`` = 32766, see
+# https://www.sqlite.org/limits.html). Above this value the upstream
+# server cannot accept the bind anyway, so a permissive client cap
+# only allowed a malicious peer to inflate intermediate allocations
+# beyond what the cluster could process.
+_MAX_PARAM_COUNT: Final[int] = 32_766
 
 
 class RowMarker(Enum):

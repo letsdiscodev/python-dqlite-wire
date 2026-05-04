@@ -443,10 +443,15 @@ class TestInternalDecodeBoundsPinnedAgainstReadme:
     SQLite's ``SQLITE_MAX_COLUMN`` ceiling, but the README was not
     updated)."""
 
-    def test_max_param_count_is_one_hundred_thousand(self) -> None:
+    def test_max_param_count_matches_sqlite_max_variable_number(self) -> None:
         from dqlitewire.tuples import _MAX_PARAM_COUNT
 
-        assert _MAX_PARAM_COUNT == 100_000
+        # SQLite's standard-build compile-time max for
+        # SQLITE_MAX_VARIABLE_NUMBER (https://www.sqlite.org/limits.html).
+        # The server cannot bind beyond this; tightening the client
+        # cap to match prevents a malicious peer from inflating
+        # intermediate allocations.
+        assert _MAX_PARAM_COUNT == 32_766
 
     def test_max_column_count_matches_sqlite_max_column(self) -> None:
         from dqlitewire.messages.responses import _MAX_COLUMN_COUNT
