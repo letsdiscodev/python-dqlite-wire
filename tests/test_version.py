@@ -36,3 +36,18 @@ def test_header_and_message_exported_from_package() -> None:
     assert dqlitewire.Message is Message
     assert "Header" in dqlitewire.__all__
     assert "Message" in dqlitewire.__all__
+
+
+def test_all_entries_are_resolvable_attributes() -> None:
+    """Every name in ``__all__`` must resolve to an attribute on the
+    package. A refactor that dropped or renamed a re-exported symbol
+    while leaving its name in ``__all__`` (or vice versa) silently
+    breaks ``from dqlitewire import X`` for downstream consumers
+    (python-dqlite-client / python-dqlite-dbapi / sqlalchemy-dqlite
+    all pull cross-package symbols from this surface)."""
+    for name in dqlitewire.__all__:
+        assert hasattr(dqlitewire, name), (
+            f"__all__ lists {name!r} but module has no such attribute"
+        )
+    # Sanity: __all__ contains no duplicates.
+    assert len(dqlitewire.__all__) == len(set(dqlitewire.__all__))

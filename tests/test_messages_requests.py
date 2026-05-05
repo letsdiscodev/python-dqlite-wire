@@ -113,6 +113,20 @@ class TestHeaderReservedField:
         with pytest.raises(EncodeError, match="size_words.*out of range"):
             Header(size_words=-1, msg_type=0, schema=0, reserved=0)
 
+    def test_header_round_trip_zero_size_words(self) -> None:
+        """``size_words=0`` is the lower bound — wire-legal for
+        zero-body messages (e.g. ``EmptyResponse``-style continuation
+        terminators). Symmetric with the upper-bound 0xFFFFFFFF tests
+        elsewhere; pin so a buffer-management refactor that adds an
+        ``if size_words: ...`` guard cannot silently drop legitimate
+        zero-body frames."""
+        h = Header(size_words=0, msg_type=0, schema=0, reserved=0)
+        encoded = h.encode()
+        assert len(encoded) == HEADER_SIZE
+        decoded = Header.decode(encoded)
+        assert decoded == h
+        assert decoded.size_words == 0
+
     def test_post_init_rejects_out_of_range_msg_type(self) -> None:
         from dqlitewire.exceptions import EncodeError
 

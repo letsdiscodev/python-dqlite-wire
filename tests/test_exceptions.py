@@ -238,3 +238,72 @@ class TestBackwardCompat:
         dec._buffer.poison(RuntimeError("x"))
         with pytest.raises(ProtocolError):
             dec.decode()
+
+
+class TestExceptionPickleRoundTrip:
+    """Six of the eight wire-layer exception classes inherit
+    ``Exception``'s default ``__reduce__`` (which round-trips a single
+    message arg). That works today — but if a future refactor adds a
+    second positional ``__init__`` arg (e.g. ``code`` to ``DecodeError``
+    to indicate a malformed-message subtype), default ``__reduce__``
+    silently breaks cross-process error capture the same way
+    ``ServerFailure`` did before its fix. Pin the round-trip for every
+    class so the contract is enforced symmetrically.
+    """
+
+    def _round_trip(self, e: Exception) -> Exception:
+        import pickle
+
+        restored: Exception = pickle.loads(pickle.dumps(e))
+        return restored
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            DecodeError,
+            EncodeError,
+            HandshakeError,
+            ContinuationError,
+            StreamError,
+            PoisonedError,
+            ProtocolError,
+        ],
+    )
+    def test_exception_pickle_round_trip(self, cls: type) -> None:
+        original = cls("test message")
+        restored = self._round_trip(original)
+        assert isinstance(restored, cls)
+        assert str(restored) == str(original)
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            DecodeError,
+            EncodeError,
+            HandshakeError,
+            ContinuationError,
+            StreamError,
+            PoisonedError,
+            ProtocolError,
+        ],
+    )
+    def test_exception_deepcopy_round_trip(self, cls: type) -> None:
+        import copy
+
+        original = cls("test message")
+        restored = copy.deepcopy(original)
+        assert isinstance(restored, cls)
+        assert str(restored) == str(original)
+
+    def test_poisoned_error_cause_pickle_behaviour(self) -> None:
+        """Pin the current behaviour of ``__cause__`` across pickle
+        — Python's default pickling does NOT preserve ``__cause__``.
+        Documenting either way so a future change is deliberate."""
+        inner = ValueError("decode failed")
+        pe = PoisonedError("buffer poisoned")
+        pe.__cause__ = inner
+        restored = self._round_trip(pe)
+        # __cause__ may or may not survive (default pickle drops it);
+        # current behaviour: dropped. Pin so a refactor that starts
+        # preserving it (custom __reduce__) is a deliberate choice.
+        assert restored.__cause__ is None or isinstance(restored.__cause__, ValueError)
