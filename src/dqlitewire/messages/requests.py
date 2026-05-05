@@ -757,43 +757,60 @@ class ClusterRequest(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("format", self.format)
-        if self.format == 0:
+        # Construction-time rejection still applies to V0 because
+        # this client's outbound shape is V1-only (the matched
+        # ``ServersResponse`` decoder reads the role fields). Upstream
+        # defines only V0=0 and V1=1 (include/dqlite.h); the gateway
+        # rejects anything else with DQLITE_PARSE.
+        if self.format == 0 and not getattr(self, "_decoded", False):
             raise ValueError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
                 "decodes V1 (with node role fields). Use format=1."
             )
-        if self.format != 1:
-            # Upstream defines only V0=0 and V1=1 (include/dqlite.h); the
-            # gateway rejects anything else with DQLITE_PARSE. Reject
-            # client-side so callers get a local ValueError instead of a
-            # confusing server failure.
+        if self.format not in (0, 1):
             raise ValueError(
-                f"ClusterRequest format must be 1 (V1); upstream defines "
-                f"only V0=0 and V1=1 and this library implements only V1. "
-                f"Got {self.format}."
+                f"ClusterRequest format must be 0 (V0) or 1 (V1); upstream "
+                f"defines only those two values. Got {self.format}."
             )
 
     def encode_body(self) -> bytes:
+        if self.format == 0:
+            # Encode rejection mirrors the construction-time gate: this
+            # client cannot consume the V0 ServersResponse, so emitting
+            # a V0 request is a wire-shape inconsistency.
+            from dqlitewire.exceptions import EncodeError
+
+            raise EncodeError(
+                "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
+                "not implemented in this Python library: ServersResponse only "
+                "decodes V1. Use format=1."
+            )
         return encode_uint64(self.format)
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
+        # Decode-side accepts V0 so a relaying proxy / mock server /
+        # captured-traffic replay tool can round-trip a V0 frame
+        # without losing the original byte shape. Re-encoding a
+        # decoded V0 still raises (encode_body refuses) — only the
+        # decode → introspect → drop flow is supported.
         if len(data) != 8:
             raise DecodeError(f"ClusterRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
-        if format_val == 0:
+        if format_val not in (0, 1):
             raise DecodeError(
-                "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
-                "not implemented in this Python library: ServersResponse only "
-                "decodes V1 (with node role fields)."
+                f"ClusterRequest format must be 0 (V0) or 1 (V1); upstream "
+                f"defines only those two values. Got {format_val}."
             )
-        if format_val != 1:
-            raise DecodeError(
-                f"ClusterRequest format must be 1 (V1); upstream defines "
-                f"only V0=0 and V1=1. Got {format_val}."
-            )
-        return cls(format_val)
+        # Bypass the V0 construction-time gate via a sentinel attr;
+        # the decoder is the one consumer that legitimately needs to
+        # round-trip a decoded V0 without raising.
+        instance = cls.__new__(cls)
+        instance._decoded = True  # type: ignore[attr-defined]
+        instance.format = format_val
+        instance.__post_init__()
+        return instance
 
 
 @dataclass

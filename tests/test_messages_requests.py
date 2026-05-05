@@ -708,22 +708,39 @@ class TestClusterRequest:
         with pytest.raises(ValueError, match="format=0.*not implemented"):
             ClusterRequest(format=0)
 
-    def test_decode_format_v0_raises_decode_error(self) -> None:
-        """208: decode_body with format=0 should raise DecodeError, not ValueError."""
-        from dqlitewire.exceptions import DecodeError
+    def test_decode_format_v0_accepted(self) -> None:
+        """A relaying proxy / mock server / captured-traffic replay
+        tool may need to round-trip a V0 ClusterRequest. Decode-side
+        accepts V0 so the byte shape is preserved; construction-side
+        and encode-side still reject V0 because this client's
+        outbound shape is V1-only (the matched ServersResponse
+        decoder reads the role fields)."""
         from dqlitewire.types import encode_uint64
 
-        body = encode_uint64(0)  # format=0
-        with pytest.raises(DecodeError, match="format=0.*not implemented"):
-            ClusterRequest.decode_body(body)
+        body = encode_uint64(0)
+        decoded = ClusterRequest.decode_body(body)
+        assert decoded.format == 0
+
+    def test_re_encode_decoded_v0_rejected(self) -> None:
+        """Decode-then-encode of a V0 ClusterRequest is NOT a
+        round-trip: the decoder accepts V0 to preserve the byte
+        shape for inspection, but encoding raises EncodeError so a
+        caller cannot accidentally emit a frame the client itself
+        cannot consume."""
+        from dqlitewire.exceptions import EncodeError
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(0)
+        decoded = ClusterRequest.decode_body(body)
+        with pytest.raises(EncodeError, match="format=0"):
+            decoded.encode_body()
 
     @pytest.mark.parametrize("fmt", [2, 3, 255, 0xFFFFFFFFFFFFFFFF])
     def test_unknown_format_rejected_in_constructor(self, fmt: int) -> None:
-        # Upstream defines only V0=0 and V1=1. V0 is rejected separately
-        # (Python library limitation). Any other value is undefined and
-        # must be rejected client-side so callers see a local ValueError
-        # instead of a confusing server-side failure.
-        with pytest.raises(ValueError, match="format must be 1"):
+        # Upstream defines only V0=0 and V1=1. Anything else is
+        # undefined and rejected client-side so callers see a local
+        # ValueError instead of a confusing server-side failure.
+        with pytest.raises(ValueError, match="format must be 0"):
             ClusterRequest(format=fmt)
 
     @pytest.mark.parametrize("fmt", [2, 3, 255, 0xFFFFFFFFFFFFFFFF])
@@ -732,7 +749,7 @@ class TestClusterRequest:
         from dqlitewire.types import encode_uint64
 
         body = encode_uint64(fmt)
-        with pytest.raises(DecodeError, match="format must be 1"):
+        with pytest.raises(DecodeError, match="format must be 0"):
             ClusterRequest.decode_body(body)
 
     def test_format_v1_positive_case(self) -> None:
