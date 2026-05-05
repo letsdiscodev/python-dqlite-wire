@@ -37,12 +37,18 @@ from dqlitewire.types import (
 )
 
 # Defense-in-depth upper bounds for count fields in response messages.
-# Tightened to SQLite's documented hard cap (SQLITE_MAX_COLUMN max =
-# 32767 per https://www.sqlite.org/limits.html). The default upstream
-# build uses 2000, but custom builds can go up to 32767 — anything
-# above that is provably malformed and could only come from a hostile
-# or corrupted peer.
-_MAX_COLUMN_COUNT: Final[int] = 32767
+# Tightened to dqlite's actual emission ceiling: the C server's
+# ``stmt.c:10`` defines ``STMT__MAX_COLUMNS = (1 << 8) - 1 = 255``
+# with the explicit comment "fits in one byte". Any column count
+# above 255 from a real cluster is provably malformed.
+#
+# SQLite itself documents ``SQLITE_MAX_COLUMN = 32767`` as the
+# absolute build-time maximum (https://www.sqlite.org/limits.html),
+# but dqlite never approaches it. Capping at 255 closes a
+# defence-in-depth amplification window: a hostile peer emitting
+# ``column_count = 32766`` would force ~32k empty-string
+# allocations before per-string size caps kick in.
+_MAX_COLUMN_COUNT: Final[int] = 255
 _MAX_FILE_COUNT: Final[int] = 100
 _MAX_NODE_COUNT: Final[int] = 10_000
 

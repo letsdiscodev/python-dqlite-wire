@@ -43,10 +43,10 @@ class TestFrameSizeCaps:
             FilesResponse.decode_body(body)
 
     def test_rows_response_count_exceeds_remaining_bytes(self) -> None:
-        """column_count=500 passes the absolute cap but cannot fit in a
-        body smaller than column_count * 8 bytes.
+        """column_count=200 passes the absolute cap (255) but cannot
+        fit in a body smaller than column_count * 8 bytes.
         """
-        body = encode_uint64(500)
+        body = encode_uint64(200)
         with pytest.raises(DecodeError, match="exceeds maximum possible"):
             RowsResponse.decode_body(body)
 

@@ -453,12 +453,13 @@ class TestInternalDecodeBoundsPinnedAgainstReadme:
         # intermediate allocations.
         assert _MAX_PARAM_COUNT == 32_766
 
-    def test_max_column_count_matches_sqlite_max_column(self) -> None:
+    def test_max_column_count_matches_dqlite_stmt_max(self) -> None:
         from dqlitewire.messages.responses import _MAX_COLUMN_COUNT
 
-        # SQLite's documented hard ceiling for column count, exposed
-        # as SQLITE_MAX_COLUMN. dqlite inherits.
-        assert _MAX_COLUMN_COUNT == 32767
+        # The C server's ``STMT__MAX_COLUMNS = (1 << 8) - 1 = 255``
+        # is the actual emission ceiling. Any column count above 255
+        # from a real dqlite cluster is provably malformed.
+        assert _MAX_COLUMN_COUNT == 255
 
     def test_max_file_count_is_one_hundred(self) -> None:
         from dqlitewire.messages.responses import _MAX_FILE_COUNT
