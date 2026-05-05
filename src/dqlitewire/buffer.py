@@ -28,11 +28,16 @@ class WriteBuffer:
     def __init__(self) -> None:
         self._data = bytearray()
 
-    def write(self, data: bytes) -> None:
-        """Append data to buffer."""
+    def write(self, data: bytes | bytearray | memoryview) -> None:
+        """Append data to buffer.
+
+        Accepts any bytes-like object; ``bytearray.extend`` consumes
+        the buffer protocol so the annotation is widened to match the
+        runtime contract.
+        """
         self._data.extend(data)
 
-    def write_padded(self, data: bytes) -> None:
+    def write_padded(self, data: bytes | bytearray | memoryview) -> None:
         """Append data with padding to word boundary.
 
         Concurrency contract — narrow:
@@ -65,7 +70,10 @@ class WriteBuffer:
             # ``b'BBBBBAAA'`` instead of ``b'AAAAA\x00\x00\x00'``.
             # See ``test_write_padded_no_interleaved_tearing_under_contention``
             # for the race shape this guards against.
-            self._data.extend(data + b"\x00" * (WORD_SIZE - remainder))
+            #
+            # Materialise via ``bytes(data)`` so the bytes-like input
+            # supports ``+`` with the padding ``bytes`` literal.
+            self._data.extend(bytes(data) + b"\x00" * (WORD_SIZE - remainder))
         else:
             self._data.extend(data)
 

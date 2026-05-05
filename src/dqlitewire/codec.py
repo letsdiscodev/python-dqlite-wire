@@ -630,8 +630,8 @@ class MessageDecoder:
 
         return msg
 
-    def decode_bytes(self, data: bytes) -> Message:
-        """Decode a message from bytes.
+    def decode_bytes(self, data: bytes | bytearray | memoryview) -> Message:
+        """Decode a message from bytes-like input.
 
         Raises ProtocolError if the decoder is poisoned.
         Raises ProtocolError if called on a request decoder before decode_handshake().
@@ -642,6 +642,12 @@ class MessageDecoder:
                 "Protocol handshake not yet received. "
                 "Call decode_handshake() before decode_bytes()."
             )
+        # Materialise once so the per-message decoders that take
+        # ``bytes`` can rely on the type. The widened input shape is
+        # for the convenience of zero-copy callers; the per-message
+        # decoders still own a ``bytes``-typed contract.
+        if not isinstance(data, bytes):
+            data = bytes(data)
         if len(data) < HEADER_SIZE:
             raise DecodeError(f"Message too short: {len(data)} bytes")
 
@@ -742,7 +748,9 @@ class MessageDecoder:
 
 
 def decode_message(
-    data: bytes, is_request: bool = False, version: int = PROTOCOL_VERSION
+    data: bytes | bytearray | memoryview,
+    is_request: bool = False,
+    version: int = PROTOCOL_VERSION,
 ) -> Message:
     """Convenience function to decode a single message.
 
