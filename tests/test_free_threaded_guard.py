@@ -93,7 +93,13 @@ class TestFreeThreadedGuard:
         # proving the warning was issued. A clean exit would mean no warning.
         result = _run_import({"DQLITEWIRE_ALLOW_FREE_THREADED": "1"})
         assert result.returncode != 0
-        assert "RuntimeWarning" in result.stderr or "free-threaded" in result.stderr.lower()
+        # Must be RuntimeWarning specifically (not UserWarning) so
+        # ``-W error::RuntimeWarning`` setups catch it.
+        assert "RuntimeWarning" in result.stderr
+        # Must include the actionable advice phrase from the docstring
+        # so operators triaging the warning learn the contract instead
+        # of seeing a bare "free-threaded" mention.
+        assert "single-owner-per-instance" in result.stderr
 
     def test_import_escape_hatch_without_warning_filter(self) -> None:
         """Without -W error, the import actually succeeds (warning is just printed)."""
