@@ -1140,6 +1140,14 @@ class ServersResponse(Message):
                 f"Node count {count} exceeds maximum possible in "
                 f"{remaining} bytes of remaining data"
             )
+        # Aggregate unknown roles seen this call so warn-mode emits ONE
+        # WARNING per response rather than one per node. A
+        # ``cluster_info()`` poll over an N-node cluster after a server
+        # upgrade with a new role would otherwise produce N WARNINGs
+        # per poll (continuous flow on operator dashboards). The role
+        # int domain is finite and small, so deduping by raw value
+        # keeps the message compact regardless of node count.
+        unknown_seen: list[int] = []
         for _ in range(count):
             node_id = decode_uint64(view[offset:])
             offset += 8
@@ -1165,14 +1173,17 @@ class ServersResponse(Message):
                 # warn / accept: substitute SPARE (safe default — won't
                 # be probed for leadership, can't serve writes).
                 if unknown_role_policy == "warn":
-                    logger.warning(
-                        "ServersResponse: unknown NodeRole %d at offset %d; "
-                        "substituting SPARE under unknown_role_policy='warn'",
-                        raw_role,
-                        offset - 8,
-                    )
+                    unknown_seen.append(raw_role)
                 role = NodeRole.SPARE
             nodes.append(NodeInfo(node_id, address, role))
+        if unknown_seen:
+            unique_roles = sorted(set(unknown_seen))
+            logger.warning(
+                "ServersResponse: substituted SPARE for %d node(s) with "
+                "unknown role(s) %s under unknown_role_policy='warn'",
+                len(unknown_seen),
+                unique_roles,
+            )
         if offset != len(view):
             # Strict-decode parity with sibling variable-length
             # decoders: conforming Go/C servers never emit trailing

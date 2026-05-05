@@ -1,6 +1,7 @@
 """Tests for tuple encoding/decoding."""
 
 import struct
+from typing import cast
 
 import pytest
 
@@ -93,7 +94,7 @@ class TestParamsTuple:
         decoded, _ = decode_params_tuple(encoded)
         assert decoded[0] == 42
         assert decoded[1] == "hello"
-        assert abs(decoded[2] - 3.14) < 0.0001
+        assert abs(cast(float, decoded[2]) - 3.14) < 0.0001
         assert decoded[3] is None
         assert decoded[4] == b"blob"
 
@@ -137,7 +138,7 @@ class TestParamsTuple:
         decoded, _ = decode_params_tuple(encoded)  # count read from data
         assert decoded[0] == 42
         assert decoded[1] == "hello"
-        assert abs(decoded[2] - 3.14) < 0.0001
+        assert abs(cast(float, decoded[2]) - 3.14) < 0.0001
         assert decoded[3] is None
 
     def test_encode_v1_schema(self) -> None:
@@ -245,7 +246,7 @@ class TestParamsTupleExternalCount:
             data_without_count, count=3, schema=0, buffer_offset=1
         )
         assert decoded[0] == 42
-        assert abs(decoded[1] - 3.14) < 1e-10
+        assert abs(cast(float, decoded[1]) - 3.14) < 1e-10
         assert decoded[2] == "text"
 
     def test_decode_with_external_count_zero(self) -> None:
@@ -652,7 +653,7 @@ class TestRowValues:
         decoded, _ = decode_row_values(encoded, types)
         assert decoded[0] == 42
         assert decoded[1] == "hello"
-        assert abs(decoded[2] - 3.14) < 0.0001
+        assert abs(cast(float, decoded[2]) - 3.14) < 0.0001
 
     def test_encode_mismatched_lengths_raises_encode_error(self) -> None:
         """Mismatched values/types lengths should raise EncodeError, not ValueError."""

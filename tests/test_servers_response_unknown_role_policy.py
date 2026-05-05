@@ -51,7 +51,10 @@ def test_unknown_role_warn_substitutes_spare(caplog: pytest.LogCaptureFixture) -
         resp = ServersResponse.decode_body(body, unknown_role_policy="warn")
     assert len(resp.nodes) == 1
     assert resp.nodes[0].role is NodeRole.SPARE
-    assert any("unknown NodeRole 99" in r.message for r in caplog.records)
+    # Aggregated single WARNING per response: cardinality of unknown
+    # roles is small; one record should mention 99.
+    assert any("99" in r.message for r in caplog.records)
+    assert any("substituted SPARE" in r.message for r in caplog.records)
 
 
 def test_unknown_role_accept_substitutes_spare_silently(
@@ -82,3 +85,38 @@ def test_invalid_policy_raises_value_error() -> None:
     body = _build_body(1, "h:9001", raw_role=0)
     with pytest.raises(ValueError, match="unknown_role_policy"):
         ServersResponse.decode_body(body, unknown_role_policy="bogus")
+
+
+def test_unknown_role_warn_aggregates_one_log_per_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Pin: warn-mode emits ONE WARNING per response regardless of
+    how many nodes carry unknown roles. A multi-node ``cluster_info()``
+    poll over a cluster after a server upgrade would otherwise produce
+    one WARNING per node per poll — continuous flow on operator
+    dashboards."""
+    # Build a body with 3 nodes carrying unknown role 99.
+    body_parts = bytearray()
+    import struct as _struct
+
+    body_parts.extend(_struct.pack("<Q", 3))  # count
+    for node_id in (1, 2, 3):
+        body_parts.extend(_struct.pack("<Q", node_id))
+        addr = f"h:{9000 + node_id}".encode()
+        body_parts.extend(addr + b"\x00")
+        # pad address to word boundary
+        pad = (8 - ((len(addr) + 1) % 8)) % 8
+        body_parts.extend(b"\x00" * pad)
+        body_parts.extend(_struct.pack("<Q", 99))  # unknown role
+    body = bytes(body_parts)
+
+    with caplog.at_level(logging.WARNING):
+        resp = ServersResponse.decode_body(body, unknown_role_policy="warn")
+
+    # All three nodes substituted SPARE.
+    assert all(n.role is NodeRole.SPARE for n in resp.nodes)
+    # ONE warning record total — not one per node.
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1, f"expected 1 WARNING, got {len(warnings)}"
+    assert "3 node(s)" in warnings[0].message
+    assert "99" in warnings[0].message

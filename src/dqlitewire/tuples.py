@@ -12,7 +12,7 @@ from typing import Any, Final
 
 from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
-from dqlitewire.types import decode_value, encode_value, pad_to_word
+from dqlitewire.types import WireValue, decode_value, encode_value, pad_to_word
 
 # Valid ValueType codes as integers, for fast membership testing in hot paths.
 _VALID_TYPE_CODES = frozenset(int(v) for v in ValueType)
@@ -159,7 +159,7 @@ def decode_params_tuple(
     count: int | None = None,
     schema: int = 0,
     buffer_offset: int = 0,
-) -> tuple[list[Any], int]:
+) -> tuple[list[WireValue], int]:
     """Decode a params tuple.
 
     Schema 0 (V0): uint8 count, schema 1 (V1): uint32 count.
@@ -254,7 +254,7 @@ def decode_params_tuple(
     offset = padded_header_len
 
     # Read values
-    values: list[Any] = []
+    values: list[WireValue] = []
     for vtype in types:
         value, consumed = decode_value(data[offset:], vtype)
         values.append(value)
@@ -359,12 +359,12 @@ def encode_row_values(values: Sequence[Any], types: Sequence[ValueType]) -> byte
 
 def decode_row_values(
     data: bytes | memoryview, types: Sequence[ValueType]
-) -> tuple[list[Any], int]:
+) -> tuple[list[WireValue], int]:
     """Decode row values according to column types.
 
     Returns (values, bytes_consumed).
     """
-    values: list[Any] = []
+    values: list[WireValue] = []
     offset = 0
 
     for vtype in types:
