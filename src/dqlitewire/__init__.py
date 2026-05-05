@@ -1,4 +1,60 @@
-"""Pure Python wire protocol implementation for dqlite."""
+"""Pure Python wire protocol implementation for dqlite.
+
+Schema coverage matrix (Python vs canonical Go vs C server):
+
+==================  ==========  ==========  ============
+Request / Response  Go canon    Python      C server
+==================  ==========  ==========  ============
+Exec                0, 1        0, 1        0, 1
+Query               0, 1        0, 1        0, 1
+ExecSQL             0, 1        0, 1        0, 1
+QuerySQL            0, 1        0, 1        0, 1
+Prepare             0           0, 1 (*)    0, 1
+Stmt response       0           0, 1 (*)    0, 1
+==================  ==========  ==========  ============
+
+(*) Python supports schema=1 for Prepare / Stmt — not Go-canonical
+but interoperates with the C server's V1 shape (carries
+``tail_offset`` to the response so a multi-statement script's tail
+can be re-prepared without round-tripping the original SQL again).
+A Python ``PrepareRequest(schema=1)`` against a Go-canonical client
+would be rejected; against a real C server it works.
+
+Cap defaults that affect interop and hostile-server resistance:
+
+- ``ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE``: 64 MiB. Go has no upper
+  bound on message size (``recvBody`` doubles indefinitely until
+  ``n`` fits). A legitimate dqlite server emitting a Files response
+  from a 1+ GB database would be silently accepted by Go and rejected
+  by Python. Override via the ``max_message_size`` kwarg on
+  ``ReadBuffer`` / ``MessageDecoder`` for large-result workloads.
+- ``_MAX_BLOB_SIZE`` and ``_MAX_TEXT_VALUE_SIZE``: 64 MiB each
+  (aligned with the message-size cap so a value fitting in the
+  frame envelope is not rejected at the inner cap).
+- ``_MAX_COLUMN_COUNT``: 255 (matches the C server's
+  ``STMT__MAX_COLUMNS``; any column count above 255 from a real
+  cluster is provably malformed).
+
+Empty-params encoding: empty ``Tuple`` parameters encode as zero
+bytes by default (Go-style); the C server's ``tuple_encoder``
+emits 8 bytes (count=0 + 7 padding) for the same shape. The
+decoder accepts both forms; ``encode_params_tuple(emit_empty_header=
+True)`` produces the C-style 8-byte empty-params body for callers
+that need byte-identity round-trip with C-origin captures.
+
+UNIXTIME columns decode to ``int`` (seconds since epoch), unlike
+Go which returns ``time.Time``. Conversion to ``datetime`` is the
+dbapi layer's job; bare wire-layer consumers must convert
+themselves.
+
+``RowsResponse._get_row_types`` falls through to ``encode_value(v)[1]``
+inference when both ``row_types`` and ``column_types`` are empty.
+This inference cannot pick UNIXTIME (server-only), ISO8601 (string
+indistinguishable from TEXT), or BOOLEAN (only Python ``bool``
+triggers, not int 0/1 from a BOOLEAN-decltype column). Pass
+``column_types`` or ``row_types`` explicitly when constructing
+``RowsResponse`` for byte-shape parity with real C-server emission.
+"""
 
 import os as _os
 import sys as _sys

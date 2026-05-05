@@ -605,10 +605,14 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
     elif value_type == ValueType.INTEGER:
         return decode_int64(data), 8
     elif value_type == ValueType.UNIXTIME:
-        # Return raw int64 to preserve round-trip identity at the wire level.
-        # Higher-level clients (like the dqlite DBAPI) turn this into a
-        # datetime, matching what Go's Rows.Next() does in the database/sql
-        # driver layer.
+        # Return raw int64 (seconds since epoch) to preserve round-trip
+        # identity at the wire level. Higher-level clients
+        # (``dqlitedbapi``) turn this into a UTC-aware ``datetime``;
+        # Go's ``Rows.Next()`` does the conversion at the
+        # ``database/sql`` driver layer with ``time.Unix(...)``.
+        # Bare wire-layer consumers must convert themselves; the wire
+        # layer's parity bar is "raw bytes → primitive", not "raw
+        # bytes → semantic".
         return decode_int64(data), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
