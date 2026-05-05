@@ -261,6 +261,14 @@ SQLITE_NOTADB: Final[int] = 26
 # ``include/dqlite.h``) is not silently swallowed when an upstream
 # ``failure(req, DQLITE_ERROR, ...)`` reply arrives — the dqlite
 # emission's wording does not match these substrings.
+# Canonical prefix for wire-decode-failure exception text. The
+# disconnect-classification chain (wire → client.ProtocolError →
+# dbapi.OperationalError(code=None) → SA's _dqlite_disconnect_messages
+# substring scan) depends on this exact lowercase phrase appearing in
+# the rendered exception message. Five sites cooperate via the
+# substring; defining it here keeps them in lockstep.
+WIRE_DECODE_FAILED_PREFIX: Final[str] = "wire decode failed"
+
 NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
     # Anchored to the canonical SQLite phrasing — the bare token
     # "cannot rollback" was previously also matched but is too
