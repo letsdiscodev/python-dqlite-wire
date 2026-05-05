@@ -1040,7 +1040,13 @@ class ServersResponse(Message):
         return result
 
     @classmethod
-    def decode_body(cls, data: bytes, schema: int = 0) -> "ServersResponse":
+    def decode_body(
+        cls,
+        data: bytes,
+        schema: int = 0,
+        *,
+        unknown_role_policy: str = "reject",
+    ) -> "ServersResponse":
         """Decode the modern V1 cluster body shape (id + address + role).
 
         The decoder unconditionally parses the V1 (3-field-per-node)
@@ -1063,7 +1069,32 @@ class ServersResponse(Message):
         not addressed here; format-aware decoding would ripple
         ``format=`` plumbing into the client layer for a shape no
         in-tree path emits.
+
+        ``unknown_role_policy`` controls forward-compat behaviour for
+        new ``NodeRole`` values that this client predates (e.g. a
+        future server adds a Witness role with raw value 3):
+
+        - ``"reject"`` (default): raise ``DecodeError``. Matches
+          historical behaviour; a known-set client cannot accept
+          unknown roles.
+        - ``"warn"``: emit a ``logger.warning`` and substitute
+          ``NodeRole.SPARE`` (the most-conservative safe default — a
+          spare cannot serve writes and won't be probed for
+          leadership). The raw int is logged for diagnostics.
+        - ``"accept"``: silently substitute ``NodeRole.SPARE``. Use
+          only when the caller has independent confidence the new
+          role is benign.
+
+        Go's ``getNodes`` (``message.go:372-383``) silently accepts
+        any uint64 as ``NodeRole``; downstream ``String()`` returns
+        ``"unknown role"``. Python's ``"warn"`` / ``"accept"`` modes
+        approach that posture; ``"reject"`` keeps the strict default.
         """
+        if unknown_role_policy not in ("reject", "warn", "accept"):
+            raise ValueError(
+                "unknown_role_policy must be 'reject', 'warn', or "
+                f"'accept'; got {unknown_role_policy!r}"
+            )
         # Memoryview for O(1) slicing in the per-node loop.
         view = memoryview(data)
         nodes: list[NodeInfo] = []
@@ -1095,10 +1126,24 @@ class ServersResponse(Message):
             try:
                 role = NodeRole(raw_role)
             except ValueError as exc:
-                valid = sorted(r.value for r in NodeRole)
-                raise DecodeError(
-                    f"Invalid node role {raw_role} at offset {offset - 8}; expected one of {valid}"
-                ) from exc
+                if unknown_role_policy == "reject":
+                    valid = sorted(r.value for r in NodeRole)
+                    raise DecodeError(
+                        f"Invalid node role {raw_role} at offset {offset - 8}; "
+                        f"expected one of {valid}"
+                    ) from exc
+                # warn / accept: substitute SPARE (safe default — won't
+                # be probed for leadership, can't serve writes).
+                if unknown_role_policy == "warn":
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "ServersResponse: unknown NodeRole %d at offset %d; "
+                        "substituting SPARE under unknown_role_policy='warn'",
+                        raw_role,
+                        offset - 8,
+                    )
+                role = NodeRole.SPARE
             nodes.append(NodeInfo(node_id, address, role))
         if offset != len(view):
             # Strict-decode parity with sibling variable-length
