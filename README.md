@@ -66,8 +66,9 @@ network contexts and are all opt-out-able.
 - `ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE` (`ReadBuffer(max_message_size=...)`,
   default 64 MiB) — envelope cap on a single frame. Class-scoped, not
   exported at module level.
-- `_MAX_PARAM_COUNT` (100,000), `_MAX_COLUMN_COUNT` (32,767 — matches
-  SQLite's `SQLITE_MAX_COLUMN`), `_MAX_FILE_COUNT` (100),
+- `_MAX_PARAM_COUNT` (32,766 — matches SQLite's
+  `SQLITE_MAX_VARIABLE_NUMBER`), `_MAX_COLUMN_COUNT` (255 — matches
+  the C server's `STMT__MAX_COLUMNS`), `_MAX_FILE_COUNT` (100),
   `_MAX_NODE_COUNT` (10,000) — internal sanity bounds on decoded
   tuple / response sizes.
 

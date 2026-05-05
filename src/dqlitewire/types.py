@@ -391,8 +391,9 @@ def encode_blob(value: bytes, *, max_blob_size: int = _MAX_BLOB_SIZE) -> bytes:
     Format: uint64 length + data + padding
 
     ``max_blob_size`` is the per-blob cap. Defaults to
-    ``_MAX_BLOB_SIZE`` (16 MiB) — a defense-in-depth ceiling matching
-    the decode-side cap. Callers handling larger BLOBs (per their
+    ``_MAX_BLOB_SIZE`` (64 MiB) — aligned with the message-size cap
+    so a value fitting in the frame envelope is not rejected at
+    the inner cap. Callers handling larger BLOBs (per their
     deployment's actual ``raft.log.entry_size_max``) can raise this
     explicitly. The outer ``max_message_size`` cap on the codec
     always wins regardless.
