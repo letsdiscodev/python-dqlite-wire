@@ -251,6 +251,7 @@ def decode_text(
     *,
     max_size: int = _MAX_TEXT_VALUE_SIZE,
     label: str = "Text",
+    errors: str = "strict",
 ) -> tuple[str, int]:
     """Decode null-terminated UTF-8 text.
 
@@ -265,6 +266,15 @@ def decode_text(
     ``max_size`` is exceeded, so a caller passing
     ``label="leader address"`` gets ``"leader address length N exceeds
     maximum (M)"`` rather than the generic ``"Text length..."``.
+
+    ``errors`` controls UTF-8 decode error handling — passes through
+    to ``bytes.decode``. The default ``"strict"`` matches the dqlite
+    contract (UTF-8 by spec). Legacy / non-UTF-8 data (e.g. a SQLite
+    database from a pre-3.x install storing TEXT in latin-1) can use
+    ``"replace"`` or ``"backslashreplace"`` to coerce. C / Go clients
+    pass non-UTF-8 bytes through without validation; the strict
+    default is a Python-side defensive narrowing, not a wire-spec
+    requirement.
 
     Wire-protocol limitation: TEXT is NUL-terminated, so a value with
     embedded NULs on the server side (e.g. written by a non-dqlite
@@ -307,7 +317,7 @@ def decode_text(
                     raise DecodeError(f"{label} length exceeds maximum ({max_size})")
                 raise DecodeError(f"{label} not null-terminated")
             try:
-                text = materialized[:null_pos].decode("utf-8")
+                text = materialized[:null_pos].decode("utf-8", errors=errors)
             except UnicodeDecodeError as e:
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
         else:
@@ -337,7 +347,7 @@ def decode_text(
                     raise DecodeError(f"{label} length exceeds maximum ({max_size})")
                 raise DecodeError(f"{label} not null-terminated")
             try:
-                text = b"".join(chunks).decode("utf-8")
+                text = b"".join(chunks).decode("utf-8", errors=errors)
             except UnicodeDecodeError as e:
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
     else:
@@ -362,7 +372,7 @@ def decode_text(
         if null_pos > max_size:
             raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
         try:
-            text = data[:null_pos].decode("utf-8")
+            text = data[:null_pos].decode("utf-8", errors=errors)
         except UnicodeDecodeError as e:
             raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
 
