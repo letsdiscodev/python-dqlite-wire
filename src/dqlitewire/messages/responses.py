@@ -135,9 +135,36 @@ def _sanitize_server_text(s: str) -> str:
 
     Leaves tab and LF untouched so multi-line server diagnostics
     render correctly. See the regex above for the full replacement
-    class.
+    class. For logger output specifically, wrap via
+    :func:`_sanitize_for_log` which additionally escapes LF so a
+    hostile server cannot inject fake log lines into syslog /
+    journald via ``\\n`` in a server-supplied field.
     """
     return _CONTROL_CHARS_RE.sub("?", s)
+
+
+def _sanitize_for_log(s: str) -> str:
+    """Render server-supplied text safe for line-oriented log output.
+
+    Applies :func:`_sanitize_server_text` (control / bidi / invisible
+    char replacement) AND escapes LF as the literal two-byte sequence
+    ``\\n`` (backslash + 'n'). The exception-message rendering keeps
+    raw LF for interactive debugging; this helper is for
+    ``logger.warning`` / ``logger.error`` call sites that
+    interpolate server-derived text into a single log record.
+
+    Without LF escaping, a hostile ``FailureResponse.message``
+    containing a newline would split the log line in syslog /
+    journald and the operator's structured log pipeline would treat
+    the second half as if it came from the dqlite client — a
+    log-injection vector with bounded but real impact.
+
+    CR is already replaced with ``?`` by ``_sanitize_server_text``
+    (it is in the control-chars regex); only LF passes through that
+    helper deliberately, so only LF needs the additional escape
+    here.
+    """
+    return _sanitize_server_text(s).replace("\n", "\\n")
 
 
 @dataclass
