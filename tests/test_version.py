@@ -46,8 +46,6 @@ def test_all_entries_are_resolvable_attributes() -> None:
     (python-dqlite-client / python-dqlite-dbapi / sqlalchemy-dqlite
     all pull cross-package symbols from this surface)."""
     for name in dqlitewire.__all__:
-        assert hasattr(dqlitewire, name), (
-            f"__all__ lists {name!r} but module has no such attribute"
-        )
+        assert hasattr(dqlitewire, name), f"__all__ lists {name!r} but module has no such attribute"
     # Sanity: __all__ contains no duplicates.
     assert len(dqlitewire.__all__) == len(set(dqlitewire.__all__))
