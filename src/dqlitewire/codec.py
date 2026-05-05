@@ -151,6 +151,16 @@ class MessageEncoder:
             version: Protocol version to use in handshake. Defaults to
                      PROTOCOL_VERSION (1). Use PROTOCOL_VERSION_LEGACY
                      (0x86104dd760433fe5) for pre-1.0 dqlite servers.
+
+        Note: ``version`` is used for the handshake bytes only.
+        Body shape is the caller's responsibility — ``encode(message)``
+        always invokes the modern ``message.encode()``. To emit a
+        legacy-shape ``LeaderResponse``, call
+        ``LeaderResponse.encode_body_legacy()`` directly. Asymmetric
+        with ``MessageDecoder`` which auto-dispatches body shape on
+        ``self._version``; the asymmetry is documented and intentional
+        (mock-server / proxy authors are the only callers needing
+        legacy emission).
         """
         if version not in _SUPPORTED_VERSIONS:
             raise HandshakeError(

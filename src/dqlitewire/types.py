@@ -587,6 +587,16 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
     """Decode a value from wire format.
 
     Returns (value, bytes_consumed).
+
+    Note: TEXT / ISO8601 cells are decoded with strict UTF-8 (the
+    ``decode_text`` default). The ``errors=`` / ``max_size=`` knobs
+    that ``decode_text`` exposes are intentionally not threaded
+    through this entry point — the wire-layer contract for TEXT
+    is "valid UTF-8 only". Cluster data that violates this (e.g.
+    rows from a legacy SQLite store with latin-1 TEXT) cannot be
+    decoded at the row level; callers needing a permissive decode
+    must consume frames via ``MessageDecoder`` and call
+    ``decode_text`` directly with their preferred error policy.
     """
     if value_type == ValueType.BOOLEAN:
         # Permissive truthiness decode matching Go's
