@@ -278,6 +278,14 @@ NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
 TX_AUTO_ROLLBACK_PRIMARY_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
 )
+# See also ``sqlalchemy-dqlite/src/sqlalchemydqlite/base.py``'s
+# ``_BARE_DBE_DISCONNECT_CODES`` which classifies CORRUPT/FORMAT/
+# NOTADB as slot-fatal at the SA pool layer. The two sets serve
+# different purposes — wire-side auto-rollback bookkeeping clear vs
+# pool-side connection eviction — and overlap on SQLITE_CORRUPT only.
+# A maintainer adjusting either set should re-evaluate the other:
+# they are independently correct today but the overlap is not
+# accidental.
 
 
 # Cumulative-row cap for a single SELECT result spanning multiple
