@@ -32,24 +32,25 @@ type WireInput = bool | int | float | str | bytes | bytearray | memoryview | mma
 # widens to ``Any`` only at the PEP 249 row-tuple boundary.
 type WireValue = bool | int | float | str | bytes | None
 
-# Per-BLOB byte cap. The overall frame-size cap in ``buffer.py`` (64 MiB)
-# already bounds any single message, but a hostile or buggy peer can
-# otherwise pack a single BLOB field that consumes the whole frame. The
-# cap is a defensive ceiling — real applications do not send
-# multi-megabyte blobs over the wire — and keeps the decoder fast-failing
-# well before large allocations or arithmetic on attacker-controlled
-# lengths. Sits beside ``_MAX_PARAM_COUNT`` / ``_MAX_COLUMN_COUNT`` /
-# ``_MAX_FILE_COUNT`` / ``_MAX_NODE_COUNT`` in spirit.
-_MAX_BLOB_SIZE: Final[int] = 16 * 1024 * 1024  # 16 MiB
+# Per-BLOB byte cap. Aligned with ``DEFAULT_MAX_MESSAGE_SIZE``
+# (64 MiB) in ``buffer.py`` so a legitimate large-blob workload that
+# fits within the frame budget is not rejected at the inner cap.
+# The previous 16 MiB ceiling left a 48 MiB middle range unreachable:
+# a legitimate large-database response would hit the BLOB cap before
+# the message cap. The cap is still a defensive ceiling — real
+# applications do not send multi-megabyte blobs over the wire — and
+# keeps the decoder fast-failing well before unbounded allocations
+# on attacker-controlled lengths.
+_MAX_BLOB_SIZE: Final[int] = 64 * 1024 * 1024  # 64 MiB
 
 # Per-TEXT cell byte cap. Symmetric with ``_MAX_BLOB_SIZE`` — a TEXT
 # row cell (TEXT or ISO8601 wire type) is NUL-terminated UTF-8 and
-# otherwise unbounded within the frame envelope. Matches the 16 MiB
-# BLOB ceiling: real applications never send multi-megabyte string
-# columns over the wire, and this defensive cap keeps ``decode_text``
-# from scanning or allocating attacker-controlled lengths that
-# exceed the BLOB ceiling.
-_MAX_TEXT_VALUE_SIZE: Final[int] = 16 * 1024 * 1024  # 16 MiB
+# otherwise unbounded within the frame envelope. Matches the BLOB
+# ceiling: real applications never send multi-megabyte string columns
+# over the wire, and this defensive cap keeps ``decode_text`` from
+# scanning or allocating attacker-controlled lengths that exceed the
+# message envelope.
+_MAX_TEXT_VALUE_SIZE: Final[int] = 64 * 1024 * 1024  # 64 MiB
 
 # Cap on the stringified representation of an out-of-range integer in
 # EncodeError messages. A hostile or buggy caller passing ``10 ** 500``

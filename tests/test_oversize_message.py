@@ -59,19 +59,15 @@ class TestOversizeSqlEncode:
         assert decoded.sql == big_sql
 
     def test_just_over_sql_text_cap_is_rejected_at_encode(self) -> None:
-        """SQL text fields are now capped on encode at the same
-        ``_MAX_TEXT_VALUE_SIZE`` (16 MiB) the decoder applies, so an
-        oversize SQL is rejected at construction time rather than
-        producing bytes the decoder will refuse. Mirrors the
+        """SQL text fields are capped on encode at
+        ``_MAX_TEXT_VALUE_SIZE`` (the same cap the decoder applies),
+        so an oversize SQL is rejected at construction time rather
+        than producing bytes the decoder will refuse. Mirrors the
         cap-symmetry pattern applied to other text fields."""
         from dqlitewire.exceptions import EncodeError
+        from dqlitewire.types import _MAX_TEXT_VALUE_SIZE
 
-        # 16 MiB + 1 byte; the SQL-text cap fires before the outer
-        # frame cap (which is at 64 MiB). The EncodeError is the
-        # caller-actionable diagnostic — without the cap, the
-        # encoder produced bytes that decode_text would reject on
-        # the receive side with a non-actionable wire error.
-        oversize = "x" * (16 * 1024 * 1024 + 1)
+        oversize = "x" * (_MAX_TEXT_VALUE_SIZE + 1)
         with pytest.raises(EncodeError):
             QuerySqlRequest(db_id=0, sql=oversize).encode_body()
 

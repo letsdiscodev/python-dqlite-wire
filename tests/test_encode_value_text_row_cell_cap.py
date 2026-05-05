@@ -17,9 +17,7 @@ import pytest
 
 from dqlitewire.constants import ValueType
 from dqlitewire.exceptions import EncodeError
-from dqlitewire.types import decode_value, encode_value
-
-_MAX_TEXT_VALUE_SIZE = 16 * 1024 * 1024
+from dqlitewire.types import _MAX_TEXT_VALUE_SIZE, decode_value, encode_value
 
 
 def test_encode_value_text_at_cap_round_trips() -> None:
