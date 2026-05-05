@@ -393,15 +393,21 @@ class TestResultResponse:
         assert decoded.last_insert_id == 0
         assert decoded.rows_affected == 0
 
-    def test_decodes_uint64_max(self) -> None:
-        """Wire is uint64; the max boundary must round-trip without
-        overflow or sign coercion."""
+    def test_decodes_uint64_max_last_insert_id(self) -> None:
+        """``last_insert_id`` is wire uint64 and round-trips at the
+        unsigned-max boundary without overflow or sign coercion.
+        ``rows_affected`` has its own INT_MAX cap (the C server's
+        ``sqlite3_changes`` cannot exceed it) and is tested at the
+        boundary in ``test_result_response_caps.py``."""
         import struct
 
-        body = struct.pack("<QQ", 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+        # ``rows_affected`` capped at INT_MAX; pair it with the
+        # boundary value rather than uint64-max.
+        int_max = (1 << 31) - 1
+        body = struct.pack("<QQ", 0xFFFFFFFFFFFFFFFF, int_max)
         decoded = ResultResponse.decode_body(body)
         assert decoded.last_insert_id == 0xFFFFFFFFFFFFFFFF
-        assert decoded.rows_affected == 0xFFFFFFFFFFFFFFFF
+        assert decoded.rows_affected == int_max
 
     def test_decodes_signed_negative_rowid_as_unsigned(self) -> None:
         """The C server gateway casts sqlite3_last_insert_rowid()

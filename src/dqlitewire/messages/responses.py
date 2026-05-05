@@ -1,6 +1,7 @@
 """Server to client response messages."""
 
 import re
+import struct
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final
 
@@ -513,6 +514,19 @@ class StmtResponse(Message):
         return cls(db_id, stmt_id, num_params, tail_offset, schema=schema)
 
 
+# Defensive cap on ``rows_affected``. The upstream C server returns
+# ``sqlite3_changes(...)`` which is C ``int`` (``INT_MAX = 2**31 - 1``)
+# before being cast to uint64 on the wire; ``gateway.c:484`` carries
+# a FIXME to migrate to ``sqlite3_changes64`` but has not. A real
+# cluster therefore never emits a value above ``INT_MAX``.
+#
+# Without this cap, a malicious server could emit ``rows_affected =
+# 2**63`` and Python downstream might propagate huge values into
+# application logic. The cap is purely defensive — when the C server
+# moves to ``sqlite3_changes64``, the cap will need raising.
+_MAX_ROWS_AFFECTED: Final[int] = (1 << 31) - 1
+
+
 @dataclass
 class ResultResponse(Message):
     """Statement execution result.
@@ -523,9 +537,10 @@ class ResultResponse(Message):
     The upstream C server casts ``sqlite3_last_insert_rowid()``
     (``sqlite3_int64``) through ``(uint64_t)`` before sending, so a
     negative SQLite rowid arrives here as ``2**64 - abs(rowid)``.
-    Downstream layers that surface this to PEP 249's
-    ``cursor.lastrowid`` (which mirrors ``sqlite3.Connection.lastrowid``,
-    a signed value) may want to re-cast as int64 for stdlib parity.
+    The :attr:`last_insert_id_signed` property returns the int64-cast
+    value for downstream layers that want stdlib-sqlite parity
+    (``cursor.lastrowid`` mirrors ``sqlite3.Connection.lastrowid``,
+    a signed value).
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.RESULT
@@ -537,6 +552,19 @@ class ResultResponse(Message):
         _validate_uint64("last_insert_id", self.last_insert_id)
         _validate_uint64("rows_affected", self.rows_affected)
 
+    @property
+    def last_insert_id_signed(self) -> int:
+        """``last_insert_id`` re-cast as int64.
+
+        The wire field is uint64 by spec; SQLite's ``sqlite3_int64``
+        rowid can be negative, in which case the unsigned wire value
+        is ``2**64 - abs(rowid)``. Downstream layers wanting stdlib
+        parity (``sqlite3.Connection.lastrowid`` is signed) read this
+        property; raw wire users keep the unsigned ``last_insert_id``.
+        """
+        signed: int = struct.unpack("<q", struct.pack("<Q", self.last_insert_id))[0]
+        return signed
+
     def encode_body(self) -> bytes:
         return encode_uint64(self.last_insert_id) + encode_uint64(self.rows_affected)
 
@@ -546,6 +574,12 @@ class ResultResponse(Message):
             raise DecodeError(f"ResultResponse body must be exactly 16 bytes, got {len(data)}")
         last_insert_id = decode_uint64(data)
         rows_affected = decode_uint64(data[8:])
+        if rows_affected > _MAX_ROWS_AFFECTED:
+            raise DecodeError(
+                f"ResultResponse rows_affected {rows_affected} exceeds maximum "
+                f"({_MAX_ROWS_AFFECTED}); a real dqlite cluster cannot emit a value "
+                "above INT_MAX (sqlite3_changes returns C int)"
+            )
         return cls(last_insert_id, rows_affected)
 
 
