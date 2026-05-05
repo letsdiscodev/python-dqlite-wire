@@ -145,6 +145,7 @@ from dqlitewire.exceptions import (
     ServerFailure,
     StreamError,
 )
+from dqlitewire import messages
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.types import WireInput, WireValue
 
@@ -204,5 +205,6 @@ __all__ = [
     "decode_message",
     "encode_message",
     "is_dqlite_namespace_code",
+    "messages",
     "primary_sqlite_code",
 ]
