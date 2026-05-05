@@ -112,14 +112,19 @@ _MAX_ADDRESS_SIZE: Final[int] = 256
 # Tab (0x09) and LF (0x0A) are left intact so legitimate multi-line
 # server diagnostics render correctly. CR (0x0D) is dropped — it
 # is the log-injection vector alongside LF.
+# Bidi / invisible / format codepoints: spelled as ``\uXXXX`` escapes
+# rather than literal characters so the regex source survives a file
+# load under the wrong encoding (uvicorn-style ``encoding='latin-1'``
+# import hacks, copy-paste through charset-normalising tools) and is
+# greppable for the canonical Unicode codepoints.
 _CONTROL_CHARS_RE = re.compile(
     r"[\x00-\x08\x0b-\x1f\x7f-\x9f"
-    r"؜"
-    r"​-‏"
-    r"  "
-    r"‪-‮"
-    r"⁦-⁩"
-    r"﻿"
+    r"\u061c"  # Arabic letter mark
+    r"\u200b-\u200f"  # zero-width space, ZWNJ, ZWJ, LRM, RLM
+    r"\u2028\u2029"  # line / paragraph separator
+    r"\u202a-\u202e"  # bidi override (LRE/RLE/PDF/LRO/RLO)
+    r"\u2066-\u2069"  # bidi isolate (LRI/RLI/FSI/PDI)
+    r"\ufeff"  # BOM / zero-width no-break space
     r"]"
 )
 
