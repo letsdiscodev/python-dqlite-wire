@@ -94,6 +94,8 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
         stacklevel=2,
     )
 
+from typing import Final
+
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
@@ -146,7 +148,7 @@ from dqlitewire.exceptions import (
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.types import WireInput, WireValue
 
-__version__ = "0.1.3"
+__version__: Final[str] = "0.1.3"
 
 __all__ = [
     "DEFAULT_MAX_CONTINUATION_FRAMES",
