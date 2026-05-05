@@ -129,7 +129,7 @@ _CONTROL_CHARS_RE = re.compile(
 )
 
 
-def _sanitize_server_text(s: str) -> str:
+def sanitize_server_text(s: str) -> str:
     """Replace control / bidi / invisible characters with '?' in server strings.
 
     Applied at the decoder boundary for text fields that are
@@ -147,8 +147,18 @@ def _sanitize_server_text(s: str) -> str:
     :func:`_sanitize_for_log` which additionally escapes LF so a
     hostile server cannot inject fake log lines into syslog /
     journald via ``\\n`` in a server-supplied field.
+
+    Public symbol — cross-package consumers (python-dqlite-client,
+    sqlalchemy-dqlite) call this directly. The ``_sanitize_server_text``
+    name is preserved as a backwards-compatible alias.
     """
     return _CONTROL_CHARS_RE.sub("?", s)
+
+
+# Backwards-compatible alias for the underscore-private name. Three
+# downstream packages already imported the function via this name; the
+# alias is kept until those packages migrate.
+_sanitize_server_text = sanitize_server_text
 
 
 def _sanitize_for_log(s: str) -> str:

@@ -96,6 +96,7 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
 
 from typing import Final
 
+from dqlitewire import messages
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
@@ -145,8 +146,8 @@ from dqlitewire.exceptions import (
     ServerFailure,
     StreamError,
 )
-from dqlitewire import messages
 from dqlitewire.messages.base import Header, Message
+from dqlitewire.messages.responses import sanitize_server_text
 from dqlitewire.types import WireInput, WireValue
 
 __version__: Final[str] = "0.1.3"
@@ -207,4 +208,5 @@ __all__ = [
     "is_dqlite_namespace_code",
     "messages",
     "primary_sqlite_code",
+    "sanitize_server_text",
 ]
