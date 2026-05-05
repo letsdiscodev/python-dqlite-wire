@@ -1,5 +1,6 @@
 """Server to client response messages."""
 
+import logging
 import re
 import struct
 from dataclasses import dataclass, field
@@ -36,6 +37,8 @@ from dqlitewire.types import (
     encode_uint64,
     encode_value,
 )
+
+logger = logging.getLogger(__name__)
 
 # Defense-in-depth upper bounds for count fields in response messages.
 # Tightened to dqlite's actual emission ceiling: the C server's
@@ -1162,9 +1165,7 @@ class ServersResponse(Message):
                 # warn / accept: substitute SPARE (safe default — won't
                 # be probed for leadership, can't serve writes).
                 if unknown_role_policy == "warn":
-                    import logging
-
-                    logging.getLogger(__name__).warning(
+                    logger.warning(
                         "ServersResponse: unknown NodeRole %d at offset %d; "
                         "substituting SPARE under unknown_role_policy='warn'",
                         raw_role,
