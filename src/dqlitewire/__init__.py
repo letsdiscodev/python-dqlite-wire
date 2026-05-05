@@ -26,8 +26,12 @@ Cap defaults that affect interop and hostile-server resistance:
   bound on message size (``recvBody`` doubles indefinitely until
   ``n`` fits). A legitimate dqlite server emitting a Files response
   from a 1+ GB database would be silently accepted by Go and rejected
-  by Python. Override via the ``max_message_size`` kwarg on
-  ``ReadBuffer`` / ``MessageDecoder`` for large-result workloads.
+  by Python. The cap is configurable on ``ReadBuffer`` / ``MessageDecoder``
+  via the ``max_message_size`` kwarg, but the upstream
+  ``dqliteclient`` / ``dqlitedbapi`` / ``sqlalchemydqlite`` packages
+  do NOT plumb the override through their public surfaces — large-
+  result workloads must either drive the wire layer directly or
+  accept the 64 MiB default at the higher layers.
 - ``_MAX_BLOB_SIZE`` and ``_MAX_TEXT_VALUE_SIZE``: 64 MiB each
   (aligned with the message-size cap so a value fitting in the
   frame envelope is not rejected at the inner cap).
