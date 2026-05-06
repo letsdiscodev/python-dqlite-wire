@@ -11,6 +11,7 @@ accept torn/corrupt markers like ``0xff 0x00 ...``.
 
 from __future__ import annotations
 
+from dqlitewire.exceptions import DecodeError
 from dqlitewire.tuples import decode_row_header
 
 
@@ -44,9 +45,13 @@ def test_decode_row_header_torn_marker_rejected_not_silently_consumed() -> None:
     # Either way, the function MUST NOT return RowMarker.DONE.
     try:
         result = decode_row_header(torn, column_count=1)
-    except Exception:
-        # Decode error is fine — what matters is we didn't silently
-        # eat the bytes as a DONE marker.
+    except DecodeError:
+        # DecodeError is the documented outcome for an underspecified
+        # input that doesn't form a valid type-header tuple. Narrowing
+        # the catch from bare ``Exception`` ensures a refactor-introduced
+        # ``RuntimeError`` (or any non-decode failure mode) propagates
+        # to surface the bug, instead of being silently absorbed as
+        # if it were "decode error is fine here".
         return
     types_or_marker, _ = result
     from dqlitewire.tuples import RowMarker
