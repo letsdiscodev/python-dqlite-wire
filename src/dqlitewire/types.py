@@ -376,9 +376,11 @@ def decode_text(
         except UnicodeDecodeError as e:
             raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
 
-    if null_pos > max_size:
-        raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
-    # Calculate total size including padding
+    # Each branch above is solely responsible for cap-exceeded rejection
+    # (lines 317, 347, 366, 372). Every branch caps the scan window to
+    # ``min(data_len, max_size + 1)`` before the find, so by construction
+    # ``null_pos <= max_size`` at this convergence point — a tail check
+    # here would be unreachable.
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
     if len(data) < total_size:
         raise DecodeError(f"Not enough data for text padding: need {total_size}, got {len(data)}")
