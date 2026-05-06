@@ -3,12 +3,13 @@
 import struct
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, final
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, EncodeError
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class Header:
     """Message header.

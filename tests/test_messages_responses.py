@@ -2286,3 +2286,40 @@ class TestResponsePostInitValidation:
         DbResponse(db_id=2**32 - 1)
         ResultResponse(last_insert_id=0, rows_affected=0)
         MetadataResponse(failure_domain=0, weight=0)
+
+
+class TestScalarResponseClassesFrozenSlotted:
+    """Pin: scalar response classes are frozen + slotted, matching
+    the NodeInfo precedent. Wire-decoded values are handed off for
+    routing decisions; mutation would invalidate caller-held
+    references and hashability lets instances live in sets / dict
+    keys."""
+
+    def test_failure_response_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
+        e = FailureResponse(code=5, message="boom")
+        with pytest.raises(FrozenInstanceError):
+            e.code = 99  # type: ignore[misc]
+
+    def test_welcome_response_is_frozen(self) -> None:
+        from dataclasses import FrozenInstanceError
+
+        e = WelcomeResponse(heartbeat_timeout=15000)
+        with pytest.raises(FrozenInstanceError):
+            e.heartbeat_timeout = 0  # type: ignore[misc]
+
+    def test_db_response_is_hashable(self) -> None:
+        a = DbResponse(db_id=1)
+        b = DbResponse(db_id=1)
+        c = DbResponse(db_id=2)
+        assert hash(a) == hash(b)
+        assert {a, b, c} == {a, c}
+
+    def test_metadata_response_is_frozen(self) -> None:
+        """Pin frozen for the smaller scalar classes too."""
+        from dataclasses import FrozenInstanceError
+
+        m = MetadataResponse(failure_domain=1, weight=2)
+        with pytest.raises(FrozenInstanceError):
+            m.weight = 99  # type: ignore[misc]

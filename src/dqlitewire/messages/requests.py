@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, final
 
 from dqlitewire.constants import NodeRole, RequestType
 from dqlitewire.exceptions import DecodeError, EncodeError
@@ -45,6 +45,7 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
         )
 
 
+@final
 @dataclass
 class LeaderRequest(Message):
     """Request current cluster leader address.
@@ -71,6 +72,7 @@ class LeaderRequest(Message):
         return cls()
 
 
+@final
 @dataclass
 class ClientRequest(Message):
     """Register as a client.
@@ -142,6 +144,7 @@ class _HeartbeatRequest(Message):
         return cls(timestamp)
 
 
+@final
 @dataclass
 class OpenRequest(Message):
     """Open a database.
@@ -187,6 +190,7 @@ class OpenRequest(Message):
         return cls(name, flags, vfs)
 
 
+@final
 @dataclass
 class PrepareRequest(Message):
     """Prepare a SQL statement.
@@ -235,6 +239,7 @@ class PrepareRequest(Message):
         return cls(db_id, sql, schema=schema)
 
 
+@final
 @dataclass
 class ExecRequest(Message):
     """Execute a prepared statement.
@@ -290,6 +295,7 @@ class ExecRequest(Message):
         return cls(db_id, stmt_id, params, _decoded_schema=schema)
 
 
+@final
 @dataclass
 class QueryRequest(Message):
     """Query a prepared statement.
@@ -340,6 +346,7 @@ class QueryRequest(Message):
         return cls(db_id, stmt_id, params, _decoded_schema=schema)
 
 
+@final
 @dataclass
 class FinalizeRequest(Message):
     """Finalize (close) a prepared statement.
@@ -368,6 +375,7 @@ class FinalizeRequest(Message):
         return cls(db_id, stmt_id)
 
 
+@final
 @dataclass
 class ExecSqlRequest(Message):
     """Execute SQL directly (without prepare).
@@ -420,6 +428,7 @@ class ExecSqlRequest(Message):
         return cls(db_id, sql, params, _decoded_schema=schema)
 
 
+@final
 @dataclass
 class QuerySqlRequest(Message):
     """Query SQL directly (without prepare).
@@ -472,6 +481,7 @@ class QuerySqlRequest(Message):
         return cls(db_id, sql, params, _decoded_schema=schema)
 
 
+@final
 @dataclass
 class InterruptRequest(Message):
     """Interrupt the current operation.
@@ -548,6 +558,7 @@ class _ConnectRequest(Message):
         return cls(node_id, address)
 
 
+@final
 @dataclass
 class AddRequest(Message):
     """Add a node to the cluster.
@@ -578,6 +589,7 @@ class AddRequest(Message):
         return cls(node_id, address)
 
 
+@final
 @dataclass
 class AssignRequest(Message):
     """Assign a role to a node, or promote a node (legacy).
@@ -691,6 +703,7 @@ class AssignRequest(Message):
         )
 
 
+@final
 @dataclass
 class RemoveRequest(Message):
     """Remove a node from the cluster.
@@ -716,6 +729,7 @@ class RemoveRequest(Message):
         return cls(node_id)
 
 
+@final
 @dataclass
 class DumpRequest(Message):
     """Request a database dump.
@@ -738,6 +752,7 @@ class DumpRequest(Message):
         return cls(name)
 
 
+@final
 @dataclass
 class ClusterRequest(Message):
     """Request cluster information.
@@ -813,6 +828,7 @@ class ClusterRequest(Message):
         return instance
 
 
+@final
 @dataclass
 class TransferRequest(Message):
     """Request leadership transfer.
@@ -838,6 +854,7 @@ class TransferRequest(Message):
         return cls(target_node_id)
 
 
+@final
 @dataclass
 class DescribeRequest(Message):
     """Request database schema description.
@@ -875,6 +892,7 @@ class DescribeRequest(Message):
         return cls(format_val)
 
 
+@final
 @dataclass
 class WeightRequest(Message):
     """Set node weight for leader election.

@@ -4,7 +4,7 @@ import logging
 import re
 import struct
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, final
 
 from dqlitewire.constants import (
     ROW_DONE_MARKER,
@@ -185,7 +185,8 @@ def _sanitize_for_log(s: str) -> str:
     return _sanitize_server_text(s).replace("\n", "\\n")
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class FailureResponse(Message):
     """Operation failed.
 
@@ -250,7 +251,8 @@ class FailureResponse(Message):
         return cls(code, _sanitize_server_text(message))
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class LeaderResponse(Message):
     """Leader address response.
 
@@ -348,7 +350,8 @@ class LeaderResponse(Message):
         return cls(node_id=0, address=address)
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class WelcomeResponse(Message):
     """Client registration acknowledgment.
 
@@ -396,7 +399,8 @@ class WelcomeResponse(Message):
         return cls(heartbeat_timeout)
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class DbResponse(Message):
     """Database opened response.
 
@@ -428,6 +432,7 @@ class DbResponse(Message):
         return cls(db_id)
 
 
+@final
 @dataclass
 class StmtResponse(Message):
     """Statement prepared response.
@@ -572,7 +577,8 @@ class StmtResponse(Message):
 _MAX_ROWS_AFFECTED: Final[int] = (1 << 31) - 1
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class ResultResponse(Message):
     """Statement execution result.
 
@@ -628,6 +634,7 @@ class ResultResponse(Message):
         return cls(last_insert_id, rows_affected)
 
 
+@final
 @dataclass
 class RowsResponse(Message):
     """Query result rows.
@@ -918,7 +925,8 @@ class RowsResponse(Message):
         )
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class EmptyResponse(Message):
     """Empty response (for exec with no result).
 
@@ -944,6 +952,7 @@ class EmptyResponse(Message):
         return cls()
 
 
+@final
 @dataclass
 class FilesResponse(Message):
     """Database dump files response.
@@ -1046,6 +1055,7 @@ class FilesResponse(Message):
         return cls(files)
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class NodeInfo:
     """Information about a cluster node.
@@ -1061,6 +1071,7 @@ class NodeInfo:
     role: NodeRole
 
 
+@final
 @dataclass
 class ServersResponse(Message):
     """Cluster servers response.
@@ -1209,7 +1220,8 @@ class ServersResponse(Message):
         return cls(nodes)
 
 
-@dataclass
+@final
+@dataclass(frozen=True, slots=True)
 class MetadataResponse(Message):
     """Node metadata response (failure domain and weight).
 
