@@ -136,7 +136,7 @@ class TestMessageDecoder:
 
         decoder = MessageDecoder(max_rows=2)
         decoder.feed(encoded)
-        with pytest.raises(DecodeError, match="reached maximum 2"):
+        with pytest.raises(DecodeError, match="reached limit 2"):
             decoder.decode()
 
     def test_decoder_default_max_rows(self) -> None:
@@ -207,7 +207,7 @@ class TestMessageDecoder:
         # Mark decoder as mid-continuation so decode_continuation() runs.
         decoder._continuation_expected = True
         decoder.feed(cont_bytes)
-        with pytest.raises(DecodeError, match="reached maximum 2"):
+        with pytest.raises(DecodeError, match="reached limit 2"):
             decoder.decode_continuation()
 
     def test_decoder_continuation_rejects_total_rows_overflow(self) -> None:

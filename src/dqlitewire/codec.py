@@ -255,8 +255,10 @@ class MessageDecoder:
                     rejected with DecodeError.
             max_rows: Maximum number of rows permitted in a single
                     ``RowsResponse`` frame (including continuation frames).
-                    Defaults to ``RowsResponse.DEFAULT_MAX_ROWS``. Exceeding
-                    this limit raises ``DecodeError``.
+                    Defaults to ``RowsResponse.DEFAULT_MAX_ROWS``. The cap
+                    is exclusive: a frame whose row count reaches
+                    ``max_rows`` raises ``DecodeError``. To permit up to N
+                    rows in one frame, set ``max_rows = N + 1``.
             max_continuation_frames: Maximum number of continuation
                     frames permitted in a single ROWS stream. A
                     slow-dripping server emitting many 1-row frames

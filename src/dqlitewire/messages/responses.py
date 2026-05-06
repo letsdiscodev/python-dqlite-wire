@@ -917,7 +917,19 @@ class RowsResponse(Message):
             offset += consumed
 
             if len(rows) >= max_rows:
-                raise DecodeError(f"Row count {len(rows)} reached maximum {max_rows}")
+                # The cap is exclusive: row count reaching ``max_rows``
+                # is rejected. Spell that out so an operator setting
+                # ``max_rows=N`` to allow N rows but receiving exactly
+                # N rows can see why the decode failed. Avoid a literal
+                # +1 prescription — actual frame size may be much
+                # larger (decode aborts at the threshold so true row
+                # count is unknown), so a prescriptive bump is
+                # misleading; surface the policy instead.
+                raise DecodeError(
+                    f"Row count {len(rows)} reached limit {max_rows} "
+                    f"(cap is exclusive — raise max_rows if larger "
+                    f"result sets are expected)"
+                )
 
         raise DecodeError(
             f"RowsResponse body exhausted without end marker "
