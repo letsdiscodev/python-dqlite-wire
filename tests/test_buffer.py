@@ -94,8 +94,33 @@ class TestWriteBuffer:
         """WriteBuffer must not be picklable."""
         buf = WriteBuffer()
         buf.write(b"data")
-        with pytest.raises(TypeError, match="cannot be pickled"):
+        with pytest.raises(TypeError, match="cannot pickle"):
             pickle.dumps(buf)
+
+    def test_pickle_message_does_not_claim_connection_stream_binding(self) -> None:
+        """The rejection message must describe the actual rejection
+        reason (single-owner mutable state) rather than invent a
+        "connection stream" binding the class does not hold.
+
+        ``vars(WriteBuffer())`` is just ``{'_data': bytearray()}`` —
+        no socket, no stream. A maintainer reading the rejection
+        traceback should not be sent looking for a non-existent
+        socket.
+        """
+        buf = WriteBuffer()
+        try:
+            pickle.dumps(buf)
+        except TypeError as e:
+            msg = str(e)
+        else:
+            pytest.fail("expected TypeError")
+        assert "connection stream" not in msg, (
+            f"rejection message must not claim a connection stream "
+            f"binding the class does not hold; got: {msg!r}"
+        )
+        # Use the class name rather than a literal so subclasses
+        # inherit the right name.
+        assert "WriteBuffer" in msg
 
 
 class TestReadBuffer:
@@ -784,8 +809,28 @@ class TestReadBuffer:
         """ReadBuffer must not be picklable."""
         buf = ReadBuffer()
         buf.feed(b"\x00" * 16)
-        with pytest.raises(TypeError, match="cannot be pickled"):
+        with pytest.raises(TypeError, match="cannot pickle"):
             pickle.dumps(buf)
+
+    def test_pickle_message_does_not_claim_connection_stream_binding(self) -> None:
+        """The rejection message must describe the actual rejection
+        reason (per-stream-position state, single-owner discipline)
+        rather than invent a "connection stream" binding the class
+        does not hold. ``ReadBuffer`` only carries ``bytearray + ints``
+        — no socket reference.
+        """
+        buf = ReadBuffer()
+        try:
+            pickle.dumps(buf)
+        except TypeError as e:
+            msg = str(e)
+        else:
+            pytest.fail("expected TypeError")
+        assert "connection stream" not in msg, (
+            f"rejection message must not claim a connection stream "
+            f"binding the class does not hold; got: {msg!r}"
+        )
+        assert "ReadBuffer" in msg
 
 
 class TestReadBufferDefensiveChecks:

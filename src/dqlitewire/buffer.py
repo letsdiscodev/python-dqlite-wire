@@ -20,9 +20,17 @@ class WriteBuffer:
     """
 
     def __reduce__(self) -> NoReturn:
+        # The class only carries a ``bytearray`` — there is no socket
+        # or stream to be "bound to". The rejection is policy-correct
+        # (single-owner mutable state; sharing across processes makes
+        # no sense because consumers would have a divergent view of
+        # the bytes already written) but the message describes the
+        # actual reason rather than inventing a connection binding.
+        # ``type(self).__name__`` so subclasses inherit the right name.
         raise TypeError(
-            "WriteBuffer cannot be pickled. Each instance is bound to a "
-            "single connection stream and must not be duplicated across processes."
+            f"cannot pickle {type(self).__name__!r} object — instances "
+            f"hold mutable buffered bytes under a single-owner discipline; "
+            f"share by re-creating in the target process."
         )
 
     def __init__(self) -> None:
@@ -124,9 +132,17 @@ class ReadBuffer:
     DEFAULT_MAX_MESSAGE_SIZE = 64 * 1024 * 1024  # 64 MiB
 
     def __reduce__(self) -> NoReturn:
+        # The class only carries ``bytearray + ints + None`` — no
+        # socket or stream reference. The rejection is policy-correct
+        # (per-stream-position mutable state under single-owner
+        # discipline; the read cursor and the poison machinery cannot
+        # be shared across processes) but the message describes the
+        # actual reason rather than inventing a connection binding.
+        # ``type(self).__name__`` so subclasses inherit the right name.
         raise TypeError(
-            "ReadBuffer cannot be pickled. Each instance is bound to a "
-            "single connection stream and must not be duplicated across processes."
+            f"cannot pickle {type(self).__name__!r} object — instances "
+            f"hold per-stream-position mutable state under a single-owner "
+            f"discipline; share by re-creating in the target process."
         )
 
     def __init__(self, max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE) -> None:
