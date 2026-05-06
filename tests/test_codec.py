@@ -2333,14 +2333,58 @@ class TestPicklePrevention:
     def test_message_decoder_pickle_raises(self) -> None:
         import pickle
 
-        with pytest.raises(TypeError, match="cannot be pickled"):
+        with pytest.raises(TypeError, match="cannot pickle"):
             pickle.dumps(MessageDecoder())
 
     def test_message_encoder_pickle_raises(self) -> None:
         import pickle
 
-        with pytest.raises(TypeError, match="cannot be pickled"):
+        with pytest.raises(TypeError, match="cannot pickle"):
             pickle.dumps(MessageEncoder())
+
+    def test_message_decoder_pickle_message_does_not_claim_connection_binding(
+        self,
+    ) -> None:
+        """The rejection message must describe the actual rejection
+        reason (the class owns a ReadBuffer with per-stream-position
+        state plus continuation counters) rather than invent a
+        "single connection" binding the class does not hold.
+        """
+        import pickle
+
+        try:
+            pickle.dumps(MessageDecoder())
+        except TypeError as e:
+            msg = str(e)
+        else:
+            pytest.fail("expected TypeError")
+        assert "single connection" not in msg, (
+            f"rejection message must not claim a connection binding "
+            f"the class does not hold; got: {msg!r}"
+        )
+        assert "MessageDecoder" in msg
+
+    def test_message_encoder_pickle_message_aligns_with_stateless_docstring(
+        self,
+    ) -> None:
+        """The rejection message must not contradict the class's own
+        "effectively stateless" docstring by claiming a "single
+        connection" binding. ``vars(MessageEncoder()) == {'_version': int}``
+        — there is no connection reference.
+        """
+        import pickle
+
+        try:
+            pickle.dumps(MessageEncoder())
+        except TypeError as e:
+            msg = str(e)
+        else:
+            pytest.fail("expected TypeError")
+        assert "single connection" not in msg, (
+            f"rejection message must not contradict the class's "
+            f"'effectively stateless' docstring; got: {msg!r}"
+        )
+        assert "MessageEncoder" in msg
 
 
 class TestMaxSchemaDirection:

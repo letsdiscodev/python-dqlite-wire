@@ -139,9 +139,18 @@ class MessageEncoder:
     """
 
     def __reduce__(self) -> NoReturn:
+        # The class is "effectively stateless after construction" per
+        # the docstring above (it only caches a protocol ``_version``
+        # int). The rejection is preserved as a wire-package single-
+        # owner-discipline structural pin (forward-compat if the
+        # encoder ever grows per-stream state); the message is
+        # rewritten to align with the docstring rather than claim a
+        # non-existent connection binding. ``type(self).__name__`` so
+        # subclasses inherit the right name.
         raise TypeError(
-            "MessageEncoder cannot be pickled. Each instance is bound to a "
-            "single connection and must not be duplicated across processes."
+            f"cannot pickle {type(self).__name__!r} object — wire-"
+            f"package single-owner discipline; share by re-creating "
+            f"in the target process."
         )
 
     def __init__(self, version: int = PROTOCOL_VERSION) -> None:
@@ -207,9 +216,20 @@ class MessageDecoder:
     """
 
     def __reduce__(self) -> NoReturn:
+        # The class owns a ``ReadBuffer`` (with per-stream-position
+        # state) plus continuation counters and a version int — there
+        # is no socket or connection reference. The rejection is
+        # policy-correct (per-stream-position state under single-owner
+        # discipline; sharing across processes makes no sense because
+        # consumers would have a divergent view of the stream cursor)
+        # but the message describes the actual reason rather than
+        # inventing a connection binding. ``type(self).__name__`` so
+        # subclasses inherit the right name.
         raise TypeError(
-            "MessageDecoder cannot be pickled. Each instance is bound to a "
-            "single connection and must not be duplicated across processes."
+            f"cannot pickle {type(self).__name__!r} object — instances "
+            f"own a ReadBuffer with per-stream-position state and "
+            f"continuation counters under a single-owner discipline; "
+            f"share by re-creating in the target process."
         )
 
     def __init__(
