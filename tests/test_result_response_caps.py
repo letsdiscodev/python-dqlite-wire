@@ -8,11 +8,18 @@ The upstream C server returns ``sqlite3_changes(...)`` which is C
 The signed accessor mirrors stdlib ``sqlite3.Connection.lastrowid``:
 SQLite's ``sqlite3_int64`` rowid can be negative; the unsigned wire
 value is ``2**64 - abs(rowid)``.
+
+Encode-side cap is symmetric with decode (mirrors the
+``StmtResponse._MAX_TAIL_OFFSET`` symmetric-cap precedent at the
+sibling response): a Python encoder constructing a ``ResultResponse``
+with ``rows_affected > _MAX_ROWS_AFFECTED`` is rejected up front, so
+a same-process round-trip via Python encoder + decoder cannot break
+on the encoder's own bytes.
 """
 
 import pytest
 
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.responses import ResultResponse
 from dqlitewire.types import encode_uint64
 
@@ -66,3 +73,55 @@ def test_last_insert_id_signed_at_int64_min() -> None:
     on_wire = 1 << 63
     resp = ResultResponse(last_insert_id=on_wire, rows_affected=0)
     assert resp.last_insert_id_signed == -(1 << 63)
+
+
+def test_rows_affected_at_int_max_construction_accepted() -> None:
+    """Construction at the boundary is accepted (mirrors the decode
+    side, which accepts at the boundary too)."""
+    resp = ResultResponse(last_insert_id=0, rows_affected=_INT_MAX)
+    assert resp.rows_affected == _INT_MAX
+
+
+def test_rows_affected_above_int_max_construction_rejected() -> None:
+    """Construction-time cap rejection — mirrors the decode-time cap
+    so that a same-process Python encoder + decoder round-trip cannot
+    break on its own bytes. Without this guard, ``ResultResponse(0,
+    rows_affected=2**32).encode()`` succeeds and the same Python
+    decoder then raises ``DecodeError`` on the produced bytes — a
+    confusing self-inflicted asymmetry for mock-server / proxy authors.
+    """
+    with pytest.raises(EncodeError, match="rows_affected"):
+        ResultResponse(last_insert_id=0, rows_affected=_INT_MAX + 1)
+
+
+def test_rows_affected_two_to_the_32_construction_rejected() -> None:
+    """The exact reproducer in the issue file: a `2**32` value is the
+    canonical mock-server / proxy author trap."""
+    with pytest.raises(EncodeError, match="rows_affected"):
+        ResultResponse(last_insert_id=0, rows_affected=1 << 32)
+
+
+def test_rows_affected_round_trip_at_boundary_succeeds() -> None:
+    """Same-process round-trip at the boundary: construction +
+    encode + decode all succeed."""
+    resp = ResultResponse(last_insert_id=42, rows_affected=_INT_MAX)
+    encoded = resp.encode()
+    from dqlitewire.constants import HEADER_SIZE
+
+    decoded = ResultResponse.decode_body(encoded[HEADER_SIZE:])
+    assert decoded.rows_affected == _INT_MAX
+    assert decoded.last_insert_id == 42
+
+
+def test_last_insert_id_not_capped_at_int_max_at_construction() -> None:
+    """Negative-pin: ``last_insert_id`` must NOT be capped at INT_MAX.
+    The wire field is uint64 (per the protocol spec); SQLite's
+    ``sqlite3_int64`` rowid can be the most-negative int64, which
+    appears on the wire as ``2**63``. Capping ``last_insert_id``
+    would break the existing ``last_insert_id_signed`` accessor
+    contract. A future refactor copying the rows_affected cap to
+    both fields would silently pass without this pin.
+    """
+    on_wire = (1 << 63) | 0xFEDCBA  # safely above INT_MAX
+    resp = ResultResponse(last_insert_id=on_wire, rows_affected=0)
+    assert resp.last_insert_id == on_wire

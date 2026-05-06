@@ -602,6 +602,27 @@ class ResultResponse(Message):
     def __post_init__(self) -> None:
         _validate_uint64("last_insert_id", self.last_insert_id)
         _validate_uint64("rows_affected", self.rows_affected)
+        # Symmetric encode-side cap mirroring ``decode_body``'s
+        # ``_MAX_ROWS_AFFECTED`` guard. Without this, a Python
+        # encoder constructing a ResultResponse with rows_affected
+        # above INT_MAX produces bytes that the same Python decoder
+        # then rejects — a confusing self-inflicted asymmetry for
+        # mock-server / proxy authors. Mirrors the
+        # ``StmtResponse._MAX_TAIL_OFFSET`` precedent (encoder +
+        # decoder both enforce the cap). Construction-time so any
+        # ``ResultResponse(...)`` is rejected up front, not just at
+        # ``encode()``.
+        #
+        # When the upstream C server migrates to ``sqlite3_changes64``
+        # (see the ``_MAX_ROWS_AFFECTED`` docstring at line 567+), the
+        # cap will need raising on BOTH sides — this construction-
+        # time check and the ``decode_body`` check.
+        if self.rows_affected > _MAX_ROWS_AFFECTED:
+            raise EncodeError(
+                f"ResultResponse rows_affected {self.rows_affected} exceeds maximum "
+                f"({_MAX_ROWS_AFFECTED}); a real dqlite cluster cannot emit a value "
+                "above INT_MAX (sqlite3_changes returns C int)"
+            )
 
     @property
     def last_insert_id_signed(self) -> int:
