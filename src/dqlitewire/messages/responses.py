@@ -1103,6 +1103,34 @@ class NodeInfo:
     address: str
     role: NodeRole
 
+    def __post_init__(self) -> None:
+        # Validate the wire-encoded fields at construction time so a
+        # caller-built ``NodeInfo`` carrying out-of-range / unknown
+        # values can't reach ``ServersResponse.encode_body`` and
+        # silently emit them onto the wire. The decoder side already
+        # enforces these invariants via ``unknown_role_policy="reject"``
+        # and the uint64-range checks in ``decode_uint64``; the
+        # encoder side now mirrors them. Mirrors the request-side
+        # ``AssignRequest.__post_init__`` which does the same
+        # coercion + validation.
+        _validate_uint64("node_id", self.node_id)
+        if isinstance(self.role, NodeRole):
+            return
+        # ``IntEnum`` accepts ``NodeRole(0)`` etc. but not
+        # ``NodeRole(999)``; check uint64 range first so a giant int
+        # produces the documented "role exceeds uint64" diagnostic
+        # instead of being absorbed into the enum's "unknown role"
+        # message. Then coerce bare ints into the enum.
+        _validate_uint64("role", self.role)
+        try:
+            coerced = NodeRole(self.role)
+        except ValueError as e:
+            raise ValueError(
+                f"NodeInfo: unknown role {self.role!r}; valid roles are "
+                f"0 (VOTER), 1 (STANDBY), 2 (SPARE)"
+            ) from e
+        object.__setattr__(self, "role", coerced)
+
 
 @final
 @dataclass
