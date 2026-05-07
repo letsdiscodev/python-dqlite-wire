@@ -164,8 +164,15 @@ def encode_double(value: float) -> bytes:
     """Encode a 64-bit floating point number (little-endian).
 
     All IEEE 754 values are accepted, including NaN and infinity,
-    matching the Go reference implementation behavior.
+    matching the Go reference implementation behavior. ``bool`` is
+    rejected explicitly: ``isinstance(True, int)`` is True and
+    ``float(True) == 1.0``, so without the guard a caller passing
+    ``True`` would silently encode ``1.0`` onto the wire. Mirrors
+    the discipline already applied at ``_validate_uint64``,
+    ``encode_int64``, and the ``encode_value`` FLOAT arm.
     """
+    if isinstance(value, bool):
+        raise EncodeError(f"encode_double rejects bool, got {value!r}")
     return struct.pack("<d", value)
 
 
