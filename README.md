@@ -86,10 +86,13 @@ network contexts and are all opt-out-able.
 - `StmtResponse` rejects a 16-byte body when `schema=1` (C's V1
   response is 24 bytes).
 
-**Not implemented** (valid upstream formats this library chose to skip):
+**Asymmetric encode/decode** (decoded for proxy / recorded-traffic
+round-trip; encoder rejects):
 
-- `ClusterRequest` `format=0` — V0 response with id+address only. We
-  only decode the V1 variant that includes node role.
+- `ClusterRequest` `format=0` — V0 response shape (id + address only).
+  Decoded by `ClusterRequest.decode_body` for proxy / replay use;
+  encoder rejects with `EncodeError` because production senders
+  always emit V1 (id + address + role).
 
 ## Development
 
