@@ -113,11 +113,13 @@ class TestAssignRequestStrictLength:
 
 class TestDescribeRequestFormatMembership:
     """ISSUE-319: upstream rejects DescribeRequest.format != 0 with
-    SQLITE_PROTOCOL. Reject client-side so callers get a local ValueError.
+    SQLITE_PROTOCOL. Reject client-side so callers get a local EncodeError.
     """
 
     def test_construct_with_nonzero_format_rejected(self) -> None:
-        with pytest.raises(ValueError, match="format must be 0"):
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="format must be 0"):
             DescribeRequest(format=1)
 
     def test_decode_nonzero_format_rejected(self) -> None:

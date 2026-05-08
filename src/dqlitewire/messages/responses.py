@@ -495,9 +495,9 @@ class StmtResponse(Message):
         if self.tail_offset is not None:
             _validate_uint64("tail_offset", self.tail_offset)
         if self.schema is not None and self.schema not in (0, 1):
-            raise ValueError(f"StmtResponse.schema must be 0 or 1, got {self.schema}")
+            raise EncodeError(f"StmtResponse.schema must be 0 or 1, got {self.schema}")
         if self.schema == 0 and self.tail_offset is not None:
-            raise ValueError(
+            raise EncodeError(
                 "StmtResponse: schema=0 (V0 body) cannot carry tail_offset; pass schema=1 for V1"
             )
         # Normalise the V1-implicit-zero form so encode/decode round-
@@ -1137,7 +1137,7 @@ class NodeInfo:
         try:
             coerced = NodeRole(self.role)
         except ValueError as e:
-            raise ValueError(
+            raise EncodeError(
                 f"NodeInfo: unknown role {self.role!r}; valid roles are "
                 f"0 (VOTER), 1 (STANDBY), 2 (SPARE)"
             ) from e
@@ -1220,7 +1220,7 @@ class ServersResponse(Message):
         approach that posture; ``"reject"`` keeps the strict default.
         """
         if unknown_role_policy not in ("reject", "warn", "accept"):
-            raise ValueError(
+            raise EncodeError(
                 "unknown_role_policy must be 'reject', 'warn', or "
                 f"'accept'; got {unknown_role_policy!r}"
             )

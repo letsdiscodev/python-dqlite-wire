@@ -2203,15 +2203,17 @@ class TestStmtResponsePostInitValidation:
     other test exercises the post-init raises directly."""
 
     def test_post_init_rejects_schema_outside_known_set(self) -> None:
+        from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.responses import StmtResponse
 
-        with pytest.raises(ValueError, match="must be 0 or 1"):
+        with pytest.raises(EncodeError, match="must be 0 or 1"):
             StmtResponse(db_id=0, stmt_id=0, num_params=0, tail_offset=None, schema=2)
 
     def test_post_init_rejects_v0_schema_with_tail_offset(self) -> None:
+        from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.responses import StmtResponse
 
-        with pytest.raises(ValueError, match="schema=0"):
+        with pytest.raises(EncodeError, match="schema=0"):
             StmtResponse(db_id=0, stmt_id=0, num_params=0, tail_offset=42, schema=0)
 
 

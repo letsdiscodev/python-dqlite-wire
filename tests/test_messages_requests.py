@@ -299,10 +299,12 @@ class TestPrepareRequest:
         """PrepareRequest should reject schema values other than 0 or 1."""
         import pytest
 
-        with pytest.raises(ValueError, match="schema must be 0 or 1"):
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="schema must be 0 or 1"):
             PrepareRequest(db_id=1, sql="SELECT 1", schema=2)
 
-        with pytest.raises(ValueError, match="schema must be 0 or 1"):
+        with pytest.raises(EncodeError, match="schema must be 0 or 1"):
             PrepareRequest(db_id=1, sql="SELECT 1", schema=-1)
 
     def test_encode_body_caps_sql_at_decode_max_size(self) -> None:
@@ -663,10 +665,12 @@ class TestAssignRequestDecodeRoleValidation:
     def test_post_init_rejects_unknown_role_int(self) -> None:
         """Construction-side narrowing: passing a raw int role that is
         not a known ``NodeRole`` value must surface as
-        ``ValueError("AssignRequest: unknown role N")``. Sibling pin
+        ``EncodeError("AssignRequest: unknown role N")``. Sibling pin
         to the decode-side check above; the construction path is
         what tests / mock servers / direct callers exercise."""
-        with pytest.raises(ValueError, match="unknown role 999"):
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="unknown role 999"):
             AssignRequest(node_id=1, role=999)
 
 
@@ -719,7 +723,9 @@ class TestClusterRequest:
 
     def test_format_v0_rejected(self) -> None:
         """120: V0 cluster format not implemented by ServersResponse decoder."""
-        with pytest.raises(ValueError, match="format=0.*not implemented"):
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="format=0.*not implemented"):
             ClusterRequest(format=0)
 
     def test_decode_format_v0_accepted(self) -> None:
@@ -753,8 +759,10 @@ class TestClusterRequest:
     def test_unknown_format_rejected_in_constructor(self, fmt: int) -> None:
         # Upstream defines only V0=0 and V1=1. Anything else is
         # undefined and rejected client-side so callers see a local
-        # ValueError instead of a confusing server-side failure.
-        with pytest.raises(ValueError, match="format must be 0"):
+        # EncodeError instead of a confusing server-side failure.
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="format must be 0"):
             ClusterRequest(format=fmt)
 
     @pytest.mark.parametrize("fmt", [2, 3, 255, 0xFFFFFFFFFFFFFFFF])
@@ -1050,7 +1058,9 @@ class TestDecodedSchemaConstructionValidation:
             kwargs["stmt_id"] = 1
         else:
             kwargs["sql"] = "SELECT 1"
-        with pytest.raises(ValueError, match="_decoded_schema"):
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="_decoded_schema"):
             cls(**kwargs)
 
     @pytest.mark.parametrize(
@@ -1070,7 +1080,9 @@ class TestDecodedSchemaConstructionValidation:
             kwargs["stmt_id"] = 1
         else:
             kwargs["sql"] = "SELECT 1"
-        with pytest.raises(ValueError, match="255 parameters"):
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="255 parameters"):
             cls(**kwargs)
 
     @pytest.mark.parametrize(

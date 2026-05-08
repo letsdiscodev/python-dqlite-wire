@@ -50,7 +50,9 @@ def test_node_info_rejects_unknown_roles(bogus_role: int) -> None:
     Reject at construction time so the diagnostic fires at the call
     site, not at the peer-side decoder (which would surface as an
     opaque ``DecodeError`` after a failed write)."""
-    with pytest.raises(ValueError, match="role"):
+    from dqlitewire.exceptions import EncodeError
+
+    with pytest.raises(EncodeError, match="role"):
         NodeInfo(node_id=1, address="leader:9001", role=bogus_role)  # type: ignore[arg-type]
 
 

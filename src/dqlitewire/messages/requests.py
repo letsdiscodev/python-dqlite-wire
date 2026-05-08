@@ -37,9 +37,9 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
     if decoded_schema is None:
         return
     if decoded_schema not in (0, 1):
-        raise ValueError(f"_decoded_schema must be 0, 1, or None; got {decoded_schema}")
+        raise EncodeError(f"_decoded_schema must be 0, 1, or None; got {decoded_schema}")
     if decoded_schema == 0 and param_count > 255:
-        raise ValueError(
+        raise EncodeError(
             f"_decoded_schema=0 (V0 tuple format) supports at most 255 parameters; "
             f"got {param_count}"
         )
@@ -212,7 +212,7 @@ class PrepareRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
         if self.schema not in (0, 1):
-            raise ValueError(f"schema must be 0 or 1, got {self.schema}")
+            raise EncodeError(f"schema must be 0 or 1, got {self.schema}")
 
     def _get_schema(self) -> int:
         return self.schema
@@ -633,7 +633,7 @@ class AssignRequest(Message):
                 try:
                     coerced = NodeRole(self.role)
                 except ValueError as e:
-                    raise ValueError(f"AssignRequest: unknown role {self.role}") from e
+                    raise EncodeError(f"AssignRequest: unknown role {self.role}") from e
                 object.__setattr__(self, "role", coerced)
 
     def encode_body(self) -> bytes:
@@ -778,13 +778,13 @@ class ClusterRequest(Message):
         # defines only V0=0 and V1=1 (include/dqlite.h); the gateway
         # rejects anything else with DQLITE_PARSE.
         if self.format == 0 and not getattr(self, "_decoded", False):
-            raise ValueError(
+            raise EncodeError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
                 "decodes V1 (with node role fields). Use format=1."
             )
         if self.format not in (0, 1):
-            raise ValueError(
+            raise EncodeError(
                 f"ClusterRequest format must be 0 (V0) or 1 (V1); upstream "
                 f"defines only those two values. Got {self.format}."
             )
@@ -864,7 +864,7 @@ class DescribeRequest(Message):
     Upstream defines only ``DQLITE_REQUEST_DESCRIBE_FORMAT_V0 = 0``
     (``gateway.c`` rejects anything else with ``SQLITE_PROTOCOL``).
     Reject unknown formats client-side so callers get a local
-    ``ValueError`` instead of a confusing server failure.
+    ``EncodeError`` instead of a confusing server failure.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.DESCRIBE
@@ -874,7 +874,7 @@ class DescribeRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("format", self.format)
         if self.format != 0:
-            raise ValueError(
+            raise EncodeError(
                 f"DescribeRequest format must be 0 (V0); upstream rejects "
                 f"anything else with SQLITE_PROTOCOL. Got {self.format}."
             )

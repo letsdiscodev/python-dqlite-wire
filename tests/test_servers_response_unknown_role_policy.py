@@ -81,9 +81,11 @@ def test_known_role_unaffected_by_policy() -> None:
             assert resp.nodes[0].role is expected
 
 
-def test_invalid_policy_raises_value_error() -> None:
+def test_invalid_policy_raises_encode_error() -> None:
+    from dqlitewire.exceptions import EncodeError
+
     body = _build_body(1, "h:9001", raw_role=0)
-    with pytest.raises(ValueError, match="unknown_role_policy"):
+    with pytest.raises(EncodeError, match="unknown_role_policy"):
         ServersResponse.decode_body(body, unknown_role_policy="bogus")
 
 
