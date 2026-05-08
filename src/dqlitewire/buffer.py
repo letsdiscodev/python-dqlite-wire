@@ -291,6 +291,13 @@ class ReadBuffer:
             # decode surfaces ``PoisonedError`` instead of silently
             # continuing on a buffer that's offset-by-unknown.
             if self._skip_remaining > 0:
+                # Clear the skip-tracking fields so any post-poison
+                # introspection (or a future recover() helper) sees
+                # consistent unrecoverable state. Mirrors reset()'s
+                # discipline; the buffer is unrecoverable until reset()
+                # regardless, so this is for diagnostic consistency.
+                self._skip_remaining = 0
+                self._poison_after_skip = None
                 self.poison(err)
             raise err
         try:

@@ -62,3 +62,37 @@ def test_feed_rejection_while_skipping_self_poisons() -> None:
         "_skip_remaining > 0; the wire is desync'd and the buffer must "
         "advertise that fact rather than silently continue."
     )
+
+
+def test_feed_rejection_while_skipping_clears_skip_tracking_fields() -> None:
+    """After self-poison, ``_skip_remaining`` and ``_poison_after_skip``
+    must be cleared so any post-poison introspection (or a future
+    ``recover()`` helper) sees consistent unrecoverable state. The
+    buffer is unrecoverable until ``reset()`` regardless, so this is
+    diagnostic-consistency defence; pre-fix the fields stayed at their
+    pre-rejection values, contradicting the poisoned-and-cleared
+    semantics that ``reset()`` enforces."""
+    cap = 64
+    buf = ReadBuffer(max_message_size=cap)
+    declared_words = 100
+    body_bytes_under_cap = WORD_SIZE
+    payload = _build_header(declared_words) + b"\x00" * body_bytes_under_cap
+    buf.feed(payload)
+    assert buf.skip_message() is False
+    assert buf._skip_remaining > 0
+
+    bogus = b"\x00" * (cap + buf._skip_remaining + 1)
+    if len(bogus) > 2 * cap:
+        bogus = b"\x00" * (2 * cap)
+    with pytest.raises(DecodeError, match="exceeds maximum"):
+        buf.feed(bogus)
+
+    assert buf.is_poisoned
+    assert buf._skip_remaining == 0, (
+        "Self-poison branch must clear _skip_remaining; stale value "
+        "would mislead any post-poison introspection."
+    )
+    assert buf._poison_after_skip is None, (
+        "Self-poison branch must clear _poison_after_skip; the "
+        "deferred-poison path is no longer reachable post-poison."
+    )
