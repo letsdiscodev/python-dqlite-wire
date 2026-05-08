@@ -354,7 +354,7 @@ class TestText:
 
         Must raise EncodeError (not the stdlib's UnicodeEncodeError).
         """
-        with pytest.raises(EncodeError, match="invalid UTF-8"):
+        with pytest.raises(EncodeError, match="lone surrogate"):
             encode_text("\ud800")
 
     def test_decode_not_terminated_fails(self) -> None:

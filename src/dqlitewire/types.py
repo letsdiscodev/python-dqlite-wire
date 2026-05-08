@@ -226,7 +226,10 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
     try:
         utf8 = value.encode("utf-8")
     except UnicodeEncodeError as e:
-        raise EncodeError(f"Text contains invalid UTF-8: {e}") from e
+        raise EncodeError(
+            f"Text cannot be encoded as UTF-8 (likely a lone surrogate or "
+            f"surrogate-escape character): {e}"
+        ) from e
     if max_size is not None and len(utf8) > max_size:
         raise EncodeError(f"{label} length {len(utf8)} exceeds maximum ({max_size})")
     nul_byte_offset = utf8.find(b"\x00")
