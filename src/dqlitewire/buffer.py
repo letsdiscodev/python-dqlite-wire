@@ -229,6 +229,13 @@ class ReadBuffer:
           buffer has no way to identify where that body ends. The only
           correct recovery is to drop the connection.
 
+        - If the rejection fires **while a skip is in flight**
+          (``_skip_remaining > 0``), the buffer self-poisons: the
+          rejected chunk contained body bytes for the in-flight
+          oversized message that are now lost on the wire, so the
+          buffer offset is unrecoverable. Subsequent feed / decode
+          calls raise ``PoisonedError`` until ``reset()`` is called.
+
         The read-side oversize path (``read_message()`` raising
         ``DecodeError`` after the header is decoded) IS genuinely
         recoverable via ``skip_message()``: the bytes are still in the
@@ -273,7 +280,21 @@ class ReadBuffer:
             effective_len = len(data)
         projected = len(self._data) - self._pos + effective_len
         if projected > self._max_message_size:
-            raise DecodeError(f"Buffer size {projected} exceeds maximum {self._max_message_size}")
+            err = DecodeError(
+                f"Buffer size {projected} exceeds maximum {self._max_message_size}"
+            )
+            # When the projection fires while a skip is in flight, the
+            # wire is desynchronised: the rejected chunk contained
+            # body bytes for the in-flight oversized message (lost on
+            # rejection), and the next peer bytes are continuation of
+            # that body — but the caller has no way to know how many
+            # bytes remain on the wire. Self-poison so the caller's
+            # natural ``except DecodeError`` plus a subsequent feed /
+            # decode surfaces ``PoisonedError`` instead of silently
+            # continuing on a buffer that's offset-by-unknown.
+            if self._skip_remaining > 0:
+                self.poison(err)
+            raise err
         try:
             if self._skip_remaining > 0:
                 discard = min(len(data), self._skip_remaining)
