@@ -129,6 +129,19 @@ class TestFailureResponse:
         with pytest.raises(EncodeError, match="exceeds maximum"):
             msg.encode_body()
 
+    def test_decode_too_short_diagnostic_mentions_conforming_minimum(self) -> None:
+        """The 9-byte gate's diagnostic must reference the realistic
+        16-byte conforming-peer minimum (8 code + 8 padded empty text
+        block per BytePad64), not just the gate's own 9-byte
+        threshold. A maintainer reading the message should immediately
+        understand what a real peer would emit and why this gate
+        catches only the degenerate truncated case."""
+        with pytest.raises(DecodeError) as exc_info:
+            FailureResponse.decode_body(b"\x00" * 8)
+        msg = str(exc_info.value)
+        assert "16" in msg
+        assert "padded" in msg
+
 
 class TestLeaderResponse:
     def test_roundtrip(self) -> None:

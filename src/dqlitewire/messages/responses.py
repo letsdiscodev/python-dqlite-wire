@@ -246,8 +246,12 @@ class FailureResponse(Message):
         # the degenerate 8-byte case at the boundary.
         if len(data) < 9:
             raise DecodeError(
-                f"FailureResponse body too short: need at least 9 bytes "
-                f"(8 for code + 1 for null terminator), got {len(data)}"
+                f"FailureResponse body too short: a conforming peer "
+                f"emits at least 16 bytes (8 for code + 8 for the "
+                f"padded empty text block, per BytePad64). The 9-byte "
+                f"minimum here catches the degenerate truncated case "
+                f"before ``decode_text``'s less-actionable "
+                f"'not null-terminated' error. Got {len(data)}."
             )
         code = decode_uint64(data[:8])
         message, consumed = decode_text(
