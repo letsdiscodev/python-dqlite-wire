@@ -120,9 +120,16 @@ _MAX_ADDRESS_SIZE: Final[int] = 256
 _CONTROL_CHARS_RE = re.compile(
     r"[\x00-\x08\x0b-\x1f\x7f-\x9f"
     r"\u061c"  # Arabic letter mark
+    r"\u1680"  # Ogham space mark - visible blank in some fonts but
+    # treated here as defense-in-depth against log / address-field
+    # whitespace masking. Operators pasting Ogham strings into
+    # display fields will see ``?`` substitution; extreme edge case.
+    r"\u180e"  # Mongolian vowel separator (historically zero-width)
     r"\u200b-\u200f"  # zero-width space, ZWNJ, ZWJ, LRM, RLM
     r"\u2028\u2029"  # line / paragraph separator
     r"\u202a-\u202e"  # bidi override (LRE/RLE/PDF/LRO/RLO)
+    r"\u202f"  # narrow no-break space (invisible whitespace)
+    r"\u2060"  # word joiner (same family as ZWSP)
     r"\u2066-\u2069"  # bidi isolate (LRI/RLI/FSI/PDI)
     r"\ufeff"  # BOM / zero-width no-break space
     r"]"

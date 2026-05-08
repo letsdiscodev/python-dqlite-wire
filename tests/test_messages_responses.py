@@ -1909,6 +1909,10 @@ class TestServerTextSanitization:
     #  - U+061C        : Arabic letter mark (bidi)
     #  - U+200B-U+200F : zero-width and directional markers
     #  - U+FEFF        : zero-width no-break space / byte-order mark
+    #  - U+1680        : Ogham space mark (visible-but-different blank)
+    #  - U+180E        : Mongolian vowel separator (historically zero-width)
+    #  - U+202F        : narrow no-break space (invisible whitespace)
+    #  - U+2060        : word joiner (same family as ZWSP)
     # A regex regression narrowing to ``[\x00-\x1f]`` would pass the
     # ANSI/CR/NUL/Tab cases above while silently re-opening these.
     _BIDI_AND_ZERO_WIDTH: list[tuple[str, str]] = [
@@ -1930,6 +1934,10 @@ class TestServerTextSanitization:
         ("‎", "LRM"),
         ("‏", "RLM"),
         ("﻿", "ZWNBSP/BOM"),
+        (" ", "OGHAM SPACE MARK"),
+        ("᠎", "MONGOLIAN VOWEL SEPARATOR"),
+        (" ", "NARROW NO-BREAK SPACE"),
+        ("⁠", "WORD JOINER"),
     ]
 
     @pytest.mark.parametrize(("bad_char", "label"), _BIDI_AND_ZERO_WIDTH)
