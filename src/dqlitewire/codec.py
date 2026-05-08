@@ -240,6 +240,7 @@ class MessageDecoder:
         max_rows: int = RowsResponse.DEFAULT_MAX_ROWS,
         max_continuation_frames: int | None = DEFAULT_MAX_CONTINUATION_FRAMES,
         max_total_rows: int | None = DEFAULT_MAX_TOTAL_ROWS,
+        unknown_role_policy: str = "reject",
     ) -> None:
         """Initialize decoder.
 
@@ -272,6 +273,18 @@ class MessageDecoder:
                     memory irrespective of per-frame size. Defaults
                     to :data:`DEFAULT_MAX_TOTAL_ROWS`. ``None``
                     disables the cap.
+            unknown_role_policy: Policy for ``ServersResponse``
+                    decoded entries whose ``role`` byte is outside
+                    the known {VOTER=0, STANDBY=1, SPARE=2} set.
+                    Forwarded to ``ServersResponse.decode_body``;
+                    accepted values are ``"reject"`` (default,
+                    raise ``DecodeError``), ``"warn"`` (substitute
+                    ``NodeRole.SPARE`` and emit ``logger.warning``),
+                    and ``"accept"`` (substitute silently). The
+                    knob is reachable through the streaming
+                    ``MessageDecoder`` so production cluster-info
+                    consumers can opt into forward-compat tolerance
+                    without bypassing the decoder.
         """
         if not is_request and version not in _SUPPORTED_VERSIONS:
             raise HandshakeError(
@@ -286,6 +299,12 @@ class MessageDecoder:
             )
         if max_total_rows is not None and max_total_rows < 1:
             raise ValueError(f"max_total_rows must be >= 1 or None, got {max_total_rows}")
+        if unknown_role_policy not in ("reject", "warn", "accept"):
+            raise ValueError(
+                f"unknown_role_policy must be one of 'reject', 'warn', 'accept'; "
+                f"got {unknown_role_policy!r}"
+            )
+        self._unknown_role_policy = unknown_role_policy
         self._buffer = ReadBuffer(max_message_size=max_message_size)
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
@@ -736,10 +755,18 @@ class MessageDecoder:
         ):
             return LeaderResponse.decode_body_legacy(body)
 
-        # RowsResponse takes an extra ``max_rows`` cap; other classes
-        # share the generic (body, schema) signature.
+        # RowsResponse takes an extra ``max_rows`` cap; ServersResponse
+        # takes ``unknown_role_policy`` for forward-compat tolerance of
+        # role bytes outside {0,1,2}; other classes share the generic
+        # (body, schema) signature.
         if msg_class is RowsResponse:
             return RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
+        if msg_class is ServersResponse:
+            return ServersResponse.decode_body(
+                body,
+                schema=header.schema,
+                unknown_role_policy=self._unknown_role_policy,
+            )
 
         return msg_class.decode_body(body, schema=header.schema)
 
