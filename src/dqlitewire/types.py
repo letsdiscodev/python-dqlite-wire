@@ -644,7 +644,11 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
         # uses text__encode / text__decode for DQLITE_ISO8601 (see dqlite
         # src/tuple.c) and Go returns the raw string from the codec.
         # Parsing to datetime belongs in the driver/DBAPI layer.
-        return decode_text(data)
+        # Forward ``value_type.name`` as the label so truncation / not-
+        # null-terminated diagnostics name the actual cell type
+        # (``"ISO8601 not null-terminated"``) rather than the generic
+        # ``"Text ..."`` default — symmetric with ``encode_value``.
+        return decode_text(data, label=value_type.name)
     elif value_type == ValueType.BLOB:
         return decode_blob(data)
     elif value_type == ValueType.NULL:
