@@ -451,6 +451,20 @@ class DbResponse(Message):
         # reusing it for a future feature is a forward-compat
         # concern strictly; we add no defensive value by rejecting
         # non-zero values here while Go silently accepts.
+        #
+        # Asymmetry vs ``Header.reserved`` / ``LeaderRequest.reserved``
+        # strict-rejection is INTENTIONAL: the header-level reserved
+        # bytes are envelope-framing invariants whose violation
+        # signals a desync that would mis-attribute body bytes; this
+        # body-level pad is a per-message extension slot whose future
+        # repurposing would be silent on the wire either way. The
+        # permissive accept is also test-pinned in
+        # ``TestReservedFieldDiscard`` (mock-server / proxy round-trip
+        # for hypothetical replay tools that captured non-zero pads).
+        # If a future protocol revision uses the field, both decode
+        # and encode paths will need an explicit version gate; the
+        # bare permissive read here is not load-bearing for that
+        # transition.
         return cls(db_id)
 
 
