@@ -8,7 +8,7 @@ from dqlitewire.constants import NodeRole, RequestType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
 from dqlitewire.messages.responses import _MAX_ADDRESS_SIZE, _MAX_FILENAME_SIZE
-from dqlitewire.tuples import decode_params_tuple, encode_params_tuple
+from dqlitewire.tuples import _MAX_PARAM_COUNT, decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
     _MAX_TEXT_VALUE_SIZE,
     WireInput,
@@ -31,8 +31,16 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
     on re-encode (mock-server / proxy use cases) — it lets a request
     carry schema=1 with ≤255 params even though the count heuristic
     would pick schema=0. ``None`` (auto-select), ``0``, and ``1`` are the
-    only legitimate values; schema=0 also caps params at 255 (the V0
-    tuple format's uint8 count byte).
+    only legitimate values; schema=0 caps params at 255 (the V0 tuple
+    format's uint8 count byte) and schema=1 caps params at
+    ``_MAX_PARAM_COUNT`` (the V1 uint16 count, less the marker reserve).
+
+    Both caps are enforced here at construction time so a caller building
+    a malformed request gets an actionable error at the construction
+    site, not deep inside ``encode_params_tuple`` at first encode. The
+    encode-time cap inside ``encode_params_tuple`` is retained as
+    defense-in-depth in case the caller mutates ``_decoded_schema`` or
+    ``params`` after construction.
     """
     if decoded_schema is None:
         return
@@ -42,6 +50,11 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
         raise EncodeError(
             f"_decoded_schema=0 (V0 tuple format) supports at most 255 parameters; "
             f"got {param_count}"
+        )
+    if decoded_schema == 1 and param_count > _MAX_PARAM_COUNT:
+        raise EncodeError(
+            f"_decoded_schema=1 (V1 tuple format) supports at most "
+            f"{_MAX_PARAM_COUNT} parameters; got {param_count}"
         )
 
 

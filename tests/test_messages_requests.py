@@ -1105,6 +1105,35 @@ class TestDecodedSchemaConstructionValidation:
         # Must not raise.
         cls(**kwargs)
 
+    @pytest.mark.parametrize(
+        "cls_name",
+        ["ExecRequest", "QueryRequest", "ExecSqlRequest", "QuerySqlRequest"],
+    )
+    def test_rejects_schema_1_with_more_than_max_param_count(self, cls_name: str) -> None:
+        """Mirror the V0 schema's construction-time cap: V1 schema with
+        more than ``_MAX_PARAM_COUNT`` (32766) params must reject at
+        construction with an actionable EncodeError naming the field,
+        not surface deep inside ``encode_params_tuple`` at first
+        encode. Pre-fix, a 40k-param V1-schema request constructed
+        successfully and only failed inside the tuple encoder."""
+        import dqlitewire.messages as m
+        from dqlitewire.tuples import _MAX_PARAM_COUNT
+
+        cls = getattr(m, cls_name)
+        kwargs: dict[str, object] = {
+            "db_id": 1,
+            "_decoded_schema": 1,
+            "params": [None] * (_MAX_PARAM_COUNT + 1),
+        }
+        if cls_name in ("ExecRequest", "QueryRequest"):
+            kwargs["stmt_id"] = 1
+        else:
+            kwargs["sql"] = "SELECT 1"
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match=r"_decoded_schema=1"):
+            cls(**kwargs)
+
 
 class TestDecodeBodySchemaGuard:
     """Direct ``decode_body(body, schema=N)`` invocations (bypassing the
