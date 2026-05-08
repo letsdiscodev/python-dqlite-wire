@@ -68,6 +68,10 @@ def test_warn_policy_decoder_substitutes_spare_and_warns(
         result = decoder.decode()
     assert isinstance(result, ServersResponse)
     assert result.nodes == [NodeInfo(node_id=42, address="10.0.0.1:9001", role=NodeRole.SPARE)]
+    # warn mode: a single WARNING record was emitted naming the unknown role.
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warning_records) == 1
+    assert "99" in warning_records[0].getMessage()
 
 
 def test_accept_policy_decoder_substitutes_spare_silently(
