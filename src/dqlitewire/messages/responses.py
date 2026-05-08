@@ -166,23 +166,28 @@ def _sanitize_for_log(s: str) -> str:
 
     Applies :func:`_sanitize_server_text` (control / bidi / invisible
     char replacement) AND escapes LF as the literal two-byte sequence
-    ``\\n`` (backslash + 'n'). The exception-message rendering keeps
-    raw LF for interactive debugging; this helper is for
-    ``logger.warning`` / ``logger.error`` call sites that
-    interpolate server-derived text into a single log record.
+    ``\\n`` (backslash + 'n') and tab as ``\\t``. The exception-message
+    rendering keeps raw LF / tab for interactive debugging; this
+    helper is for ``logger.warning`` / ``logger.error`` call sites
+    that interpolate server-derived text into a single log record.
 
     Without LF escaping, a hostile ``FailureResponse.message``
     containing a newline would split the log line in syslog /
     journald and the operator's structured log pipeline would treat
     the second half as if it came from the dqlite client — a
-    log-injection vector with bounded but real impact.
+    log-injection vector with bounded but real impact. Tab is escaped
+    for the same defense-in-depth reason: TSV-style log parsers,
+    journald ``MESSAGE=`` ad-hoc consumers, and tab-indented JSON
+    pretty-printers treat tabs as field separators, and a server-
+    supplied ``\\t`` would break those downstream pipelines the same
+    way an un-escaped LF would.
 
     CR is already replaced with ``?`` by ``_sanitize_server_text``
-    (it is in the control-chars regex); only LF passes through that
-    helper deliberately, so only LF needs the additional escape
-    here.
+    (it is in the control-chars regex); only LF and tab pass through
+    that helper deliberately, so only those two need the additional
+    escape here.
     """
-    return _sanitize_server_text(s).replace("\n", "\\n")
+    return _sanitize_server_text(s).replace("\n", "\\n").replace("\t", "\\t")
 
 
 @final

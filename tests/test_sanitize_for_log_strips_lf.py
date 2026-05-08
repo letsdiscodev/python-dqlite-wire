@@ -28,9 +28,15 @@ def test_crlf_escaped() -> None:
     assert _sanitize_for_log("a\r\nb") == "a?\\nb"
 
 
-def test_tab_passes_through() -> None:
-    """Tab is fine; only the line-boundary chars need escaping."""
-    assert _sanitize_for_log("a\tb") == "a\tb"
+def test_tab_escaped_in_log_output() -> None:
+    """Tabs are escaped to ``\\t`` for the same defense-in-depth
+    reason LF is escaped to ``\\n``: TSV-style log parsers and
+    journald ``MESSAGE=`` ad-hoc consumers treat tabs as field
+    separators, and a server-supplied tab can break those pipelines
+    the way an un-escaped LF would. ``_sanitize_server_text`` keeps
+    tabs intact for general server-text rendering; only this log-
+    line-oriented helper escapes them."""
+    assert _sanitize_for_log("a\tb") == "a\\tb"
 
 
 def test_control_chars_replaced_via_sanitize_server_text() -> None:
