@@ -626,9 +626,9 @@ class ResultResponse(Message):
         # ``encode()``.
         #
         # When the upstream C server migrates to ``sqlite3_changes64``
-        # (see the ``_MAX_ROWS_AFFECTED`` docstring at line 567+), the
-        # cap will need raising on BOTH sides — this construction-
-        # time check and the ``decode_body`` check.
+        # (see the ``_MAX_ROWS_AFFECTED`` docstring for the ceiling
+        # rationale), the cap will need raising on BOTH sides — this
+        # construction-time check and the ``decode_body`` check.
         if self.rows_affected > _MAX_ROWS_AFFECTED:
             raise EncodeError(
                 f"ResultResponse rows_affected {self.rows_affected} exceeds maximum "
