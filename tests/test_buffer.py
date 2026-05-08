@@ -724,7 +724,14 @@ class TestReadBuffer:
             buf.read_message()
 
     def test_skip_message_allows_oversized_for_recovery(self) -> None:
-        """skip_message should NOT reject oversized messages — it's the recovery mechanism."""
+        """skip_message should NOT raise on oversized messages — it's the
+        recovery mechanism. In the immediate-poison sub-branch
+        (declared body > cap, body fully present in the buffer) it
+        synchronously poisons and returns False to advertise that the
+        buffer is no longer usable; the caller must ``reset()`` before
+        continuing. The False signal — rather than the raw
+        ``_skip_remaining == 0`` — keeps the caller's natural
+        ``if buf.skip_message(): continue`` pattern correct."""
         import struct
 
         buf = ReadBuffer(max_message_size=1024)
@@ -734,8 +741,12 @@ class TestReadBuffer:
         body = b"\x00" * (size_words * 8)
         buf._data = bytearray(header + body)
         buf._pos = 0
-        # skip_message should succeed (it's the recovery tool for oversized messages)
-        assert buf.skip_message() is True
+        # The immediate-poison sub-branch fires here: declared total
+        # exceeds the cap, the body is already present. skip_message
+        # synchronously poisons the buffer and reports False so the
+        # caller doesn't blindly proceed.
+        assert buf.skip_message() is False
+        assert buf.is_poisoned
 
     def test_skip_message_waits_for_complete_normal_sized_message(self) -> None:
         """skip_message should return False for incomplete normal-sized messages.

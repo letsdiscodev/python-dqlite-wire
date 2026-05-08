@@ -460,9 +460,12 @@ class ReadBuffer:
         remainder via ``_skip_remaining``; subsequent ``feed()`` calls will
         silently discard the remaining oversized bytes.
 
-        Returns True if a message was fully skipped, False if not enough data
-        for a header, a normal-sized message is still incomplete, or an
-        oversized message skip is still in progress (check ``is_skipping``).
+        Returns True if a message was fully skipped AND the buffer remains
+        usable. Returns False if not enough data for a header, a normal-sized
+        message is still incomplete, an oversized message skip is still in
+        progress (check ``is_skipping``), OR the immediate-poison sub-branch
+        fired (the declared message exceeded ``max_message_size`` and was
+        synchronously capped — caller must ``reset()`` before continuing).
 
         Raises ``ProtocolError`` if the buffer is poisoned.
         """
@@ -500,6 +503,10 @@ class ReadBuffer:
                 if effective_total < total_size:
                     if self._skip_remaining == 0:
                         # Capped skip completed immediately — poison now.
+                        # Return False below: the buffer is no longer usable,
+                        # so the natural ``if buf.skip_message(): continue``
+                        # caller pattern must NOT proceed. The raw
+                        # ``_skip_remaining == 0`` value would say True here.
                         self.poison(
                             DecodeError(
                                 f"Oversized message skip capped to "
@@ -507,6 +514,8 @@ class ReadBuffer:
                                 f"stream is desynchronized. Call reset()."
                             )
                         )
+                        self._maybe_compact()
+                        return False
                     else:
                         # Deferred: feed() will poison once skip completes.
                         self._poison_after_skip = DecodeError(
