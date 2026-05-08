@@ -388,6 +388,26 @@ class TestStmtResponse:
         with pytest.raises(DecodeError, match="tail_offset"):
             StmtResponse.decode_body(body, schema=1)
 
+    def test_accepts_multi_mib_tail_offset(self) -> None:
+        """A 4 MiB ``tail_offset`` from a multi-statement prepare must
+        decode cleanly. The cap is now aligned with the message envelope
+        (64 MiB) so any tail offset that could legitimately appear in a
+        prepare response, bounded by the server's message envelope per
+        ``gateway.c:410``, decodes without false-rejecting on the
+        Python side. Pre-bump the cap was 1 MiB and this test would
+        have raised."""
+        import struct
+
+        offset = 4 * 1024 * 1024
+        body = (
+            struct.pack("<I", 1)  # db_id
+            + struct.pack("<I", 2)  # stmt_id
+            + struct.pack("<Q", 3)  # num_params
+            + struct.pack("<Q", offset)  # tail_offset (4 MiB)
+        )
+        decoded = StmtResponse.decode_body(body, schema=1)
+        assert decoded.tail_offset == offset
+
 
 class TestResultResponse:
     def test_roundtrip(self) -> None:

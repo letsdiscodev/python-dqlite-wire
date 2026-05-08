@@ -60,9 +60,15 @@ _MAX_NODE_COUNT: Final[int] = 10_000
 # offset into the prepared-SQL text; a malicious peer could emit an
 # enormous value and Python's slice semantics would silently return
 # ``""`` on ``sql[offset:]``, dropping later statements with no
-# diagnostic. 1 MiB is far above any realistic multi-statement SQL
-# size.
-_MAX_TAIL_OFFSET: Final[int] = 1 * 1024 * 1024
+# diagnostic. Aligned with ``_MAX_BLOB_SIZE`` / ``_MAX_TEXT_VALUE_SIZE``
+# / the default ``max_message_size`` (64 MiB) so any tail offset that
+# could legitimately appear in a prepare-response — bounded by the
+# server's message envelope per ``gateway.c:410`` (``response_v1.offset
+# = (uint64_t)(tail - sql)``) — decodes cleanly. The cap is still a
+# defense-in-depth bound against an enormous-offset attack; callers
+# who know their SQL is small can lower the per-decoder
+# ``max_message_size`` instead.
+_MAX_TAIL_OFFSET: Final[int] = 64 * 1024 * 1024
 
 # Per-field cap on ``FailureResponse.message``. The frame-size cap
 # in ``buffer.py`` (64 MiB) bounds total bytes, but error messages in
