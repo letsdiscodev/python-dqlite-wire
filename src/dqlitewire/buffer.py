@@ -280,9 +280,7 @@ class ReadBuffer:
             effective_len = len(data)
         projected = len(self._data) - self._pos + effective_len
         if projected > self._max_message_size:
-            err = DecodeError(
-                f"Buffer size {projected} exceeds maximum {self._max_message_size}"
-            )
+            err = DecodeError(f"Buffer size {projected} exceeds maximum {self._max_message_size}")
             # When the projection fires while a skip is in flight, the
             # wire is desynchronised: the rejected chunk contained
             # body bytes for the in-flight oversized message (lost on
