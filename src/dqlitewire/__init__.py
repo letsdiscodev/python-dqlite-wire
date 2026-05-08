@@ -100,7 +100,7 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
 
 from typing import Final
 
-from dqlitewire import messages
+from dqlitewire import messages, tuples, types
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
@@ -215,4 +215,6 @@ __all__ = [
     "messages",
     "primary_sqlite_code",
     "sanitize_server_text",
+    "tuples",
+    "types",
 ]
