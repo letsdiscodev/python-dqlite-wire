@@ -97,6 +97,21 @@ def _validate_uint32(name: str, value: int) -> None:
         )
 
 
+def _validate_int64(name: str, value: int) -> None:
+    """Validate ``value`` is an int (not bool) in the signed int64 range.
+
+    Symmetric with :func:`_validate_uint64` / :func:`_validate_uint32`.
+    The existing exception wording (``"Value <repr> out of range for
+    int64"``) is preserved so callers and test pins that match that
+    text continue to pass — this helper is a refactor of the inline
+    check inside :func:`encode_int64`, not a wording change.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise EncodeError(f"{name} must be int, got {type(value).__name__}")
+    if not -(2**63) <= value < 2**63:
+        raise EncodeError(f"Value {_bounded_repr(value)} out of range for int64")
+
+
 def encode_uint64(value: int) -> bytes:
     """Encode an unsigned 64-bit integer (little-endian)."""
     _validate_uint64("value", value)
@@ -125,10 +140,7 @@ def encode_int64(value: int) -> bytes:
     likely a bug than a deliberate ``True → 1`` coercion; the
     rejection surfaces it.
     """
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise EncodeError(f"value must be int, got {type(value).__name__}")
-    if not -(2**63) <= value < 2**63:
-        raise EncodeError(f"Value {_bounded_repr(value)} out of range for int64")
+    _validate_int64("value", value)
     return struct.pack("<q", value)
 
 
