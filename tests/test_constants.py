@@ -470,3 +470,54 @@ class TestInternalDecodeBoundsPinnedAgainstReadme:
         from dqlitewire.messages.responses import _MAX_NODE_COUNT
 
         assert _MAX_NODE_COUNT == 10_000
+
+
+class TestNamedPrimaryCodeValues:
+    """Pin each named SQLite/dqlite primary result code at its
+    upstream-spec value.
+
+    The named constants are public re-exports on ``dqlitewire``
+    (``SQLITE_BUSY`` etc.) and the wire's ``FailureResponse`` round-
+    trip matrix exercises every one of them. The matrix uses the
+    constant on both encode and decode sides, so a maintainer who
+    silently changes the value (rebase swap, accidental edit) does
+    not break the round-trip — the matrix is internally consistent
+    even when the value has drifted from the spec. This pin closes
+    that gap.
+
+    Reference values:
+      - SQLite primary codes: https://www.sqlite.org/rescode.html
+      - DQLITE_PROTO=1001    : dqlite-upstream/src/protocol.h:9
+      - DQLITE_NOTFOUND=1002 : dqlite-upstream/src/lib/registry.h:13
+      - DQLITE_PARSE=1005    : dqlite-upstream/src/lib/serialize.h:14
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "expected_value"),
+        [
+            ("SQLITE_ERROR", 1),
+            ("SQLITE_ABORT", 4),
+            ("SQLITE_BUSY", 5),
+            ("SQLITE_NOMEM", 7),
+            ("SQLITE_INTERRUPT", 9),
+            ("SQLITE_IOERR", 10),
+            ("SQLITE_CORRUPT", 11),
+            ("SQLITE_FULL", 13),
+            ("SQLITE_FORMAT", 24),
+            ("SQLITE_NOTADB", 26),
+            ("DQLITE_PROTO", 1001),
+            ("DQLITE_NOTFOUND", 1002),
+            ("DQLITE_PARSE", 1005),
+        ],
+    )
+    def test_named_constant_value_pinned(self, name: str, expected_value: int) -> None:
+        import dqlitewire
+
+        actual = getattr(dqlitewire, name)
+        assert actual == expected_value, (
+            f"Named constant {name} value drift: got {actual}, "
+            f"expected {expected_value} (per sqlite.org/rescode.html or "
+            f"dqlite protocol.h / registry.h / serialize.h). A rebase "
+            f"that silently changes the value breaks every cross-driver "
+            f"classifier; pin the value here."
+        )
