@@ -26,7 +26,7 @@ from dqlitewire import (
     decode_message,
 )
 from dqlitewire.constants import ResponseType
-from dqlitewire.exceptions import DecodeError
+from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import NodeInfo, ServersResponse
 
@@ -91,7 +91,11 @@ def test_accept_policy_decoder_substitutes_spare_silently(
 
 
 def test_invalid_policy_value_raises_at_construction() -> None:
-    with pytest.raises(ValueError, match="unknown_role_policy must be one of"):
+    # Aligned with the deeper ServersResponse.decode_body validator,
+    # which raises EncodeError for the same input (round-29 taxonomy
+    # migration). Callers can use a single `except EncodeError` for
+    # both layers.
+    with pytest.raises(EncodeError, match="unknown_role_policy must be one of"):
         MessageDecoder(unknown_role_policy="bogus")
 
 
