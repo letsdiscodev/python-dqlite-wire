@@ -23,6 +23,7 @@ import pytest
 from dqlitewire import (
     MessageDecoder,
     NodeRole,
+    decode_message,
 )
 from dqlitewire.constants import ResponseType
 from dqlitewire.exceptions import DecodeError
@@ -92,6 +93,22 @@ def test_accept_policy_decoder_substitutes_spare_silently(
 def test_invalid_policy_value_raises_at_construction() -> None:
     with pytest.raises(ValueError, match="unknown_role_policy must be one of"):
         MessageDecoder(unknown_role_policy="bogus")
+
+
+def test_decode_message_helper_forwards_unknown_role_policy() -> None:
+    """Pin: ``decode_message(..., unknown_role_policy="warn")`` parity
+    with ``MessageDecoder``. The convenience helper must forward the
+    kwarg so stateless one-off decode (e.g., from a packet trace) can
+    opt into forward-compat tolerance."""
+    frame = _build_servers_frame_with_unknown_role(role=99)
+    # Default reject mode: raises.
+    with pytest.raises(DecodeError, match="role"):
+        decode_message(frame)
+    # warn mode: substitute SPARE silently here — log assertion is
+    # covered by the streaming-decoder pin above.
+    result = decode_message(frame, unknown_role_policy="warn")
+    assert isinstance(result, ServersResponse)
+    assert result.nodes == [NodeInfo(node_id=42, address="10.0.0.1:9001", role=NodeRole.SPARE)]
 
 
 def test_known_role_unchanged_under_all_policies() -> None:

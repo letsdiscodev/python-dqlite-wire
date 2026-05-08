@@ -824,6 +824,7 @@ def decode_message(
     data: bytes | bytearray | memoryview,
     is_request: bool = False,
     version: int = PROTOCOL_VERSION,
+    unknown_role_policy: str = "reject",
 ) -> Message:
     """Convenience function to decode a single message.
 
@@ -837,8 +838,17 @@ def decode_message(
         version: Protocol version to assume. Use PROTOCOL_VERSION_LEGACY
                  to decode legacy-format messages (e.g., LeaderResponse
                  without node_id).
+        unknown_role_policy: Forwarded to ``MessageDecoder``; controls
+                 ``ServersResponse`` behaviour when an unknown role
+                 byte is decoded. One of ``"reject"`` (default,
+                 raises), ``"warn"`` (substitute SPARE + log warning),
+                 or ``"accept"`` (substitute SPARE silently).
     """
-    decoder = MessageDecoder(is_request=is_request, version=version)
+    decoder = MessageDecoder(
+        is_request=is_request,
+        version=version,
+        unknown_role_policy=unknown_role_policy,
+    )
     if is_request:
         # Request decoders start with handshake_done=False; bypass for
         # stateless single-message decoding.
