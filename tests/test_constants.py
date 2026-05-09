@@ -214,16 +214,25 @@ class TestLeaderErrorCodes:
         assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
         assert SQLITE_IOERR_LEADERSHIP_LOST == SQLITE_IOERR | (41 << 8)
 
-    def test_leader_error_codes_is_a_frozenset_of_both(self) -> None:
+    def test_leader_error_codes_is_a_frozenset_of_modern_and_legacy(self) -> None:
         from dqlitewire.constants import (
             LEADER_ERROR_CODES,
             SQLITE_IOERR_LEADERSHIP_LOST,
+            SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
             SQLITE_IOERR_NOT_LEADER,
+            SQLITE_IOERR_NOT_LEADER_LEGACY,
         )
 
         assert isinstance(LEADER_ERROR_CODES, frozenset)
-        expected = frozenset({SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST})
-        assert expected == LEADER_ERROR_CODES
+        # Both modern (40/41) and legacy (32/33) sub-code variants are
+        # in the set so a leader-flip on a pre-3.32.1 dqlite server is
+        # classified as retryable. See companion test
+        # ``test_leader_error_codes_legacy_subcodes.py`` for the Go
+        # parity rationale.
+        assert SQLITE_IOERR_NOT_LEADER in LEADER_ERROR_CODES
+        assert SQLITE_IOERR_LEADERSHIP_LOST in LEADER_ERROR_CODES
+        assert SQLITE_IOERR_NOT_LEADER_LEGACY in LEADER_ERROR_CODES
+        assert SQLITE_IOERR_LEADERSHIP_LOST_LEGACY in LEADER_ERROR_CODES
 
     def test_leader_error_codes_importable_from_top_level(self) -> None:
         from dqlitewire import (
@@ -236,8 +245,11 @@ class TestLeaderErrorCodes:
         assert SQLITE_IOERR == 10
         assert SQLITE_IOERR_NOT_LEADER == 10250
         assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
-        expected = frozenset({10250, 10506})
-        assert expected == LEADER_ERROR_CODES
+        # Both modern and legacy variants are in the set; the latter
+        # cover pre-3.32.1 dqlite servers that emit (32/33<<8) sub-
+        # codes for the same leader-flip conditions. See companion
+        # test ``test_leader_error_codes_legacy_subcodes.py``.
+        assert {10250, 10506, 8202, 8458} == set(LEADER_ERROR_CODES)
 
 
 class TestPrimarySqliteCode:

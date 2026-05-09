@@ -27,7 +27,9 @@ __all__ = [
     "SQLITE_INTERRUPT",
     "SQLITE_IOERR",
     "SQLITE_IOERR_LEADERSHIP_LOST",
+    "SQLITE_IOERR_LEADERSHIP_LOST_LEGACY",
     "SQLITE_IOERR_NOT_LEADER",
+    "SQLITE_IOERR_NOT_LEADER_LEGACY",
     "SQLITE_NOMEM",
     "SQLITE_NOTADB",
     "SQLITE_NOTFOUND",
@@ -167,8 +169,28 @@ SQLITE_PROTOCOL: Final[int] = 15  # gateway.c "bad format version" / wire mismat
 SQLITE_IOERR: Final[int] = 10
 SQLITE_IOERR_NOT_LEADER: Final[int] = SQLITE_IOERR | (40 << 8)  # 10250
 SQLITE_IOERR_LEADERSHIP_LOST: Final[int] = SQLITE_IOERR | (41 << 8)  # 10506
+
+# Legacy sub-code variants emitted by pre-3.32.1 dqlite servers.
+# Go's ``go-dqlite/driver/driver.go::driverError`` carries both the
+# modern (40/41) and the legacy (32/33) sub-codes through the same
+# ``ErrBadConn`` arm so a mixed cluster (one peer on a pre-3.32.1
+# server, others on the modern build) classifies leader-flips
+# uniformly. Without these, a leader flip on a legacy peer surfaces
+# as a non-retryable ``OperationalError`` rather than a retryable
+# ``DqliteConnectionError`` — `cluster.connect`'s retry tuple
+# excludes ``OperationalError`` and the SA dialect's
+# ``is_disconnect`` does not classify it as a disconnect, so the
+# pool returns a broken connection.
+SQLITE_IOERR_NOT_LEADER_LEGACY: Final[int] = SQLITE_IOERR | (32 << 8)  # 8202
+SQLITE_IOERR_LEADERSHIP_LOST_LEGACY: Final[int] = SQLITE_IOERR | (33 << 8)  # 8458
+
 LEADER_ERROR_CODES: Final[frozenset[int]] = frozenset(
-    {SQLITE_IOERR_NOT_LEADER, SQLITE_IOERR_LEADERSHIP_LOST}
+    {
+        SQLITE_IOERR_NOT_LEADER,
+        SQLITE_IOERR_LEADERSHIP_LOST,
+        SQLITE_IOERR_NOT_LEADER_LEGACY,
+        SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
+    }
 )
 
 # dqlite-namespace error codes (>= 1000). These do NOT belong to the
