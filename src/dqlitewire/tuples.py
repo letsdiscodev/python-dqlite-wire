@@ -14,6 +14,16 @@ from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.types import WireValue, decode_value, encode_value, pad_to_word
 
+__all__ = [
+    "RowMarker",
+    "decode_params_tuple",
+    "decode_row_header",
+    "decode_row_values",
+    "encode_params_tuple",
+    "encode_row_header",
+    "encode_row_values",
+]
+
 # Valid ValueType codes as integers, for fast membership testing in hot paths.
 _VALID_TYPE_CODES: Final[frozenset[int]] = frozenset(int(v) for v in ValueType)
 

@@ -6,6 +6,17 @@ distinguish recoverable server errors from fatal stream desync can
 catch the more specific subclasses below.
 """
 
+__all__ = [
+    "ContinuationError",
+    "DecodeError",
+    "EncodeError",
+    "HandshakeError",
+    "PoisonedError",
+    "ProtocolError",
+    "ServerFailure",
+    "StreamError",
+]
+
 
 class ProtocolError(Exception):
     """Base wire-layer protocol exception.

@@ -17,6 +17,26 @@ from typing import Final
 from dqlitewire.constants import WORD_SIZE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 
+__all__ = [
+    "WireInput",
+    "WireValue",
+    "decode_blob",
+    "decode_double",
+    "decode_int64",
+    "decode_text",
+    "decode_uint32",
+    "decode_uint64",
+    "decode_value",
+    "encode_blob",
+    "encode_double",
+    "encode_int64",
+    "encode_text",
+    "encode_uint32",
+    "encode_uint64",
+    "encode_value",
+    "pad_to_word",
+]
+
 # Exact set of Python types ``encode_value`` accepts. Callers see a
 # type-checker error if they pass something else, instead of a runtime
 # EncodeError at the first wire round-trip. ``bytes``-like siblings

@@ -6,6 +6,23 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final, final
 
+__all__ = [
+    "DbResponse",
+    "EmptyResponse",
+    "FailureResponse",
+    "FilesResponse",
+    "LeaderResponse",
+    "MetadataResponse",
+    "NodeInfo",
+    "ResultResponse",
+    "RowsResponse",
+    "ServersResponse",
+    "StmtResponse",
+    "WelcomeResponse",
+    "sanitize_for_log",
+    "sanitize_server_text",
+]
+
 from dqlitewire.constants import (
     ROW_DONE_MARKER,
     ROW_PART_MARKER,

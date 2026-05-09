@@ -2,6 +2,13 @@
 
 from typing import Final, NoReturn
 
+__all__ = [
+    "MessageDecoder",
+    "MessageEncoder",
+    "decode_message",
+    "encode_message",
+]
+
 from dqlitewire.buffer import ReadBuffer
 from dqlitewire.constants import (
     DEFAULT_MAX_CONTINUATION_FRAMES,

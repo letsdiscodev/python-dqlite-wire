@@ -3,6 +3,47 @@
 from enum import IntEnum
 from typing import Final
 
+__all__ = [
+    "DEFAULT_MAX_CONTINUATION_FRAMES",
+    "DEFAULT_MAX_TOTAL_ROWS",
+    "DQLITE_NOTFOUND",
+    "DQLITE_PARSE",
+    "DQLITE_PROTO",
+    "HEADER_SIZE",
+    "LEADER_ERROR_CODES",
+    "NO_TRANSACTION_MESSAGE_SUBSTRINGS",
+    "PROTOCOL_VERSION",
+    "PROTOCOL_VERSION_LEGACY",
+    "ROW_DONE_BYTE",
+    "ROW_DONE_MARKER",
+    "ROW_PART_BYTE",
+    "ROW_PART_MARKER",
+    "SQLITE_ABORT",
+    "SQLITE_BUSY",
+    "SQLITE_CORRUPT",
+    "SQLITE_ERROR",
+    "SQLITE_FORMAT",
+    "SQLITE_FULL",
+    "SQLITE_INTERRUPT",
+    "SQLITE_IOERR",
+    "SQLITE_IOERR_LEADERSHIP_LOST",
+    "SQLITE_IOERR_NOT_LEADER",
+    "SQLITE_NOMEM",
+    "SQLITE_NOTADB",
+    "SQLITE_NOTFOUND",
+    "SQLITE_PRIMARY_CODE_MASK",
+    "SQLITE_PROTOCOL",
+    "TX_AUTO_ROLLBACK_PRIMARY_CODES",
+    "WIRE_DECODE_FAILED_PREFIX",
+    "WORD_SIZE",
+    "NodeRole",
+    "RequestType",
+    "ResponseType",
+    "ValueType",
+    "is_dqlite_namespace_code",
+    "primary_sqlite_code",
+]
+
 # Protocol versions
 PROTOCOL_VERSION: Final[int] = 1
 PROTOCOL_VERSION_LEGACY: Final[int] = 0x86104DD760433FE5  # Pre-1.0 dqlite servers

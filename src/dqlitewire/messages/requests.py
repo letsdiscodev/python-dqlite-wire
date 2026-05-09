@@ -7,6 +7,27 @@ from typing import ClassVar, final
 from dqlitewire.constants import NodeRole, RequestType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Message
+
+__all__ = [
+    "AddRequest",
+    "AssignRequest",
+    "ClientRequest",
+    "ClusterRequest",
+    "DescribeRequest",
+    "DumpRequest",
+    "ExecRequest",
+    "ExecSqlRequest",
+    "FinalizeRequest",
+    "InterruptRequest",
+    "LeaderRequest",
+    "OpenRequest",
+    "PrepareRequest",
+    "QueryRequest",
+    "QuerySqlRequest",
+    "RemoveRequest",
+    "TransferRequest",
+    "WeightRequest",
+]
 from dqlitewire.messages.responses import _MAX_ADDRESS_SIZE, _MAX_FILENAME_SIZE
 from dqlitewire.tuples import _MAX_PARAM_COUNT, decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (

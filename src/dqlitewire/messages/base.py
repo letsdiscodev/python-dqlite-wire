@@ -8,6 +8,11 @@ from typing import ClassVar, final
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, EncodeError
 
+__all__ = [
+    "Header",
+    "Message",
+]
+
 
 @final
 @dataclass(frozen=True, slots=True)

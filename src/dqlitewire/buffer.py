@@ -5,6 +5,11 @@ from typing import Final, NoReturn
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, PoisonedError
 
+__all__ = [
+    "ReadBuffer",
+    "WriteBuffer",
+]
+
 _COMPACT_THRESHOLD: Final[int] = 4096
 
 
