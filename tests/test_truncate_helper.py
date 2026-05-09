@@ -51,3 +51,19 @@ def test_round_trip_under_cap_no_suffix(max_chars: int) -> None:
     assert result == text
     if result:
         assert "truncated" not in result
+
+
+@pytest.mark.parametrize("bad_max", [-1, -100, -(2**31)])
+def test_negative_max_chars_rejected(bad_max: int) -> None:
+    """A negative budget has no meaningful semantic; reject so the
+    contributor's typo surfaces at the call site rather than silently
+    producing a one-character drop with a misleading 'overflow' count."""
+    with pytest.raises(ValueError, match="max_chars must be >= 0"):
+        _cap_raw_message("hello", bad_max)
+
+
+def test_negative_max_chars_rejects_even_for_none_input() -> None:
+    """Validation fires before the ``raw_message is None`` short-circuit
+    so the contract failure is consistent regardless of input shape."""
+    with pytest.raises(ValueError, match="max_chars must be >= 0"):
+        _cap_raw_message(None, -1)

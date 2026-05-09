@@ -38,7 +38,18 @@ def _cap_raw_message(raw_message: str | None, max_chars: int) -> str | None:
     within the cap. Caller passes their canonical cap; this helper has
     no default — the absence of a default forces every caller to spell
     out its budget at the call site.
+
+    Raises ``ValueError`` if ``max_chars`` is negative. ``max_chars=0`` is
+    a valid (degenerate) cap: every non-empty input is truncated to the
+    empty string with the overflow suffix appended. A negative value
+    has no meaningful semantic — Python's negative-index slicing would
+    silently drop one character while the suffix's overflow count
+    reported the difference between length and (negative) cap, producing
+    inconsistent diagnostics for what is unambiguously a contributor
+    typo.
     """
+    if max_chars < 0:
+        raise ValueError(f"max_chars must be >= 0 (codepoint budget); got {max_chars}")
     if raw_message is None or len(raw_message) <= max_chars:
         return raw_message
     overflow = len(raw_message) - max_chars
