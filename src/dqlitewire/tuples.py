@@ -15,13 +15,16 @@ from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.types import WireValue, decode_value, encode_value, pad_to_word
 
 # Valid ValueType codes as integers, for fast membership testing in hot paths.
-_VALID_TYPE_CODES = frozenset(int(v) for v in ValueType)
+_VALID_TYPE_CODES: Final[frozenset[int]] = frozenset(int(v) for v in ValueType)
 
 # Full 8-byte sentinels matching DQLITE_RESPONSE_ROWS_DONE/PART. Used to
 # reject torn/corrupt row markers instead of accepting any 8 bytes that
-# happen to start with 0xff/0xee.
-_ROW_DONE_MARKER = bytes([ROW_DONE_BYTE]) * 8
-_ROW_PART_MARKER = bytes([ROW_PART_BYTE]) * 8
+# happen to start with 0xff/0xee. NOTE: these are ``bytes`` (not int) —
+# they are compared against ``data[:8]`` slices of the wire body. The
+# uint64 int forms live in ``constants.py`` (``ROW_DONE_MARKER`` /
+# ``ROW_PART_MARKER``) and are used at encode time.
+_ROW_DONE_MARKER: Final[bytes] = bytes([ROW_DONE_BYTE]) * 8
+_ROW_PART_MARKER: Final[bytes] = bytes([ROW_PART_BYTE]) * 8
 
 # Defense-in-depth cap on parameter count, matching the pattern used by
 # _MAX_COLUMN_COUNT, _MAX_FILE_COUNT, and _MAX_NODE_COUNT in responses.py.

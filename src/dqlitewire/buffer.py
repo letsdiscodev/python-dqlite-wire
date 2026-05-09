@@ -1,11 +1,11 @@
 """Buffer utilities for streaming protocol data."""
 
-from typing import NoReturn
+from typing import Final, NoReturn
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, PoisonedError
 
-_COMPACT_THRESHOLD = 4096
+_COMPACT_THRESHOLD: Final[int] = 4096
 
 
 class WriteBuffer:

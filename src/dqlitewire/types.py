@@ -264,8 +264,8 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
 # one-shot path dominates the common case. Above the
 # threshold we fall back to chunked scanning to bound peak memory for
 # pathologically long texts.
-_TEXT_ONE_SHOT_MAX = 65_536
-_TEXT_SCAN_CHUNK = 4096
+_TEXT_ONE_SHOT_MAX: Final[int] = 65_536
+_TEXT_SCAN_CHUNK: Final[int] = 4096
 
 
 def decode_text(

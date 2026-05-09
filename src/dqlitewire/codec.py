@@ -1,6 +1,6 @@
 """Message encoder and decoder for dqlite wire protocol."""
 
-from typing import NoReturn
+from typing import Final, NoReturn
 
 from dqlitewire.buffer import ReadBuffer
 from dqlitewire.constants import (
@@ -125,7 +125,7 @@ _RESPONSE_MAX_SCHEMA: dict[int, int] = {
 }
 
 
-_SUPPORTED_VERSIONS = frozenset({PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY})
+_SUPPORTED_VERSIONS: Final[frozenset[int]] = frozenset({PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY})
 
 
 class MessageEncoder:
