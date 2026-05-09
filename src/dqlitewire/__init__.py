@@ -152,7 +152,7 @@ from dqlitewire.exceptions import (
     StreamError,
 )
 from dqlitewire.messages.base import Header, Message
-from dqlitewire.messages.responses import sanitize_server_text
+from dqlitewire.messages.responses import sanitize_for_log, sanitize_server_text
 from dqlitewire.types import WireInput, WireValue
 
 __version__: Final[str] = "0.1.4"
@@ -214,6 +214,7 @@ __all__ = [
     "is_dqlite_namespace_code",
     "messages",
     "primary_sqlite_code",
+    "sanitize_for_log",
     "sanitize_server_text",
     "tuples",
     "types",

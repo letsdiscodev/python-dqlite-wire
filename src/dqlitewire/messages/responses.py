@@ -157,7 +157,7 @@ def sanitize_server_text(s: str) -> str:
     Leaves tab and LF untouched so multi-line server diagnostics
     render correctly. See the regex above for the full replacement
     class. For logger output specifically, wrap via
-    :func:`_sanitize_for_log` which additionally escapes LF so a
+    :func:`sanitize_for_log` which additionally escapes LF so a
     hostile server cannot inject fake log lines into syslog /
     journald via ``\\n`` in a server-supplied field.
 
@@ -174,10 +174,10 @@ def sanitize_server_text(s: str) -> str:
 _sanitize_server_text = sanitize_server_text
 
 
-def _sanitize_for_log(s: str) -> str:
+def sanitize_for_log(s: str) -> str:
     """Render server-supplied text safe for line-oriented log output.
 
-    Applies :func:`_sanitize_server_text` (control / bidi / invisible
+    Applies :func:`sanitize_server_text` (control / bidi / invisible
     char replacement) AND escapes LF as the literal two-byte sequence
     ``\\n`` (backslash + 'n') and tab as ``\\t``. The exception-message
     rendering keeps raw LF / tab for interactive debugging; this
@@ -195,12 +195,18 @@ def _sanitize_for_log(s: str) -> str:
     supplied ``\\t`` would break those downstream pipelines the same
     way an un-escaped LF would.
 
-    CR is already replaced with ``?`` by ``_sanitize_server_text``
+    CR is already replaced with ``?`` by ``sanitize_server_text``
     (it is in the control-chars regex); only LF and tab pass through
     that helper deliberately, so only those two need the additional
     escape here.
     """
-    return _sanitize_server_text(s).replace("\n", "\\n").replace("\t", "\\t")
+    return sanitize_server_text(s).replace("\n", "\\n").replace("\t", "\\t")
+
+
+# Backwards-compatible alias for the underscore-private name. The
+# dqliteclient package imported the function via this name; the alias
+# is kept for one cycle until that import site lands the rename.
+_sanitize_for_log = sanitize_for_log
 
 
 @final
