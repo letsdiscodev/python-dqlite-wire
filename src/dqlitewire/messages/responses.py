@@ -220,12 +220,6 @@ def sanitize_for_log(s: str) -> str:
     return sanitize_server_text(s).replace("\n", "\\n").replace("\t", "\\t")
 
 
-# Backwards-compatible alias for the underscore-private name. The
-# dqliteclient package imported the function via this name; the alias
-# is kept for one cycle until that import site lands the rename.
-_sanitize_for_log = sanitize_for_log
-
-
 @final
 @dataclass(frozen=True, slots=True)
 class FailureResponse(Message):
