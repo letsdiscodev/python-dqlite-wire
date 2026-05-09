@@ -20,6 +20,7 @@ import pytest
 
 from dqlitewire.exceptions import EncodeError
 from dqlitewire.messages.responses import StmtResponse
+from dqlitewire.tuples import _MAX_PARAM_COUNT
 
 
 class TestPostInitValidation:
@@ -53,6 +54,38 @@ class TestPostInitValidation:
         # silently get encoded as 1.
         with pytest.raises(EncodeError, match="db_id"):
             StmtResponse(db_id=True, stmt_id=0, num_params=0)
+
+    def test_num_params_above_max_rejected_at_construction(self) -> None:
+        """``num_params > _MAX_PARAM_COUNT`` must be rejected at
+        construction, mirroring ``ResultResponse.__post_init__``'s
+        ``_MAX_ROWS_AFFECTED`` cap. Without this, a constructed
+        ``StmtResponse(num_params=2**40)`` is admitted, accepted in
+        equality / hashing / pickle round-trips, and only fails when
+        ``encode_body()`` is called — a construction-vs-encode
+        asymmetry against the established sibling pattern.
+        """
+        with pytest.raises(EncodeError, match="num_params"):
+            StmtResponse(db_id=0, stmt_id=0, num_params=2**40)
+
+    def test_num_params_at_max_allowed(self) -> None:
+        """The cap is inclusive: ``num_params == _MAX_PARAM_COUNT``
+        must construct cleanly so the construction-time cap doesn't
+        narrow the legal range below what the wire admits."""
+        r = StmtResponse(db_id=0, stmt_id=0, num_params=_MAX_PARAM_COUNT)
+        assert r.num_params == _MAX_PARAM_COUNT
+
+    def test_num_params_encode_cap_still_enforced(self) -> None:
+        """Defense-in-depth: even though ``__post_init__`` now blocks
+        out-of-range ``num_params`` at construction, ``encode_body``
+        keeps its own cap so a future regression in the constructor
+        (or an instance built via ``object.__new__``-style bypass)
+        still cannot emit an out-of-range wire frame.
+        """
+        r = StmtResponse(db_id=0, stmt_id=0, num_params=0)
+        # Bypass the constructor cap to simulate a future regression.
+        r.num_params = _MAX_PARAM_COUNT + 1
+        with pytest.raises(EncodeError, match="num_params"):
+            r.encode_body()
 
 
 class TestRoundTripIdentity:

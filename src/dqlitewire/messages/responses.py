@@ -533,6 +533,16 @@ class StmtResponse(Message):
         _validate_uint32("db_id", self.db_id)
         _validate_uint32("stmt_id", self.stmt_id)
         _validate_uint64("num_params", self.num_params)
+        # Apply the ``_MAX_PARAM_COUNT`` cap at construction so the
+        # ``encode_body`` and ``decode_body`` caps stay defense-in-depth
+        # rather than the only line of defence. Mirrors
+        # ``ResultResponse.__post_init__``'s ``_MAX_ROWS_AFFECTED`` cap;
+        # closes the same construction-vs-encode asymmetry that the
+        # ``_decoded_schema`` V1 cap closed for ``RowsResponse``.
+        if self.num_params > _MAX_PARAM_COUNT:
+            raise EncodeError(
+                f"StmtResponse num_params {self.num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
+            )
         if self.tail_offset is not None:
             _validate_uint64("tail_offset", self.tail_offset)
         if self.schema is not None and self.schema not in (0, 1):
