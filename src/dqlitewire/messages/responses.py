@@ -950,21 +950,26 @@ class RowsResponse(Message):
             result, consumed = decode_row_header(view[offset:], column_count)
             offset += consumed
 
-            if result is RowMarker.DONE:
+            if result is RowMarker.DONE or result is RowMarker.PART:
+                # Strict-decode parity with the zero-column fast path
+                # (and with sibling decoders LeaderResponse /
+                # FailureResponse / ServersResponse): trailing bytes
+                # after the DONE/PART marker are malformed. Conforming
+                # servers do not emit them; rejecting catches the
+                # truncation/extension corruption modes a permissive
+                # path would silently consume with the body slice.
+                if offset != len(view):
+                    raise DecodeError(
+                        f"RowsResponse body has {len(view) - offset} trailing bytes "
+                        f"after {'DONE' if result is RowMarker.DONE else 'PART'} marker "
+                        f"(decoded {len(rows)} rows)"
+                    )
                 return cls(
                     column_names,
                     column_types=column_types,
                     row_types=all_row_types,
                     rows=rows,
-                    has_more=False,
-                )
-            if result is RowMarker.PART:
-                return cls(
-                    column_names,
-                    column_types=column_types,
-                    row_types=all_row_types,
-                    rows=rows,
-                    has_more=True,
+                    has_more=result is RowMarker.PART,
                 )
 
             types = result
