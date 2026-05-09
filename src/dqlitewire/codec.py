@@ -309,11 +309,9 @@ class MessageDecoder:
             raise ValueError(f"max_total_rows must be >= 1 or None, got {max_total_rows}")
         if unknown_role_policy not in ("reject", "warn", "accept"):
             # NOTE: EncodeError (not ValueError) — aligns with the deeper
-            # ServersResponse.decode_body validator (round-29 taxonomy
-            # migration commit 369223b). Round 30 plumbing initially raised
-            # ValueError here as a "Python-level argument problem"; round 31
-            # aligned to EncodeError so callers can use a single
-            # `except EncodeError` for both layers. Do not flip back.
+            # ``ServersResponse.decode_body`` validator so callers can use
+            # a single ``except EncodeError`` for both layers. Do not flip
+            # back.
             raise EncodeError(
                 f"unknown_role_policy must be one of 'reject', 'warn', 'accept'; "
                 f"got {unknown_role_policy!r}"

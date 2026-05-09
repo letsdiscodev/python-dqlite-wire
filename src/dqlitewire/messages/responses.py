@@ -525,8 +525,8 @@ class StmtResponse(Message):
 
     def __post_init__(self) -> None:
         # Range and bool-rejection validation, parity with the sibling
-        # responses (FailureResponse / LeaderResponse / HeartbeatResponse
-        # at lines ~155, ~213, ~312). Without this, ``StmtResponse(...)``
+        # responses (``FailureResponse``, ``LeaderResponse``,
+        # ``WelcomeResponse``). Without this, ``StmtResponse(...)``
         # silently accepts negative ints, ints exceeding the wire field
         # width, and bool-as-int (``True`` → 1) — every other Response
         # rejects these.
