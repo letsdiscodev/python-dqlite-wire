@@ -81,11 +81,15 @@ def test_known_role_unaffected_by_policy() -> None:
             assert resp.nodes[0].role is expected
 
 
-def test_invalid_policy_raises_encode_error() -> None:
-    from dqlitewire.exceptions import EncodeError
+def test_invalid_policy_raises_decode_error() -> None:
+    """`decode_body` validates kwargs as part of the decode contract;
+    every error from a `decode_*` path surfaces under `DecodeError`,
+    not the encode-direction `EncodeError`. A caller writing
+    `except DecodeError` must catch the bad-policy validation."""
+    from dqlitewire.exceptions import DecodeError
 
     body = _build_body(1, "h:9001", raw_role=0)
-    with pytest.raises(EncodeError, match="unknown_role_policy"):
+    with pytest.raises(DecodeError, match="unknown_role_policy"):
         ServersResponse.decode_body(body, unknown_role_policy="bogus")
 
 

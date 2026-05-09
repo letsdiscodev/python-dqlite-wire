@@ -17,7 +17,6 @@ those are caller bugs that don't represent a wire violation.
 
 import pytest
 
-from dqlitewire.constants import NodeRole
 from dqlitewire.exceptions import EncodeError, ProtocolError
 from dqlitewire.messages.requests import (
     AssignRequest,
@@ -29,8 +28,7 @@ from dqlitewire.messages.requests import (
     QueryRequest,
     QuerySqlRequest,
 )
-from dqlitewire.messages.responses import NodeInfo, ServersResponse, StmtResponse
-from dqlitewire.types import encode_uint64
+from dqlitewire.messages.responses import NodeInfo, StmtResponse
 
 
 def test_encode_error_is_protocol_error_subclass() -> None:
@@ -103,18 +101,8 @@ class TestNodeInfoRoleRaisesEncodeError:
             NodeInfo(node_id=1, address="leader:9001", role=999)  # type: ignore[arg-type]
 
 
-class TestServersResponseUnknownRolePolicyRaisesEncodeError:
-    def test_invalid_policy(self) -> None:
-        # Build a one-node body so the decoder reaches the
-        # policy-validator branch (uint64 count + uint64 id +
-        # text address + uint64 role).
-        from dqlitewire.types import encode_text
-
-        body = (
-            encode_uint64(1)
-            + encode_uint64(1)
-            + encode_text("h:9001")
-            + encode_uint64(int(NodeRole.VOTER))
-        )
-        with pytest.raises(EncodeError, match="unknown_role_policy"):
-            ServersResponse.decode_body(body, unknown_role_policy="bogus")
+# NOTE: ``ServersResponse.decode_body`` validates the
+# ``unknown_role_policy`` kwarg and raises ``DecodeError`` (not
+# ``EncodeError``) — every error from a ``decode_*`` path surfaces
+# under ``DecodeError``. The pin lives at
+# ``test_servers_response_unknown_role_policy.py::test_invalid_policy_raises_decode_error``.

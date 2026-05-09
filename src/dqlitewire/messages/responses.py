@@ -1276,7 +1276,7 @@ class ServersResponse(Message):
         approach that posture; ``"reject"`` keeps the strict default.
         """
         if unknown_role_policy not in ("reject", "warn", "accept"):
-            raise EncodeError(
+            raise DecodeError(
                 "unknown_role_policy must be 'reject', 'warn', or "
                 f"'accept'; got {unknown_role_policy!r}"
             )
