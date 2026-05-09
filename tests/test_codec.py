@@ -9,7 +9,7 @@ from dqlitewire.codec import (
     encode_message,
 )
 from dqlitewire.constants import PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY
-from dqlitewire.exceptions import DecodeError, ProtocolError
+from dqlitewire.exceptions import DecodeError, HandshakeError, ProtocolError
 from dqlitewire.messages import (
     ClientRequest,
     DbResponse,
@@ -90,10 +90,31 @@ class TestMessageDecoder:
         decoder = MessageDecoder(version=PROTOCOL_VERSION_LEGACY)
         assert decoder.version == PROTOCOL_VERSION_LEGACY
 
-    def test_decoder_request_ignores_version(self) -> None:
-        """122: request decoders ignore version param (comes from handshake)."""
-        decoder = MessageDecoder(is_request=True, version=0xDEADBEEF)
+    def test_decoder_request_validates_version(self) -> None:
+        """Request decoders must reject unsupported versions at construction.
+
+        Pins the fix for the latent bug where ``MessageDecoder.__init__``
+        skipped the ``version not in _SUPPORTED_VERSIONS`` check when
+        ``is_request=True``. The class invariant "no decoder accepts an
+        unsupported version" must hold uniformly across both request- and
+        response-side decoders, otherwise an unsupported version leaks
+        past validation and reaches version-tagged encode paths.
+        """
+        with pytest.raises(HandshakeError, match="Unsupported protocol version"):
+            MessageDecoder(is_request=True, version=0xBADBEEF)
+
+    def test_decoder_request_accepts_supported_version_at_construction(self) -> None:
+        """Request decoders accept supported versions; ``version`` stays
+        ``None`` until ``decode_handshake()`` populates it from the wire."""
+        decoder = MessageDecoder(is_request=True, version=PROTOCOL_VERSION_LEGACY)
         assert decoder.version is None  # not set until handshake
+
+    def test_decode_message_request_rejects_unsupported_version(self) -> None:
+        """``decode_message(..., is_request=True, version=...)`` must
+        validate the version through the same ``MessageDecoder.__init__``
+        invariant that response-side construction enforces."""
+        with pytest.raises(HandshakeError, match="Unsupported protocol version"):
+            decode_message(b"", is_request=True, version=0xBADBEEF)
 
     def test_decoder_custom_max_message_size(self) -> None:
         """138: max_message_size should be configurable via constructor."""

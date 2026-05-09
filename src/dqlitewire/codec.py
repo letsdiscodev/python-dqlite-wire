@@ -294,7 +294,18 @@ class MessageDecoder:
                     consumers can opt into forward-compat tolerance
                     without bypassing the decoder.
         """
-        if not is_request and version not in _SUPPORTED_VERSIONS:
+        # Validate ``version`` uniformly across both request- and
+        # response-side construction. Originally gated on
+        # ``not is_request`` because request decoders read the version
+        # from the inbound handshake and don't traverse version-tagged
+        # paths until then; but the ``decode_message`` helper writes
+        # ``decoder._version = version`` unconditionally, and direct
+        # ``MessageDecoder(is_request=True, version=...)`` callers can
+        # likewise smuggle an unsupported value past validation. The
+        # class invariant "no decoder accepts an unsupported version"
+        # should hold uniformly so callers can catch a single
+        # ``HandshakeError`` regardless of which side they're on.
+        if version not in _SUPPORTED_VERSIONS:
             raise HandshakeError(
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
