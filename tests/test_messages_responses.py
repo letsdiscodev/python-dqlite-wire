@@ -29,7 +29,7 @@ from dqlitewire.messages.responses import (
     WelcomeResponse,
 )
 from dqlitewire.tuples import _MAX_PARAM_COUNT
-from dqlitewire.types import encode_text, encode_uint64
+from dqlitewire.types import WireValue, encode_text, encode_uint64
 
 
 class TestFailureResponse:
@@ -488,7 +488,7 @@ class TestRowsResponseAliasing:
         column_types, row_types (outer + inner), and rows (outer + inner).
         """
         supplied_row_types = [[ValueType.INTEGER, ValueType.TEXT]]
-        supplied_rows = [[1, "alice"]]
+        supplied_rows: list[list[WireValue]] = [[1, "alice"]]
         msg = RowsResponse(
             column_names=["id", "name"],
             column_types=[ValueType.INTEGER, ValueType.TEXT],
@@ -1198,7 +1198,7 @@ class TestRowsResponseWordBoundary:
         n = 16
         types = [ValueType.INTEGER] * n
         names = [f"c{i}" for i in range(n)]
-        values = list(range(n))
+        values: list[WireValue] = list(range(n))
         resp = RowsResponse(
             column_names=names,
             column_types=types,
@@ -1216,7 +1216,7 @@ class TestRowsResponseWordBoundary:
         n = 17
         types = [ValueType.INTEGER] * n
         names = [f"c{i}" for i in range(n)]
-        values = list(range(n))
+        values: list[WireValue] = list(range(n))
         resp = RowsResponse(
             column_names=names,
             column_types=types,
@@ -1234,7 +1234,7 @@ class TestRowsResponseWordBoundary:
         n = 33
         types = [ValueType.INTEGER] * n
         names = [f"c{i}" for i in range(n)]
-        values = list(range(n))
+        values: list[WireValue] = list(range(n))
         resp = RowsResponse(
             column_names=names,
             column_types=types,

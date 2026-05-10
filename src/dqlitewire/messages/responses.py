@@ -44,6 +44,7 @@ from dqlitewire.tuples import (
     encode_row_values,
 )
 from dqlitewire.types import (
+    WireValue,
     _validate_uint32,
     _validate_uint64,
     decode_text,
@@ -767,7 +768,7 @@ class RowsResponse(Message):
     column_names: list[str] = field(default_factory=list)
     column_types: list[ValueType] = field(default_factory=list)
     row_types: list[list[ValueType]] = field(default_factory=list)
-    rows: list[list[Any]] = field(default_factory=list)
+    rows: list[list[WireValue]] = field(default_factory=list)
     has_more: bool = False
 
     def __post_init__(self) -> None:
@@ -791,7 +792,7 @@ class RowsResponse(Message):
         self.row_types = [list(t) for t in self.row_types]
         self.rows = [list(r) for r in self.rows]
 
-    def _get_row_types(self, row_idx: int, row: list[Any]) -> list[ValueType]:
+    def _get_row_types(self, row_idx: int, row: list[WireValue]) -> list[ValueType]:
         """Get types for a row: from row_types, column_types, or inferred.
 
         The ``column_types`` fallback returns a fresh copy rather than

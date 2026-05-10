@@ -8,11 +8,11 @@ Row tuples and parameter tuples have different formats:
 import struct
 from collections.abc import Sequence
 from enum import Enum
-from typing import Any, Final
+from typing import Final
 
 from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
-from dqlitewire.types import WireValue, decode_value, encode_value, pad_to_word
+from dqlitewire.types import WireInput, WireValue, decode_value, encode_value, pad_to_word
 
 __all__ = [
     "RowMarker",
@@ -55,7 +55,7 @@ class RowMarker(Enum):
 
 
 def encode_params_tuple(
-    params: Sequence[Any],
+    params: Sequence[WireInput],
     schema: int = 0,
     buffer_offset: int = 0,
     *,
@@ -357,7 +357,7 @@ def decode_row_header(
     return types, header_size
 
 
-def encode_row_values(values: Sequence[Any], types: Sequence[ValueType]) -> bytes:
+def encode_row_values(values: Sequence[WireInput], types: Sequence[ValueType]) -> bytes:
     """Encode row values according to specified types."""
     if len(values) != len(types):
         raise EncodeError(

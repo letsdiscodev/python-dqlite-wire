@@ -16,6 +16,7 @@ from dqlitewire.tuples import (
     encode_row_header,
     encode_row_values,
 )
+from dqlitewire.types import WireInput
 
 
 class TestParamsTuple:
@@ -82,7 +83,7 @@ class TestParamsTuple:
         assert decoded == [1, 2, 3]
 
     def test_encode_mixed_types(self) -> None:
-        params = [42, "hello", 3.14, None, b"blob"]
+        params: list[WireInput] = [42, "hello", 3.14, None, b"blob"]
         encoded = encode_params_tuple(params)
         assert encoded[0] == 5  # count
         assert encoded[1] == ValueType.INTEGER
@@ -133,7 +134,7 @@ class TestParamsTuple:
         assert decoded == params
 
     def test_roundtrip_mixed(self) -> None:
-        params = [42, "hello", 3.14, None]
+        params: list[WireInput] = [42, "hello", 3.14, None]
         encoded = encode_params_tuple(params)
         decoded, _ = decode_params_tuple(encoded)  # count read from data
         assert decoded[0] == 42
@@ -155,7 +156,7 @@ class TestParamsTuple:
 
     def test_roundtrip_v1(self) -> None:
         """V1 params should roundtrip correctly."""
-        params = [42, "hello"]
+        params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, schema=1)
         decoded, _ = decode_params_tuple(encoded, schema=1)
         assert decoded[0] == 42
@@ -213,7 +214,7 @@ class TestParamsTupleExternalCount:
 
     def test_decode_with_external_count_v0(self) -> None:
         """External count should read types from data[0], not data[1]."""
-        params = [42, "hello"]
+        params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, schema=0)
         # Strip the 1-byte count prefix — external count means no count in data.
         # Pass buffer_offset=1 because the count byte was consumed externally.
@@ -226,7 +227,7 @@ class TestParamsTupleExternalCount:
 
     def test_decode_with_external_count_v1(self) -> None:
         """External count with V1 schema should skip 4-byte count prefix."""
-        params = [42, "hello"]
+        params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, schema=1)
         # Strip the 4-byte count prefix.
         # Pass buffer_offset=4 because the count field was consumed externally.
@@ -239,7 +240,7 @@ class TestParamsTupleExternalCount:
 
     def test_decode_with_external_count_mixed_types(self) -> None:
         """External count with mixed types should decode correctly."""
-        params = [42, 3.14, "text"]
+        params: list[WireInput] = [42, 3.14, "text"]
         encoded = encode_params_tuple(params, schema=0)
         data_without_count = encoded[1:]
         decoded, consumed = decode_params_tuple(
@@ -308,7 +309,7 @@ class TestParamsTupleBufferOffset:
 
     def test_roundtrip_with_non_aligned_offset(self) -> None:
         """Encode and decode with non-aligned offset must roundtrip."""
-        params = [42, "hello"]
+        params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, buffer_offset=4)
         decoded, _ = decode_params_tuple(encoded, buffer_offset=4)
         assert decoded == [42, "hello"]
@@ -647,7 +648,7 @@ class TestRowValues:
         assert decoded == values
 
     def test_roundtrip_mixed(self) -> None:
-        values = [42, "hello", 3.14]
+        values: list[WireInput] = [42, "hello", 3.14]
         types = [ValueType.INTEGER, ValueType.TEXT, ValueType.FLOAT]
         encoded = encode_row_values(values, types)
         decoded, _ = decode_row_values(encoded, types)
