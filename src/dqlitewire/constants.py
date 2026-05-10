@@ -19,22 +19,43 @@ __all__ = [
     "ROW_PART_BYTE",
     "ROW_PART_MARKER",
     "SQLITE_ABORT",
+    "SQLITE_AUTH",
     "SQLITE_BUSY",
+    "SQLITE_CONSTRAINT",
+    "SQLITE_CONSTRAINT_CHECK",
+    "SQLITE_CONSTRAINT_COMMITHOOK",
+    "SQLITE_CONSTRAINT_FOREIGNKEY",
+    "SQLITE_CONSTRAINT_FUNCTION",
+    "SQLITE_CONSTRAINT_NOTNULL",
+    "SQLITE_CONSTRAINT_PINNED",
+    "SQLITE_CONSTRAINT_PRIMARYKEY",
+    "SQLITE_CONSTRAINT_ROWID",
+    "SQLITE_CONSTRAINT_TRIGGER",
+    "SQLITE_CONSTRAINT_UNIQUE",
+    "SQLITE_CONSTRAINT_VTAB",
     "SQLITE_CORRUPT",
     "SQLITE_ERROR",
     "SQLITE_FORMAT",
     "SQLITE_FULL",
+    "SQLITE_INTERNAL",
     "SQLITE_INTERRUPT",
     "SQLITE_IOERR",
     "SQLITE_IOERR_LEADERSHIP_LOST",
     "SQLITE_IOERR_LEADERSHIP_LOST_LEGACY",
     "SQLITE_IOERR_NOT_LEADER",
     "SQLITE_IOERR_NOT_LEADER_LEGACY",
+    "SQLITE_MISMATCH",
+    "SQLITE_MISUSE",
+    "SQLITE_NOLFS",
     "SQLITE_NOMEM",
     "SQLITE_NOTADB",
     "SQLITE_NOTFOUND",
+    "SQLITE_NOTICE",
     "SQLITE_PRIMARY_CODE_MASK",
     "SQLITE_PROTOCOL",
+    "SQLITE_RANGE",
+    "SQLITE_TOOBIG",
+    "SQLITE_WARNING",
     "TX_AUTO_ROLLBACK_PRIMARY_CODES",
     "WIRE_DECODE_FAILED_PREFIX",
     "WORD_SIZE",
@@ -305,6 +326,46 @@ SQLITE_FULL: Final[int] = 13  # database/disk full
 # magic literals.
 SQLITE_FORMAT: Final[int] = 24
 SQLITE_NOTADB: Final[int] = 26
+
+
+# Additional primary SQLite codes the dbapi PEP 249 classifier
+# dispatches on (cursor.py's ``_call_client`` arms). Previously
+# duplicated as ``cursor.py``-private ``_SQLITE_*`` literals; promoting
+# them to the wire layer keeps the values in one place and lets the
+# dbapi import them by name (sibling pattern to ``SQLITE_NOTFOUND`` /
+# ``SQLITE_NOMEM`` which are already public).
+SQLITE_INTERNAL: Final[int] = 2
+SQLITE_TOOBIG: Final[int] = 18
+SQLITE_CONSTRAINT: Final[int] = 19
+SQLITE_MISMATCH: Final[int] = 20
+SQLITE_MISUSE: Final[int] = 21
+SQLITE_NOLFS: Final[int] = 22
+SQLITE_AUTH: Final[int] = 23
+SQLITE_RANGE: Final[int] = 25
+SQLITE_NOTICE: Final[int] = 27
+SQLITE_WARNING: Final[int] = 28
+
+
+# Extended ``SQLITE_CONSTRAINT_*`` family (high byte 1..11). Stdlib
+# `sqlite3` exposes these for branching on specific constraint
+# violations (UNIQUE / FOREIGNKEY / NOTNULL / CHECK / etc.) — the
+# integer values arrive at the dbapi caller via the wire round-trip,
+# but the symbolic names were missing. Cross-driver porting code
+# doing ``e.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE``
+# previously required ``import sqlite3`` separately; expose the names
+# at the wire layer so callers can use ``dqlitewire.SQLITE_CONSTRAINT_*``
+# uniformly. Values match stdlib bit-for-bit.
+SQLITE_CONSTRAINT_CHECK: Final[int] = SQLITE_CONSTRAINT | (1 << 8)  # 275
+SQLITE_CONSTRAINT_COMMITHOOK: Final[int] = SQLITE_CONSTRAINT | (2 << 8)  # 531
+SQLITE_CONSTRAINT_FOREIGNKEY: Final[int] = SQLITE_CONSTRAINT | (3 << 8)  # 787
+SQLITE_CONSTRAINT_FUNCTION: Final[int] = SQLITE_CONSTRAINT | (4 << 8)  # 1043
+SQLITE_CONSTRAINT_NOTNULL: Final[int] = SQLITE_CONSTRAINT | (5 << 8)  # 1299
+SQLITE_CONSTRAINT_PRIMARYKEY: Final[int] = SQLITE_CONSTRAINT | (6 << 8)  # 1555
+SQLITE_CONSTRAINT_TRIGGER: Final[int] = SQLITE_CONSTRAINT | (7 << 8)  # 1811
+SQLITE_CONSTRAINT_UNIQUE: Final[int] = SQLITE_CONSTRAINT | (8 << 8)  # 2067
+SQLITE_CONSTRAINT_VTAB: Final[int] = SQLITE_CONSTRAINT | (9 << 8)  # 2323
+SQLITE_CONSTRAINT_ROWID: Final[int] = SQLITE_CONSTRAINT | (10 << 8)  # 2579
+SQLITE_CONSTRAINT_PINNED: Final[int] = SQLITE_CONSTRAINT | (11 << 8)  # 2835
 
 
 # Message-text substrings that mark a benign "no transaction was
