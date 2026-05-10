@@ -566,9 +566,26 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             raise EncodeError(f"Expected int for {value_type.name}, got {type(value).__name__}")
         return encode_int64(value), value_type
     elif value_type == ValueType.FLOAT:
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise EncodeError(f"Expected int or float for FLOAT, got {type(value).__name__}")
-        return encode_double(float(value)), value_type
+        # Strict reject of ``int`` (and ``bool``, which subclasses int)
+        # for explicit FLOAT. Implicit ``float(int_value)`` would lose
+        # bits silently for |x| >= 2**53 (round-to-nearest-double) and
+        # raise ``OverflowError`` outside the ``EncodeError`` family
+        # for |x| >= 2**1024. Both surfaces collapse into the same
+        # rejection here; callers who genuinely want int -> FLOAT
+        # write ``float(x)`` themselves and accept the precision
+        # boundary explicitly. Mirrors the bool-reject discipline at
+        # the INTEGER / UNIXTIME branch above.
+        if isinstance(value, bool):
+            raise EncodeError(f"Expected float for FLOAT, got {type(value).__name__}")
+        if isinstance(value, int):
+            raise EncodeError(
+                "Cannot encode int as FLOAT; cast with float(x) explicitly. "
+                "Implicit coercion would silently lose precision for ints "
+                "with absolute value >= 2**53."
+            )
+        if not isinstance(value, float):
+            raise EncodeError(f"Expected float for FLOAT, got {type(value).__name__}")
+        return encode_double(value), value_type
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")

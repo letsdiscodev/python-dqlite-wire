@@ -790,8 +790,32 @@ class TestValue:
         with pytest.raises(EncodeError, match="FLOAT"):
             encode_value(True, ValueType.FLOAT)
 
-    def test_encode_value_float_accepts_int(self) -> None:
-        encoded, vtype = encode_value(42, ValueType.FLOAT)
+    def test_encode_value_float_rejects_int_for_strict_typing(self) -> None:
+        """Explicit FLOAT with an ``int`` value rejects, matching the
+        strict-rejection posture used for bool. Callers must opt in to
+        the precision boundary by writing ``float(x)`` themselves.
+
+        This pins both halves of the encoder discipline:
+
+        - The tiny-int case (``42``) rejects too, even though it loses
+          no bits, for API symmetry with the bool reject.
+        - The wide-int case (``(1 << 60) + 1``) would otherwise lose a
+          bit silently or raise ``OverflowError`` for ``1 << 1024``;
+          the strict reject collapses both surfaces into one message.
+        """
+        with pytest.raises(EncodeError, match="FLOAT"):
+            encode_value(42, ValueType.FLOAT)
+        with pytest.raises(EncodeError, match="FLOAT"):
+            encode_value((1 << 60) + 1, ValueType.FLOAT)
+        with pytest.raises(EncodeError, match="FLOAT"):
+            encode_value(-((1 << 60) + 1), ValueType.FLOAT)
+        with pytest.raises(EncodeError, match="FLOAT"):
+            encode_value(1 << 1024, ValueType.FLOAT)
+
+    def test_encode_value_float_accepts_float(self) -> None:
+        """Explicit FLOAT with a ``float`` still works; callers who
+        want int -> FLOAT coerce explicitly."""
+        encoded, vtype = encode_value(float(42), ValueType.FLOAT)
         assert vtype == ValueType.FLOAT
         decoded, _ = decode_value(encoded, ValueType.FLOAT)
         assert decoded == 42.0
