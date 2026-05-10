@@ -157,7 +157,7 @@ from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.responses import sanitize_for_log, sanitize_server_text
 from dqlitewire.types import WireInput, WireValue
 
-__version__: Final[str] = "0.1.4"
+__version__: Final[str] = "0.1.5"
 
 __all__ = [
     "DEFAULT_MAX_CONTINUATION_FRAMES",
