@@ -202,6 +202,21 @@ SQLITE_IOERR_LEADERSHIP_LOST: Final[int] = SQLITE_IOERR | (41 << 8)  # 10506
 # excludes ``OperationalError`` and the SA dialect's
 # ``is_disconnect`` does not classify it as a disconnect, so the
 # pool returns a broken connection.
+# WARNING: numerical collision with stdlib sqlite3.
+# - SQLITE_IOERR_NOT_LEADER_LEGACY = 8202 collides with
+#   ``sqlite3.SQLITE_IOERR_DATA`` (assigned in SQLite 3.31).
+# - SQLITE_IOERR_LEADERSHIP_LOST_LEGACY = 8458 collides with
+#   ``sqlite3.SQLITE_IOERR_CORRUPTFS`` (assigned in SQLite 3.36).
+#
+# This is an upstream-protocol artifact: pre-3.32.1 dqlite assigned
+# subcodes 32/33 for leader semantics before SQLite assigned semantic
+# meaning to those sub-codes. A legacy-cluster operator reading
+# ``code == sqlite3.SQLITE_IOERR_DATA`` is being misled — the value
+# is identical, but the meaning is "leader changed", not "I/O data
+# error". Documented here so a future audit considering re-exporting
+# the stdlib ``SQLITE_IOERR_*`` family at the wire layer (or adding
+# alias named exports like ``SQLITE_IOERR_DATA = 8202``) does not
+# silently amplify the collision footprint.
 SQLITE_IOERR_NOT_LEADER_LEGACY: Final[int] = SQLITE_IOERR | (32 << 8)  # 8202
 SQLITE_IOERR_LEADERSHIP_LOST_LEGACY: Final[int] = SQLITE_IOERR | (33 << 8)  # 8458
 
