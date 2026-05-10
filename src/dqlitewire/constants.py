@@ -151,6 +151,13 @@ class ValueType(IntEnum):
     # ``encode_params_tuple`` additionally enforces that this tag never
     # appears on outgoing parameters (the server's parameter parser
     # rejects it too).
+    #
+    # Subsecond precision is structurally absent: the wire is integer
+    # seconds. A datetime with non-zero microsecond passed through a
+    # column whose server-side function returns UNIXTIME (e.g.
+    # ``unixepoch(now)`` without the ``subsec`` modifier) loses the
+    # microsecond component on the server. Use ISO8601 (= 10) for
+    # microsecond-precision round-trip.
     UNIXTIME = 9
     ISO8601 = 10  # ISO8601 string (maps to TEXT)
     BOOLEAN = 11  # Boolean (maps to INTEGER)
