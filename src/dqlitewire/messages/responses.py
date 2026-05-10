@@ -1303,8 +1303,20 @@ class ServersResponse(Message):
         # int domain is finite and small, so deduping by raw value
         # keeps the message compact regardless of node count.
         unknown_seen: list[int] = []
+        # Strict-decode: reject duplicate ``node_id`` mid-stream.
+        # Mirror the symmetric ``FilesResponse`` rejection of duplicate
+        # filenames. Conforming C/Go servers populate this response
+        # from the Raft log which guarantees unique IDs by construction;
+        # a duplicate would only surface from a misframed or hostile
+        # peer. Detecting it here keeps the strictness uniform with the
+        # sibling decoder and prevents downstream consumers from
+        # silently overwriting a prior entry when keying by node_id.
+        seen_ids: set[int] = set()
         for _ in range(count):
             node_id = decode_uint64(view[offset:])
+            if node_id in seen_ids:
+                raise DecodeError(f"Duplicate node_id {node_id} in ServersResponse")
+            seen_ids.add(node_id)
             offset += 8
             address, consumed = decode_text(
                 view[offset:], max_size=_MAX_ADDRESS_SIZE, label="server address"
