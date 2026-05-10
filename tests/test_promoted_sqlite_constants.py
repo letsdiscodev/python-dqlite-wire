@@ -2,12 +2,15 @@
 ``SQLITE_CONSTRAINT_*`` codes match stdlib ``sqlite3`` bit-for-bit
 and are reachable via the wire package's top-level surface.
 
-Promotion source: round-35 — the dbapi cursor classifier previously
-duplicated 10 ``_SQLITE_*`` literals; they now live in
-``dqlitewire.constants``. The extended ``SQLITE_CONSTRAINT_*`` family
-was previously absent (the integer values arrived at the dbapi
-caller via the wire round-trip but the symbolic names were missing
-on both layers).
+The 10 primaries were previously duplicated as private literals in
+the dbapi cursor classifier (``_SQLITE_*`` module-locals); they now
+live in ``dqlitewire.constants`` alongside the rest of the SQLite
+primary set. The extended ``SQLITE_CONSTRAINT_*`` family was
+previously absent — the integer values arrived at the dbapi caller
+via the wire round-trip but the symbolic names were missing on both
+layers, so cross-driver porting code branching on
+``e.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE`` had to
+``import sqlite3`` separately.
 """
 
 from __future__ import annotations
