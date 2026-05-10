@@ -1,5 +1,7 @@
 """Tests for primitive type encoding/decoding."""
 
+import struct
+import sys
 from datetime import UTC
 
 import pytest
@@ -731,6 +733,37 @@ class TestValue:
             assert isinstance(decoded, float)
             assert math.isinf(decoded)
             assert (decoded > 0) == (val > 0)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            sys.float_info.min,  # smallest normal positive
+            -sys.float_info.min,
+            sys.float_info.max,  # largest finite
+            -sys.float_info.max,
+            sys.float_info.epsilon,  # machine epsilon
+            5e-324,  # smallest positive (subnormal)
+            -5e-324,
+            1.4e-45,  # arbitrary subnormal
+        ],
+    )
+    def test_double_ieee754_boundary_round_trip(self, value: float) -> None:
+        """IEEE 754 boundary values (max, min normal, epsilon, subnormals)
+        round-trip exactly. Pins against silent precision loss in a future
+        encoder refactor (e.g. routing through ``float.hex()`` text
+        round-trip or JSON serialisation, both of which would lose
+        subnormals or sign-of-zero).
+
+        Compares bit patterns via ``struct.pack`` rather than ``==`` so
+        a sign-of-zero or subnormal regression cannot pass silently.
+        """
+        encoded, vtype = encode_value(value)
+        assert vtype == ValueType.FLOAT
+        decoded, _ = decode_value(encoded, ValueType.FLOAT)
+        assert isinstance(decoded, float)
+        assert struct.pack("<d", decoded) == struct.pack("<d", value), (
+            f"{value!r} did not round-trip bit-exact: got {decoded!r}"
+        )
 
     def test_integer_edge_cases(self) -> None:
         """Test integer edge cases."""
