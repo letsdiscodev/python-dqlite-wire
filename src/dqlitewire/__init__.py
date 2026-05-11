@@ -60,6 +60,7 @@ triggers, not int 0/1 from a BOOLEAN-decltype column). Pass
 ``RowsResponse`` for byte-shape parity with real C-server emission.
 """
 
+import logging as _logging
 import os as _os
 import sys as _sys
 
@@ -265,3 +266,10 @@ __all__ = [
     "tuples",
     "types",
 ]
+
+# Convention from the Python logging HOWTO: every library adds a
+# ``NullHandler`` to its top-level logger so an application that
+# hasn't configured logging doesn't see the ``lastResort`` stderr
+# emission, and downstream code that wants to silence the library
+# with ``getLogger("dqlitewire").propagate = False`` works cleanly.
+_logging.getLogger(__name__).addHandler(_logging.NullHandler())
