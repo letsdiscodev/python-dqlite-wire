@@ -45,6 +45,23 @@ def _cap_raw_message(raw_message: str | None, max_chars: int) -> str | None:
     reported the difference between length and (negative) cap, producing
     inconsistent diagnostics for what is unambiguously a contributor
     typo.
+
+    SECURITY NOTE — does NOT strip LF / Tab / control characters: this
+    helper is a pure codepoint-length cap. Server-supplied text
+    containing LF survives into the returned value and from there into
+    any ``self.raw_message`` attribute populated from it. The wire-layer
+    ``sanitize_server_text`` deliberately preserves LF / Tab for
+    human-readable multi-line server diagnostics at exception-display
+    time; this cap is the payload-size defence, not a sanitiser.
+    Consumers that route ``exc.raw_message`` into ``logger.X`` records
+    (directly, or via a third-party hook such as SQLAlchemy's
+    ``is_disconnect`` substring scan that may itself log the matched
+    text) MUST apply :func:`dqlitewire.sanitize_for_log` at the log
+    call site to prevent log-line splitting (CWE-117). A safer-default
+    ``_cap_raw_message_for_log`` companion that composes the two could
+    be added if a third call site needs it; today every first-party
+    log site already sanitises explicitly, so the docs-only warning is
+    the minimum-viable defence.
     """
     if max_chars < 0:
         raise ValueError(f"max_chars must be >= 0 (codepoint budget); got {max_chars}")
