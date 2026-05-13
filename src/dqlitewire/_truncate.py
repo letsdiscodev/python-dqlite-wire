@@ -22,8 +22,20 @@ their cap into this helper, which has no opinion on the value beyond
 
 from typing import Final
 
-__all__ = ["_cap_raw_message"]
+__all__ = ["_DEFAULT_MAX_RAW_MESSAGE", "_cap_raw_message"]
 
+
+# Canonical raw-message codepoint cap shared by ``dqliteclient`` and
+# ``dqlitedbapi``. The wire layer caps a single ``FailureResponse``
+# message at ~64 KiB; combined with ``BaseExceptionGroup`` chains in
+# leader-discovery and pool-initialise paths plus cross-process
+# pickling (``ProcessPoolExecutor``, Celery, structured-error
+# capture), an unbounded ``raw_message`` would otherwise produce
+# multi-MB exception payloads. 4 KiB is well above any realistic
+# SQLite error string while bounding the worst-case fan-out. Hosted
+# here so the two downstream packages share a single source of truth
+# rather than duplicate the literal.
+_DEFAULT_MAX_RAW_MESSAGE: Final[int] = 4 * 1024
 
 _TRUNCATION_SUFFIX_TEMPLATE: Final[str] = "... [raw_message truncated, {overflow} codepoints]"
 
