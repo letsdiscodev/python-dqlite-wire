@@ -58,6 +58,37 @@ indistinguishable from TEXT), or BOOLEAN (only Python ``bool``
 triggers, not int 0/1 from a BOOLEAN-decltype column). Pass
 ``column_types`` or ``row_types`` explicitly when constructing
 ``RowsResponse`` for byte-shape parity with real C-server emission.
+
+Disconnect-classification constants
+-----------------------------------
+
+Two string constants anchor the four-package disconnect-classification
+chain (wire failure → ``client.ProtocolError`` →
+``dbapi.OperationalError(code=None)`` → SA's
+``_dqlite_disconnect_messages`` substring scan):
+
+- ``WIRE_DECODE_FAILED_PREFIX = "wire decode failed"`` — the canonical
+  lowercase phrase emitted by every site that wraps a wire-decode
+  error into a client / dbapi ``OperationalError``. SA's substring
+  scan lowercases the rendered exception text before matching, so
+  emission-side casing is flexible; the constant value is the
+  canonical form. Five emitter sites across ``dqliteclient.protocol``
+  (3), ``dqliteclient.connection`` (handshake-rewrap), and
+  ``dqlitedbapi.connection`` (connect-rewrap) reference the constant;
+  ``sqlalchemydqlite.base`` is the consumer.
+
+- ``LEADER_LOST_DB_LOOKUP_SUBSTRING = "no database opened"`` — the
+  verbatim wording upstream ``gateway.c::LOOKUP_DB`` emits with
+  code ``SQLITE_NOTFOUND`` (=12) after a Raft demotion. Substring-
+  gates the leader-flip arm so the orthogonal ``LOOKUP_STMT``
+  emission ("no statement with the given id ...") stays as a benign
+  ``InternalError`` instead of triggering pool invalidation. Mirrors
+  Go's ``driverError`` ``errNotFound → ErrBadConn`` arm. Consumed by
+  ``dqliteclient.connection._run_protocol`` and
+  ``sqlalchemydqlite.base::is_disconnect``.
+
+Both constants are exported and load-bearing across packages — a
+rename ripples through grep on the constant name.
 """
 
 import logging as _logging
