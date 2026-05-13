@@ -4,6 +4,7 @@ from enum import IntEnum
 from typing import Final
 
 __all__ = [
+    "BARE_DATABASE_ERROR_CODES",
     "DEFAULT_MAX_CONTINUATION_FRAMES",
     "DEFAULT_MAX_TOTAL_ROWS",
     "DQLITE_NOTFOUND",
@@ -363,6 +364,24 @@ SQLITE_FULL: Final[int] = 13  # database/disk full
 # magic literals.
 SQLITE_FORMAT: Final[int] = 24
 SQLITE_NOTADB: Final[int] = 26
+
+
+# SQLite primary codes the dqlite server actually emits as bare
+# ``DatabaseError`` per PEP 249 §9 routing (i.e. NOT routed to a more
+# specific subclass like ``OperationalError`` / ``IntegrityError``).
+# This is the slot-fatal set under SA's pre-ping / disconnect
+# classification: corruption / format / not-a-database all mean the
+# socket pointed at the wrong file or the data on disk is unreadable
+# and the pool slot cannot be reused. dbapi's ``_CODE_TO_EXCEPTION``
+# also routes a handful of other codes (NOLFS / AUTH / NOTICE /
+# WARNING) to bare ``DatabaseError`` as defensive pass-through, but
+# those codes are NOT in this set because dqlite-server doesn't
+# currently emit them on the wire. Hosting the set here so SA and
+# dbapi can derive their slot-fatal / pep249-routing decisions from
+# a single source of truth.
+BARE_DATABASE_ERROR_CODES: Final[frozenset[int]] = frozenset(
+    {SQLITE_CORRUPT, SQLITE_FORMAT, SQLITE_NOTADB}
+)
 
 
 # Additional primary SQLite codes the dbapi PEP 249 classifier

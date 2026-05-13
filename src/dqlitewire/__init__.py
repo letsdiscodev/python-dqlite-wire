@@ -139,6 +139,7 @@ from dqlitewire import messages, tuples, types
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
+    BARE_DATABASE_ERROR_CODES,
     DEFAULT_MAX_CONTINUATION_FRAMES,
     DEFAULT_MAX_TOTAL_ROWS,
     DQLITE_NOTFOUND,
@@ -217,6 +218,7 @@ from dqlitewire.types import WireInput, WireValue
 __version__: Final[str] = "0.1.5"
 
 __all__ = [
+    "BARE_DATABASE_ERROR_CODES",
     "DEFAULT_MAX_CONTINUATION_FRAMES",
     "DEFAULT_MAX_TOTAL_ROWS",
     "DQLITE_NOTFOUND",
