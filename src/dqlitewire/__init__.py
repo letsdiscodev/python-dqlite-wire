@@ -41,10 +41,13 @@ Cap defaults that affect interop and hostile-server resistance:
 
 Empty-params encoding: empty ``Tuple`` parameters encode as zero
 bytes by default (Go-style); the C server's ``tuple_encoder``
-emits 8 bytes (count=0 + 7 padding) for the same shape. The
-decoder accepts both forms; ``encode_params_tuple(emit_empty_header=
-True)`` produces the C-style 8-byte empty-params body for callers
-that need byte-identity round-trip with C-origin captures.
+emits 8 bytes for the same shape — a zero count (1 byte in V0,
+4 bytes in V1) followed by zero-padding to the 8-byte boundary.
+The encoded byte content is the same eight zero bytes for both
+schemas. The decoder accepts both forms;
+``encode_params_tuple(emit_empty_header=True)`` produces the
+C-style 8-byte empty-params body for callers that need byte-
+identity round-trip with C-origin captures.
 
 UNIXTIME columns decode to ``int`` (seconds since epoch), unlike
 Go which returns ``time.Time``. Conversion to ``datetime`` is the
