@@ -88,6 +88,51 @@ def _bounded_repr(value: int) -> str:
     return f"{s[:_MAX_VALUE_REPR]}... [{len(s)} digits]"
 
 
+# Single-byte buffer-protocol formats. ``memoryview`` accepts these as
+# documented zero-copy BLOB binding shapes (``memoryview(b'...')`` is
+# 'B', ``memoryview(bytearray(...))`` is 'B', and ``array.array('b'/
+# 'B'/'c', ...)`` matches the typed-but-still-byte-wide case). Any
+# other format is a typed numeric memoryview whose bytes representation
+# is host-endian and host-int-width, which is exactly the cross-
+# platform-corruption hazard the bare ``array.array`` rejection
+# prevents — silently accepting it via ``memoryview(array.array('i',
+# ...))`` would re-open that hole through the buffer-protocol back
+# door.
+_BYTE_FORMAT_MEMORYVIEW: Final[frozenset[str]] = frozenset({"B", "b", "c"})
+
+
+def _reject_non_byte_format_memoryview(value: memoryview) -> None:
+    """Reject ``memoryview`` whose buffer-protocol ``format`` is not a
+    single-byte type. See ``_BYTE_FORMAT_MEMORYVIEW``.
+
+    Shared by the inference and explicit-BLOB branches of
+    :func:`encode_value` so both entry points apply the same
+    rejection (parity with the ``mmap.mmap`` acceptance pins in
+    ``tests/test_blob_inference_mmap.py``).
+
+    A released memoryview raises ``ValueError`` from ``.format``;
+    fall through silently in that case so the downstream
+    ``bytes(value)`` materialise step surfaces the canonical
+    ``EncodeError("Cannot materialise BLOB...")``. The format check
+    is a portability guard, not the released-buffer guard.
+    """
+    try:
+        fmt = value.format
+    except ValueError:
+        return
+    if fmt not in _BYTE_FORMAT_MEMORYVIEW:
+        raise EncodeError(
+            f"memoryview must have single-byte format ('B'/'b'/'c') to "
+            f"encode as BLOB; got format={fmt!r} "
+            f"itemsize={value.itemsize}. Typed numeric memoryviews "
+            f"(e.g. memoryview(array.array('i', ...))) carry host-"
+            f"endian, host-int-width bytes and are non-portable — "
+            f"identical hazard to the bare array.array rejection. "
+            f"Materialise to bytes via a portable layout (e.g. "
+            f"struct.pack with '<' little-endian) before binding."
+        )
+
+
 def _validate_uint64(name: str, value: int) -> None:
     """Validate ``value`` is an int (not bool) in the uint64 range.
 
@@ -518,7 +563,12 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             # ``array.array`` is intentionally NOT accepted: typed
             # numeric arrays have platform-dependent bytes
             # representation, so silent acceptance would yield
-            # non-portable BLOBs.
+            # non-portable BLOBs. ``memoryview`` over a non-byte
+            # format (e.g. ``memoryview(array.array('i', ...))``) is
+            # the same hazard via the buffer-protocol back door and
+            # is rejected here too.
+            if isinstance(value, memoryview):
+                _reject_non_byte_format_memoryview(value)
             value_type = ValueType.BLOB
         else:
             raise EncodeError(
@@ -601,6 +651,14 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
+        # Symmetric with the inference branch: a ``memoryview`` over a
+        # non-byte format (e.g. ``memoryview(array.array('i', ...))``)
+        # would otherwise materialise as host-endian, host-int-width
+        # bytes — the cross-platform-corruption hazard the bare
+        # ``array.array`` rejection prevents. Apply the same check on
+        # the explicit-BLOB path so both entry points stay in lockstep.
+        if isinstance(value, memoryview):
+            _reject_non_byte_format_memoryview(value)
         # Cap the size BEFORE materialising via ``bytes(value)`` —
         # symmetric with ``decode_blob``'s cap-before-allocate
         # ordering. Without this, a 100 MB ``bytearray`` is copied
