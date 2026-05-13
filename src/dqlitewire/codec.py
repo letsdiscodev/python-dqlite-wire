@@ -683,28 +683,37 @@ class MessageDecoder:
             # poisoning — the next ``decode()`` would mis-frame the
             # continuation frame as a top-level message.
             if isinstance(msg, RowsResponse) and msg.has_more:
+                # Check the cap BEFORE writing any per-stream fields.
+                # Writing first and raising after would leave the five
+                # ``_continuation_*`` fields populated on a poison exit
+                # — the helper at ``_finalize_continuation_state``
+                # exists to keep that drift contained, but the broad-
+                # except below intentionally does NOT call it (handshake
+                # state on request-side decoders must not be clobbered
+                # on a mid-stream poison). Easier and leaner to not
+                # populate in the first place. Pinned by
+                # tests/test_decoder_continuation_counter_resets_on_poison.py::
+                # test_decode_initial_frame_cap_exceeded_does_not_populate_continuation_state.
+                initial_row_count = len(msg.rows)
+                if self._max_total_rows is not None and initial_row_count > self._max_total_rows:
+                    raise DecodeError(
+                        f"ROWS initial frame already exceeded max_total_rows cap "
+                        f"({self._max_total_rows}); first frame had "
+                        f"{initial_row_count} rows"
+                    )
                 self._continuation_expected = True
                 # Initialize per-stream cap counters with the first
                 # frame's row count so the cumulative-row check in
                 # decode_continuation can compare against the running
                 # total.
                 self._continuation_frame_count = 1
-                self._continuation_total_rows = len(msg.rows)
+                self._continuation_total_rows = initial_row_count
                 # Snapshot column count and names for cross-frame
                 # consistency. A continuation frame whose names tuple
                 # differs from this snapshot is rejected as a corrupt
                 # stream — see decode_continuation.
                 self._continuation_column_count = len(msg.column_names)
                 self._continuation_column_names = tuple(msg.column_names)
-                if (
-                    self._max_total_rows is not None
-                    and self._continuation_total_rows > self._max_total_rows
-                ):
-                    raise DecodeError(
-                        f"ROWS initial frame already exceeded max_total_rows cap "
-                        f"({self._max_total_rows}); first frame had "
-                        f"{self._continuation_total_rows} rows"
-                    )
         except BaseException as e:
             # poison() stores Exception | None; wrap non-Exception
             # BaseException subclasses so the poison cause is still a

@@ -86,3 +86,33 @@ def test_finalize_after_clean_final_frame() -> None:
     decoder.feed(MessageEncoder().encode(cont))
     decoder.decode_continuation()
     _assert_state_finalised(decoder)
+
+
+def test_decode_initial_frame_cap_exceeded_does_not_populate_continuation_state() -> None:
+    """Sixth termination path: the cap check inside ``decode()`` (NOT
+    ``decode_continuation``) at codec.py:685-707 fires when the FIRST
+    has_more=True frame already exceeds ``max_total_rows``. The
+    pre-existing code populated the five per-stream fields BEFORE
+    raising, leaving them dirty after poison. The fix moves the cap
+    check above the state mutation so the fields never get written.
+
+    The hazard the helper docstring at codec.py:392-407 warned about
+    ("a future telemetry accessor or a partial reset would surface
+    the stale data"): the five fields are publicly readable and the
+    docstring was written knowing this arm existed.
+    """
+    decoder = MessageDecoder(is_request=False, max_total_rows=1)
+    # Initial frame with 2 rows — exceeds cap of 1 on first frame.
+    initial = RowsResponse(
+        column_names=["c0", "c1"],
+        rows=[[1, 2], [3, 4]],
+        has_more=True,
+    )
+    decoder.feed(MessageEncoder().encode(initial))
+    with pytest.raises(DecodeError, match="max_total_rows"):
+        decoder.decode()
+    # Continuation fields must NOT be populated. Functionally the
+    # buffer is poisoned and every subsequent decoder call short-
+    # circuits via ``_check_poisoned``, but a debugger inspection or
+    # operator-facing diagnostic touch must not see stale data.
+    _assert_state_finalised(decoder)
