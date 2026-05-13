@@ -238,8 +238,12 @@ LEADER_ERROR_CODES: Final[frozenset[int]] = frozenset(
 )
 # Go's ``driverError`` ALSO maps ``errNotFound`` (= ``SQLITE_NOTFOUND``
 # = 12) to ``driver.ErrBadConn`` with the comment "potentially after
-# leadership loss" — gateway.c emits SQLITE_NOTFOUND from the
-# ``LOOKUP_DB`` macro when ``g->leader == NULL`` after a Raft demotion.
+# leadership loss". Upstream ``gateway.c::LOOKUP_DB`` macro fires on
+# ``(ID != 0 || g->leader == NULL)`` and emits SQLITE_NOTFOUND with
+# the verbatim message "no database opened". The ``ID != 0`` branch
+# is unused by current clients (the wire ``db_id`` is server-assigned
+# and always 0); the practical trigger is the post-Raft-demotion
+# null-leader branch. Both branches emit the same message text.
 # 12 is NOT in this numeric set because the same code is overloaded:
 # ``LOOKUP_STMT`` emits 12 too for an unknown statement id (a server-
 # side state bug, not a transport flip). The dispatch is instead
@@ -443,14 +447,17 @@ NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
 # Server-emitted message prefix that — paired with code
 # ``SQLITE_NOTFOUND`` (=12) — marks the post-leader-loss connection-
 # dead arm of go-dqlite's ``driverError`` classifier. Upstream
-# ``dqlite-upstream/src/gateway.c::LOOKUP_DB`` emits
-# ``failure(req, SQLITE_NOTFOUND, "no database opened")`` when the
-# gateway nulls ``g->leader`` after a Raft demotion; the same code
-# value is also emitted by ``LOOKUP_STMT`` (``"no statement with
-# the given id"``) for an unknown statement id, which is a server-
-# side state bug, not a transport flip. Substring-gating ensures
-# only the leader-flip arm triggers connection invalidation —
-# Option A from
+# ``dqlite-upstream/src/gateway.c::LOOKUP_DB`` fires on
+# ``(ID != 0 || g->leader == NULL)`` and emits
+# ``failure(req, SQLITE_NOTFOUND, "no database opened")``. The
+# ``ID != 0`` branch is unused by current clients (the wire
+# ``db_id`` field is server-assigned and always 0); the practical
+# trigger is the null-leader branch after a Raft demotion. Both
+# branches emit the same verbatim message. The same code value is
+# also emitted by ``LOOKUP_STMT`` (``"no statement with the given
+# id"``) for an unknown statement id, which is a server-side state
+# bug, not a transport flip. Substring-gating ensures only the
+# leader-flip arm triggers connection invalidation — Option A from
 # ``done/wire-leader-error-codes-omits-sqlite-notfound-go-bad-conn-parity.md``.
 #
 # Go reference (``go-dqlite/driver/driver.go::driverError``):
