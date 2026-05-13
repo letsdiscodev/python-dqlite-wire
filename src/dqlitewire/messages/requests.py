@@ -54,7 +54,9 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
     would pick schema=0. ``None`` (auto-select), ``0``, and ``1`` are the
     only legitimate values; schema=0 caps params at 255 (the V0 tuple
     format's uint8 count byte) and schema=1 caps params at
-    ``_MAX_PARAM_COUNT`` (the V1 uint16 count, less the marker reserve).
+    ``_MAX_PARAM_COUNT`` (SQLite's ``SQLITE_MAX_VARIABLE_NUMBER``
+    engine-side bind cap, see ``tuples.py:_MAX_PARAM_COUNT``; the V1
+    on-wire count field is a uint32, not uint16).
 
     Both caps are enforced here at construction time so a caller building
     a malformed request gets an actionable error at the construction
