@@ -120,14 +120,14 @@ RESPONSE_TYPES: dict[int, type[Message]] = {
 # (code 9) with ``schema=1`` and slip through a ceiling meant for
 # ``QUERY_SQL`` (also code 9). The ``MessageDecoder`` selects the
 # appropriate dict using ``is_request`` at construction time.
-_REQUEST_MAX_SCHEMA: dict[int, int] = {
+_REQUEST_MAX_SCHEMA: Final[dict[int, int]] = {
     RequestType.PREPARE: 1,
     RequestType.EXEC: 1,
     RequestType.QUERY: 1,
     RequestType.EXEC_SQL: 1,
     RequestType.QUERY_SQL: 1,
 }
-_RESPONSE_MAX_SCHEMA: dict[int, int] = {
+_RESPONSE_MAX_SCHEMA: Final[dict[int, int]] = {
     ResponseType.STMT: 1,
 }
 

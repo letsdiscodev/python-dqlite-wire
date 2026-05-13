@@ -141,7 +141,7 @@ _MAX_ADDRESS_SIZE: Final[int] = 256
 # load under the wrong encoding (uvicorn-style ``encoding='latin-1'``
 # import hacks, copy-paste through charset-normalising tools) and is
 # greppable for the canonical Unicode codepoints.
-_CONTROL_CHARS_RE = re.compile(
+_CONTROL_CHARS_RE: Final[re.Pattern[str]] = re.compile(
     r"[\x00-\x08\x0b-\x1f\x7f-\x9f"
     r"\u061c"  # Arabic letter mark
     r"\u1680"  # Ogham space mark - visible blank in some fonts but
