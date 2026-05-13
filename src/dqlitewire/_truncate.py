@@ -20,8 +20,6 @@ their cap into this helper, which has no opinion on the value beyond
 "non-negative integer".
 """
 
-from __future__ import annotations
-
 from typing import Final
 
 __all__ = ["_cap_raw_message"]
