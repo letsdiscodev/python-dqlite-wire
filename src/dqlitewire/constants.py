@@ -11,6 +11,7 @@ __all__ = [
     "DQLITE_PROTO",
     "HEADER_SIZE",
     "LEADER_ERROR_CODES",
+    "LEADER_LOST_DB_LOOKUP_SUBSTRING",
     "NO_TRANSACTION_MESSAGE_SUBSTRINGS",
     "PROTOCOL_VERSION",
     "PROTOCOL_VERSION_LEGACY",
@@ -235,6 +236,16 @@ LEADER_ERROR_CODES: Final[frozenset[int]] = frozenset(
         SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
     }
 )
+# Go's ``driverError`` ALSO maps ``errNotFound`` (= ``SQLITE_NOTFOUND``
+# = 12) to ``driver.ErrBadConn`` with the comment "potentially after
+# leadership loss" — gateway.c emits SQLITE_NOTFOUND from the
+# ``LOOKUP_DB`` macro when ``g->leader == NULL`` after a Raft demotion.
+# 12 is NOT in this numeric set because the same code is overloaded:
+# ``LOOKUP_STMT`` emits 12 too for an unknown statement id (a server-
+# side state bug, not a transport flip). The dispatch is instead
+# substring-gated via ``LEADER_LOST_DB_LOOKUP_SUBSTRING`` below — see
+# the consumer arms in ``dqliteclient.connection._run_protocol`` and
+# ``sqlalchemy-dqlite/src/sqlalchemydqlite/base.py::is_disconnect``.
 
 # dqlite-namespace error codes (>= 1000). These do NOT belong to the
 # SQLite primary-code namespace and ``primary_sqlite_code`` returns
@@ -428,6 +439,31 @@ NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
     # cluster.
     "no transaction is active",
 )
+
+# Server-emitted message prefix that — paired with code
+# ``SQLITE_NOTFOUND`` (=12) — marks the post-leader-loss connection-
+# dead arm of go-dqlite's ``driverError`` classifier. Upstream
+# ``dqlite-upstream/src/gateway.c::LOOKUP_DB`` emits
+# ``failure(req, SQLITE_NOTFOUND, "no database opened")`` when the
+# gateway nulls ``g->leader`` after a Raft demotion; the same code
+# value is also emitted by ``LOOKUP_STMT`` (``"no statement with
+# the given id"``) for an unknown statement id, which is a server-
+# side state bug, not a transport flip. Substring-gating ensures
+# only the leader-flip arm triggers connection invalidation —
+# Option A from
+# ``done/wire-leader-error-codes-omits-sqlite-notfound-go-bad-conn-parity.md``.
+#
+# Go reference (``go-dqlite/driver/driver.go::driverError``):
+#
+#     case errNotFound:
+#         log(client.LogDebug,
+#             "not found - potentially after leadership loss (%d - %s)",
+#             err.Code, err.Description)
+#         return driver.ErrBadConn
+#
+# Consumers: ``dqliteclient.connection._run_protocol`` and
+# ``sqlalchemy-dqlite/src/sqlalchemydqlite/base.py::is_disconnect``.
+LEADER_LOST_DB_LOOKUP_SUBSTRING: Final[str] = "no database opened"
 
 TX_AUTO_ROLLBACK_PRIMARY_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
