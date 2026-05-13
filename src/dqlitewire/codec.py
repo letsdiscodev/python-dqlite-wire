@@ -540,14 +540,18 @@ class MessageDecoder:
                 # The upstream C server emits an ``EmptyResponse`` when
                 # the in-flight query was cancelled by an INTERRUPT
                 # request mid-stream. A WELL-FORMED EmptyResponse body
-                # (8 zero bytes from a conforming peer) is treated as a
+                # (8 bytes from a conforming peer) is treated as a
                 # clean terminator, mirroring go-dqlite's
                 # ``Protocol.Interrupt`` drain loop, and the buffer is
                 # NOT poisoned. A malformed EmptyResponse body (wrong
-                # length or non-zero reserved field) still poisons the
-                # buffer via the standard DecodeError path raised from
+                # length only) still poisons the buffer via the
+                # standard DecodeError path raised from
                 # ``EmptyResponse.decode_body`` — see
                 # ``test_decode_continuation_malformed_empty_still_poisons``.
+                # The reserved uint64 inside the body is permissively
+                # read-and-discarded to match Go's
+                # ``response.getUint64()`` (see ``responses.py:1047-1052``);
+                # a non-zero reserved value does NOT poison.
                 self._finalize_continuation_state()
                 return EmptyResponse.decode_body(body, schema=header.schema)
             # ``msg_type`` is ROWS here (the early type-recognition

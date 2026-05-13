@@ -1457,6 +1457,31 @@ class TestDecoderContinuation:
             decoder.decode_continuation()
         assert decoder.is_poisoned is True
 
+    def test_decode_continuation_empty_with_non_zero_reserved_does_not_poison(self) -> None:
+        """Negative-pin behaviour pair: EmptyResponse.decode_body
+        permissively accepts non-zero reserved word (Go parity per
+        responses.py:1047-1052). Only the length mismatch poisons —
+        the reserved value itself does NOT. Pins the codec.py
+        decode_continuation EMPTY arm rationale comment.
+        """
+        import struct
+
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import EmptyResponse
+
+        # Well-framed EmptyResponse with a non-zero reserved word.
+        body = struct.pack("<Q", 0xDEADBEEFDEADBEEF)
+        header = Header(size_words=1, msg_type=8, schema=0)
+        empty_with_garbage = header.encode() + body
+
+        decoder = MessageDecoder(is_request=False)
+        decoder._continuation_expected = True
+        decoder.feed(empty_with_garbage)
+
+        msg = decoder.decode_continuation()
+        assert isinstance(msg, EmptyResponse)
+        assert decoder.is_poisoned is False
+
     def test_decode_continuation_malformed_empty_size_poisons(self) -> None:
         """A malformed EmptyResponse (wrong body length, e.g. 16 bytes
         instead of 8) must surface the underlying DecodeError and
