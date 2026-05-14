@@ -67,3 +67,34 @@ def test_negative_max_chars_rejects_even_for_none_input() -> None:
     so the contract failure is consistent regardless of input shape."""
     with pytest.raises(ValueError, match="max_chars must be >= 0"):
         _cap_raw_message(None, -1)
+
+
+def test_lf_passes_through_under_cap() -> None:
+    """SECURITY contract: LF survives so wire-level multi-line server
+    diagnostics reach exception-display intact. Log-site consumers must
+    apply ``sanitize_for_log`` themselves."""
+    text = "line1\nline2"
+    assert _cap_raw_message(text, 100) == text
+
+
+def test_tab_passes_through_under_cap() -> None:
+    """SECURITY contract: Tab survives so the helper stays a pure
+    codepoint-length cap rather than a sanitiser. Mirrors the wire-layer
+    ``sanitize_server_text`` LF/Tab-preserving discipline."""
+    assert _cap_raw_message("col1\tcol2", 100) == "col1\tcol2"
+
+
+def test_crlf_passes_through_under_cap() -> None:
+    """SECURITY contract: CR/CRLF survives the cap. Documented as a
+    non-goal in the ``_cap_raw_message`` SECURITY NOTE."""
+    assert _cap_raw_message("a\r\nb", 100) == "a\r\nb"
+
+
+def test_lf_in_truncated_prefix_survives() -> None:
+    """The truncation prefix preserves LF that fits within the cap; only
+    the overflow tail is dropped. Pins that the cap does not retroactively
+    strip control characters from the kept prefix either."""
+    text = "a\nb" + ("x" * 200)
+    result = _cap_raw_message(text, 10)
+    assert result is not None
+    assert result.startswith("a\nb")
