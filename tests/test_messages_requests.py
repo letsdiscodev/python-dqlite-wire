@@ -145,7 +145,7 @@ class TestHeaderReservedField:
 
     def test_post_init_rejects_bool_in_int_fields(self) -> None:
         """``True == 1`` would silently coerce to uint8 and mask
-        caller bugs. Reject explicitly (cycle-23 ISSUE-1184 pattern)."""
+        caller bugs. Reject explicitly."""
         from dqlitewire.exceptions import EncodeError
 
         with pytest.raises(EncodeError, match="size_words must be int"):
@@ -599,7 +599,7 @@ class TestAssignRequest:
         assert decoded.encode_body_legacy() == captured_legacy
 
     def test_decode_legacy_then_encode_body_yields_modern_16_byte_assign(self) -> None:
-        """Pin: cycle 22's documented one-way upgrade.
+        """Pin: the documented one-way upgrade.
 
         Decode a 1-word PROMOTE body → role defaults to VOTER (the
         upstream-semantic of PROMOTE). Re-encoding via
