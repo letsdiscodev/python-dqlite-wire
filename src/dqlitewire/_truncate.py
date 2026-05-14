@@ -13,11 +13,13 @@ path. Promote to public only if a downstream consumer surfaces — the
 sibling pattern established by the prior round's `sanitize_for_log`
 promotion.
 
-The constants and suffix wording are fixed: the client side maintains
-`DqliteError._MAX_RAW_MESSAGE` as a class-level cap that subclasses
-may override; the dbapi side uses the module-level cap. Both pass
-their cap into this helper, which has no opinion on the value beyond
-"non-negative integer".
+The canonical default codepoint cap is the module-level
+``_DEFAULT_MAX_RAW_MESSAGE`` constant (4 KiB). The client side
+exposes it as a class-level ``DqliteError._MAX_RAW_MESSAGE`` so
+subclasses may override per exception class; the dbapi side imports
+the constant directly and passes it through verbatim. Both consumers
+pass their effective cap into ``_cap_raw_message``, which has no
+opinion on the value beyond "non-negative integer".
 """
 
 from typing import Final
