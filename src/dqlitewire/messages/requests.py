@@ -830,8 +830,6 @@ class ClusterRequest(Message):
             # Encode rejection mirrors the construction-time gate: this
             # client cannot consume the V0 ServersResponse, so emitting
             # a V0 request is a wire-shape inconsistency.
-            from dqlitewire.exceptions import EncodeError
-
             raise EncodeError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
