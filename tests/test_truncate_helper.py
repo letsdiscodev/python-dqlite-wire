@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from dqlitewire._truncate import _cap_raw_message
+from dqlitewire._truncate import _DEFAULT_MAX_RAW_MESSAGE, _cap_raw_message
 
 
 def test_returns_none_unchanged() -> None:
@@ -98,3 +98,17 @@ def test_lf_in_truncated_prefix_survives() -> None:
     result = _cap_raw_message(text, 10)
     assert result is not None
     assert result.startswith("a\nb")
+
+
+def test_default_max_raw_message_is_4_kib() -> None:
+    """SSOT pin: the canonical raw-message cap is 4 KiB.
+
+    Downstream packages (``dqliteclient.exceptions``,
+    ``dqlitedbapi.exceptions``) import this constant and use it as
+    their default; SA's disconnect classifier depends on the budget
+    being a known constant for failure-text-stability promises. A
+    silent bump propagates to both downstream packages without a
+    deliberate breaking-change decision. Update both the constant and
+    this pin together when changing the budget.
+    """
+    assert _DEFAULT_MAX_RAW_MESSAGE == 4 * 1024 == 4096
