@@ -246,7 +246,8 @@ class TestText:
 
     def test_decode_rejects_unterminated_memoryview(self) -> None:
         """Same diagnostic for the memoryview one-shot path. Drives
-        the uncovered branch at types.py:267."""
+        ``decode_text``'s memoryview one-shot
+        ``raise DecodeError(f"{label} not null-terminated")`` arm."""
         from dqlitewire.exceptions import DecodeError
 
         with pytest.raises(DecodeError, match="not null-terminated"):
@@ -262,7 +263,8 @@ class TestText:
 
     def test_decode_rejects_invalid_utf8_memoryview(self) -> None:
         """Same diagnostic for the memoryview one-shot path. Drives
-        the uncovered branch at types.py:270-271."""
+        ``decode_text``'s memoryview one-shot
+        ``raise DecodeError(f"Invalid UTF-8 in {label}: ...")`` arm."""
         from dqlitewire.exceptions import DecodeError
 
         with pytest.raises(DecodeError, match="Invalid UTF-8 in param"):
