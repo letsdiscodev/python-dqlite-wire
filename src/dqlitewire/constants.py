@@ -380,10 +380,10 @@ SQLITE_NOTADB: Final[int] = 26
 # disconnect classifier can derive its decision from a single source
 # of truth (``sqlalchemydqlite.base._BARE_DBE_DISCONNECT_CODES``
 # imports this frozenset directly). dbapi's ``_CODE_TO_EXCEPTION``
-# also routes these three codes to bare ``DatabaseError`` but
-# currently mirrors them as individual ``Mapping`` entries rather
-# than iterating this set; a future cleanup can lift the dbapi to
-# derive from it as well.
+# also derives its "bare ``DatabaseError``" routes from this set via
+# dict-spread (``**{code: DatabaseError for code in
+# BARE_DATABASE_ERROR_CODES}``), so the two downstream consumers
+# stay aligned automatically if the wire set grows.
 BARE_DATABASE_ERROR_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_CORRUPT, SQLITE_FORMAT, SQLITE_NOTADB}
 )
