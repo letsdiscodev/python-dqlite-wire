@@ -221,7 +221,7 @@ from dqlitewire.exceptions import (
     StreamError,
 )
 from dqlitewire.messages.base import Header, Message
-from dqlitewire.messages.responses import sanitize_for_log, sanitize_server_text
+from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_server_text
 from dqlitewire.types import WireInput, WireValue
 
 __version__: Final[str] = "0.1.6"
@@ -290,6 +290,7 @@ __all__ = [
     "Message",
     "MessageDecoder",
     "MessageEncoder",
+    "NodeInfo",
     "NodeRole",
     "PoisonedError",
     "ProtocolError",
