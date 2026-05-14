@@ -142,7 +142,7 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
         stacklevel=2,
     )
 
-from typing import Final
+from typing import Final as _Final
 
 from dqlitewire import messages, tuples, types
 from dqlitewire.buffer import ReadBuffer, WriteBuffer
@@ -224,7 +224,7 @@ from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_server_text
 from dqlitewire.types import WireInput, WireValue
 
-__version__: Final[str] = "0.1.6"
+__version__: _Final[str] = "0.1.6"
 
 __all__ = [
     "BARE_DATABASE_ERROR_CODES",
