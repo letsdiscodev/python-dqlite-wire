@@ -376,9 +376,14 @@ SQLITE_NOTADB: Final[int] = 26
 # also routes a handful of other codes (NOLFS / AUTH / NOTICE /
 # WARNING) to bare ``DatabaseError`` as defensive pass-through, but
 # those codes are NOT in this set because dqlite-server doesn't
-# currently emit them on the wire. Hosting the set here so SA and
-# dbapi can derive their slot-fatal / pep249-routing decisions from
-# a single source of truth.
+# currently emit them on the wire. Hosted here so SA's slot-fatal
+# disconnect classifier can derive its decision from a single source
+# of truth (``sqlalchemydqlite.base._BARE_DBE_DISCONNECT_CODES``
+# imports this frozenset directly). dbapi's ``_CODE_TO_EXCEPTION``
+# also routes these three codes to bare ``DatabaseError`` but
+# currently mirrors them as individual ``Mapping`` entries rather
+# than iterating this set; a future cleanup can lift the dbapi to
+# derive from it as well.
 BARE_DATABASE_ERROR_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_CORRUPT, SQLITE_FORMAT, SQLITE_NOTADB}
 )
