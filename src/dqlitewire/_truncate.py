@@ -9,9 +9,10 @@ in `dqliteclient.exceptions._cap_raw_message` and
 
 The helper is intentionally **private** (underscore-prefixed module
 + underscore-prefixed name). Both consumers import via the underscore
-path. Promote to public only if a downstream consumer surfaces — the
-sibling pattern established by the prior round's `sanitize_for_log`
-promotion.
+path. Promote to public only if a downstream consumer surfaces — same
+shape as ``sanitize_for_log``, which started private here and was
+promoted to public (see ``dqlitewire.__init__``'s ``__all__``) once
+its cross-package use stabilised.
 
 The canonical default codepoint cap is the module-level
 ``_DEFAULT_MAX_RAW_MESSAGE`` constant (4 KiB). The client side
