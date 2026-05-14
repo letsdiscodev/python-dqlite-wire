@@ -3,12 +3,12 @@ DONE / PART marker on the non-zero-column path, in parity with the
 zero-column fast path and with sibling decoders
 (``LeaderResponse``, ``FailureResponse``, ``ServersResponse``).
 
-Before the round-31 alignment, the zero-column path raised on
-trailing bytes but the non-zero-column path returned immediately on
-the marker, silently consuming any trailing bytes via the body slice.
-A byte-replay against the same stray-trailing pattern produced
-different results between the two paths — a strict-decode posture
-inconsistency.
+A prior alignment cycle established this parity: previously the
+zero-column path raised on trailing bytes but the non-zero-column
+path returned immediately on the marker, silently consuming any
+trailing bytes via the body slice. A byte-replay against the same
+stray-trailing pattern produced different results between the two
+paths — a strict-decode posture inconsistency now closed.
 """
 
 from __future__ import annotations
