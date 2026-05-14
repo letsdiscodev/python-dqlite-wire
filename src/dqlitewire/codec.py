@@ -549,8 +549,7 @@ class MessageDecoder:
                 # ``EmptyResponse.decode_body`` — see
                 # ``test_decode_continuation_malformed_empty_still_poisons``.
                 # The reserved uint64 inside the body is permissively
-                # read-and-discarded to match Go's
-                # ``response.getUint64()`` (see ``responses.py:1047-1052``);
+                # read-and-discarded to match Go's ``response.getUint64()``;
                 # a non-zero reserved value does NOT poison.
                 self._finalize_continuation_state()
                 return EmptyResponse.decode_body(body, schema=header.schema)
