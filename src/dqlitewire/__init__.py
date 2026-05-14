@@ -65,7 +65,7 @@ triggers, not int 0/1 from a BOOLEAN-decltype column). Pass
 Disconnect-classification constants
 -----------------------------------
 
-Two string constants anchor the four-package disconnect-classification
+Three constants anchor the four-package disconnect-classification
 chain (wire failure → ``client.ProtocolError`` →
 ``dbapi.OperationalError(code=None)`` → SA's
 ``_dqlite_disconnect_messages`` substring scan):
@@ -90,8 +90,17 @@ chain (wire failure → ``client.ProtocolError`` →
   ``dqliteclient.connection._run_protocol`` and
   ``sqlalchemydqlite.base::is_disconnect``.
 
-Both constants are exported and load-bearing across packages — a
-rename ripples through grep on the constant name.
+- ``BARE_DATABASE_ERROR_CODES: frozenset[int]`` — the SQLite primary
+  codes the dqlite server actually emits as bare ``DatabaseError``
+  per PEP 249 §9 routing (``SQLITE_CORRUPT`` / ``SQLITE_FORMAT`` /
+  ``SQLITE_NOTADB``). This is the slot-fatal set under SA's pre-ping
+  / disconnect classification — corruption / format / not-a-database
+  all mean the pool slot cannot be reused. Consumed by
+  ``sqlalchemydqlite.base``'s ``_BARE_DBE_DISCONNECT_CODES`` and
+  mirrored by dbapi's ``_CODE_TO_EXCEPTION`` table.
+
+All three are exported and load-bearing across packages — a rename
+ripples through grep on the constant name.
 """
 
 import logging as _logging
