@@ -1,12 +1,14 @@
 """Pin: ``dqlitewire.tuples`` and ``dqlitewire.types`` are reachable from
 the package root.
 
-ISSUE-1450 (`done/`) extended ``dqlitewire.__all__`` to include
-``"messages"``. The same parallel was missing for ``tuples`` and
-``types`` despite ``encode_value(v)[1]`` being referenced by the
-package docstring at ``__init__.py:54``. Without the entries the
-helpers are reachable only via ``from dqlitewire.tuples import ...``
-which is fine but undocumented as a public entry point.
+``dqlitewire.__all__`` includes ``"messages"`` so ``dqlitewire.messages``
+is part of the documented public API. ``tuples`` and ``types`` are
+referenced by the package docstring at ``__init__.py`` (e.g.
+``encode_value(v)[1]``) and must be reachable through the package
+root for the same parity — otherwise the helpers are reachable only
+via ``from dqlitewire.tuples import ...`` which is fine but
+undocumented as a public entry point. This module is the drift
+defence against ``__all__`` losing those entries.
 """
 
 from __future__ import annotations

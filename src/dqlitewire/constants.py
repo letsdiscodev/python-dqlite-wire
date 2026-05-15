@@ -481,8 +481,7 @@ WIRE_DECODE_FAILED_PREFIX: Final[str] = "wire decode failed"
 # also emitted by ``LOOKUP_STMT`` (``"no statement with the given
 # id"``) for an unknown statement id, which is a server-side state
 # bug, not a transport flip. Substring-gating ensures only the
-# leader-flip arm triggers connection invalidation — Option A from
-# ``done/wire-leader-error-codes-omits-sqlite-notfound-go-bad-conn-parity.md``.
+# leader-flip arm triggers connection invalidation.
 #
 # Go reference (``go-dqlite/driver/driver.go::driverError``):
 #

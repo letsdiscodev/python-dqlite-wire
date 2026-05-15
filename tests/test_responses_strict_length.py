@@ -5,8 +5,6 @@ Strict-parse peers in this module (``LeaderRequest.decode_body``,
 messages audited here previously accepted ``len >= expected``,
 silently ignoring trailing bytes — asymmetric with peers and
 permissive in a way that masks frame-corruption.
-
-Peers of ISSUE-298 / ISSUE-299.
 """
 
 from __future__ import annotations

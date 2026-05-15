@@ -641,8 +641,8 @@ class TestAssignRequestDecodeRoleValidation:
     as ``DecodeError("AssignRequest: unknown role N")`` rather than
     silently constructing a dataclass with a raw int. Mirrors the
     sibling ``ServersResponse`` coverage at
-    ``tests/test_messages_responses.py`` and the construction-side
-    cover added in ISSUE-424.
+    ``tests/test_messages_responses.py`` and the symmetric
+    construction-side validator on ``AssignRequest.__post_init__``.
     """
 
     @pytest.mark.parametrize("bad_role", [4, 999, 0xFFFFFFFFFFFFFFFF])

@@ -8,7 +8,7 @@ because the common idiom is zero-copy binding of byte buffers
 is also a ``memoryview`` instance and would otherwise sail through —
 emitting bytes in HOST endianness and HOST int width, which is
 exactly the cross-platform-corruption hazard the bare ``array.array``
-rejection (ISSUE-765) is meant to prevent.
+rejection is meant to prevent.
 
 Both the inference branch (no explicit ``value_type``) and the
 explicit-BLOB branch (caller passes ``ValueType.BLOB``) must reject
@@ -30,7 +30,8 @@ from dqlitewire.types import decode_value, encode_value
 def test_encode_value_infer_rejects_non_byte_format_memoryview() -> None:
     """``memoryview(array.array('i', ...))`` carries host-endian
     int32 bytes; inference must reject it identically to bare
-    ``array.array`` (which is rejected per ISSUE-765)."""
+    ``array.array`` (which is rejected for the same host-endian
+    hazard)."""
     mv = memoryview(array.array("i", [1, 2, 3]))
     assert mv.format == "i" and mv.itemsize == 4
     with pytest.raises(EncodeError, match="format"):

@@ -4,10 +4,7 @@ dbapi.OperationalError(code=None) → SA's
 ``_dqlite_disconnect_messages`` substring scan) depends on.
 
 The constant exists as the single source of truth so a rename
-ripples through grep. ISSUE-1429's "Option A — hoist to a shared
-constant" picked exactly this discipline; the half-fixed state
-(constant defined but not adopted by any consumer site) left the
-fragility in place. This test pins the canonical value so a future
+ripples through grep. This test pins the canonical value so a future
 rename has to update the constant deliberately.
 """
 

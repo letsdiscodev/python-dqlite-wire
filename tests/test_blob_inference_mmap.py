@@ -7,12 +7,12 @@ memory-mapped-file workflows that pass mmap regions to avoid an
 extra copy hit ``EncodeError`` in dqlite while round-tripping
 fine in stdlib sqlite3.
 
-The inference discriminator at ``types.py`` previously listed
-``(bytes, bytearray, memoryview)`` only — narrowed in ISSUE-347 from
-"bytes only" but stopping short of buffer-protocol generality.
-``array.array`` rejection (per ISSUE-765) is intentional and
-preserved by adding ``mmap.mmap`` explicitly rather than widening to
-``collections.abc.Buffer``.
+The inference discriminator at ``types.py`` lists
+``(bytes, bytearray, memoryview, mmap.mmap)`` — broad enough to cover
+the canonical buffer-protocol shapes that stdlib accepts, but narrow
+enough to keep the deliberate ``array.array`` rejection in place
+(``array.array`` of non-byte items would silently lose the type tag
+on round-trip).
 """
 
 from __future__ import annotations

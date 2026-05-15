@@ -2,19 +2,17 @@
 
 Upstream C drives every decode through a ``struct cursor`` with an
 explicit ``cap``, so extra bytes past the declared fields are
-detected (``DQLITE_PARSE``). Prior cycles applied the strict-length
-pattern to ``EmptyResponse`` / ``DbResponse`` / ``ResultResponse``
-and ``LeaderRequest``. This module fences the same pattern across
-the rest of the request decoders and the two response decoders that
-still accepted trailing bytes (``FilesResponse`` last-file tail;
-``RowsResponse`` zero-column fast path).
+detected (``DQLITE_PARSE``). The same strict-length pattern is
+applied to ``EmptyResponse`` / ``DbResponse`` / ``ResultResponse`` /
+``LeaderRequest`` (sibling tests in this directory). This module
+fences the rest of the surface:
 
-Covers:
-- ISSUE-319 (DescribeRequest format membership)
-- ISSUE-320 (fixed-size + variable-size request decoders strict)
-- ISSUE-321 (AssignRequest equality, not threshold)
-- ISSUE-322 (FilesResponse trailing bytes past last file)
-- ISSUE-323 (RowsResponse zero-column fast path trailing bytes)
+- ``DescribeRequest`` format membership (only ``format == 0`` valid)
+- the fixed-size + variable-size request decoders (strict ``cap``)
+- ``AssignRequest`` decode requires exact 16-byte body (equality,
+  not threshold)
+- ``FilesResponse`` rejects trailing bytes past the last file
+- ``RowsResponse`` zero-column fast path rejects trailing bytes
 """
 
 from __future__ import annotations
@@ -88,7 +86,9 @@ class TestFixedSizeRequestStrictLength:
 
 
 class TestAssignRequestStrictLength:
-    """ISSUE-321: `len(data) >= 16` was a threshold; must be equality."""
+    """``AssignRequest.decode_body`` must require exact 8- or 16-byte
+    bodies (equality), not ``len(data) >= 16`` (threshold). The
+    threshold form silently dropped trailing bytes."""
 
     def test_eight_byte_body_is_promote(self) -> None:
         from dqlitewire.constants import NodeRole
@@ -112,8 +112,9 @@ class TestAssignRequestStrictLength:
 
 
 class TestDescribeRequestFormatMembership:
-    """ISSUE-319: upstream rejects DescribeRequest.format != 0 with
-    SQLITE_PROTOCOL. Reject client-side so callers get a local EncodeError.
+    """Upstream rejects ``DescribeRequest.format != 0`` with
+    ``SQLITE_PROTOCOL``. Reject client-side so callers get a local
+    ``EncodeError`` instead of a server round-trip.
     """
 
     def test_construct_with_nonzero_format_rejected(self) -> None:
@@ -188,7 +189,8 @@ class TestVariableSizeRequestStrictLength:
 
 
 class TestFilesResponseTrailingBytesRejected:
-    """ISSUE-322: FilesResponse must reject bytes past the last file."""
+    """``FilesResponse.decode_body`` must reject bytes past the last
+    file (strict end-of-buffer check)."""
 
     def test_trailing_bytes_after_last_file_rejected(self) -> None:
         msg = FilesResponse(files={"a.db": b"\x00" * 8})
@@ -198,7 +200,8 @@ class TestFilesResponseTrailingBytesRejected:
 
 
 class TestRowsResponseZeroColumnTrailingBytesRejected:
-    """ISSUE-323: zero-column fast path must enforce buffer exhaustion."""
+    """``RowsResponse`` zero-column fast path must enforce buffer
+    exhaustion just like the general path."""
 
     def test_trailing_bytes_after_zero_column_marker_rejected(self) -> None:
         # Body: column_count=0 (uint64), DONE marker (uint64) — all 16 bytes.

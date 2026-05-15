@@ -6,12 +6,11 @@ Each response decoder with a count field has a two-stage check:
    a count that is small enough to pass stage 1 but would require
    more bytes than the body holds (allocation-amplification attack).
 
-Stage 2's raises had no tests before ISSUE-327. A regression that
-removes the frame-size check or reorders it with the absolute cap
-would ship silently.
+Stage 2's raises are tested here. A regression that removes the
+frame-size check or reorders it with the absolute cap would ship
+silently otherwise.
 
-Also fences ``encode_row_values``'s length-mismatch EncodeError
-(ISSUE-329) which had no direct test.
+Also fences ``encode_row_values``'s length-mismatch EncodeError.
 """
 
 from __future__ import annotations
