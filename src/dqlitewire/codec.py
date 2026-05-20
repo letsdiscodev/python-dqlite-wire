@@ -786,8 +786,19 @@ class MessageDecoder:
         # misaligned cursor, both fields garbage. Callers must
         # construct ``MessageDecoder`` with the same ``version``
         # negotiated on the wire.
+        # Gate on ``not self._is_request`` as the primary clause: the
+        # legacy LEADER dispatch is response-side only. ``RequestType.
+        # CLIENT == 1`` collides numerically with
+        # ``ResponseType.LEADER == 1``; a request-side decoder feeding
+        # a CLIENT-type frame would otherwise share the numeric arm.
+        # The redundant ``msg_class is LeaderResponse`` check is kept
+        # as belt-and-suspenders, but the load-bearing predicate is
+        # the direction guard — a future alias/subclass registered in
+        # ``RESPONSE_TYPES`` would not silently bypass the legacy
+        # dispatch.
         if (
-            header.msg_type == ResponseType.LEADER
+            not self._is_request
+            and header.msg_type == ResponseType.LEADER
             and self._version == PROTOCOL_VERSION_LEGACY
             and msg_class is LeaderResponse
         ):
