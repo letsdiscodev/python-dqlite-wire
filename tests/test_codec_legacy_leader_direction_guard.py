@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import inspect
 
+from dqlitewire import PROTOCOL_VERSION_LEGACY
 from dqlitewire.codec import (
-    PROTOCOL_VERSION_LEGACY,
     MessageDecoder,
     decode_message,
 )

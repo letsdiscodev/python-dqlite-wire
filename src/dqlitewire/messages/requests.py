@@ -299,6 +299,16 @@ class ExecRequest(Message):
     # heuristic alone would otherwise downgrade to schema=0). Excluded
     # from repr/compare so it stays an internal round-trip hint.
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
+    # Companion round-trip hint to ``_decoded_schema``. Tracks
+    # whether the inbound wire frame carried an explicit empty-params
+    # header (C-style: 8 zero bytes) or omitted the params tuple
+    # entirely (Go-style: 0 bytes). Both shapes are valid for
+    # zero-param requests but produce different wire bytes. Set by
+    # ``decode_body`` only when ``params`` is empty AND the inbound
+    # frame had bytes for the tuple; otherwise ``None`` (caller-
+    # originated default → Go-style omission). Excluded from
+    # repr/compare so it stays an internal round-trip hint.
+    _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint32("db_id", self.db_id)
@@ -317,7 +327,7 @@ class ExecRequest(Message):
             self.params,
             schema=schema,
             buffer_offset=len(result),
-            emit_empty_header=self._decoded_schema is not None,
+            emit_empty_header=bool(self._decoded_empty_header),
         )
         return result
 
@@ -332,7 +342,18 @@ class ExecRequest(Message):
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"ExecRequest has {len(data) - offset} trailing bytes")
-        return cls(db_id, stmt_id, params, _decoded_schema=schema)
+        # Track whether the inbound frame had an explicit empty-params
+        # header (C-style ``consumed > 0`` for ``params == []``) so a
+        # decode→re-encode round-trip is byte-identical for both
+        # shapes Go and C emit for empty params.
+        empty_header = (not params) and consumed > 0
+        return cls(
+            db_id,
+            stmt_id,
+            params,
+            _decoded_schema=schema,
+            _decoded_empty_header=empty_header,
+        )
 
 
 @final
@@ -350,6 +371,16 @@ class QueryRequest(Message):
     stmt_id: int
     params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
+    # Companion round-trip hint to ``_decoded_schema``. Tracks
+    # whether the inbound wire frame carried an explicit empty-params
+    # header (C-style: 8 zero bytes) or omitted the params tuple
+    # entirely (Go-style: 0 bytes). Both shapes are valid for
+    # zero-param requests but produce different wire bytes. Set by
+    # ``decode_body`` only when ``params`` is empty AND the inbound
+    # frame had bytes for the tuple; otherwise ``None`` (caller-
+    # originated default → Go-style omission). Excluded from
+    # repr/compare so it stays an internal round-trip hint.
+    _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint32("db_id", self.db_id)
@@ -368,7 +399,7 @@ class QueryRequest(Message):
             self.params,
             schema=schema,
             buffer_offset=len(result),
-            emit_empty_header=self._decoded_schema is not None,
+            emit_empty_header=bool(self._decoded_empty_header),
         )
         return result
 
@@ -383,7 +414,14 @@ class QueryRequest(Message):
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"QueryRequest has {len(data) - offset} trailing bytes")
-        return cls(db_id, stmt_id, params, _decoded_schema=schema)
+        empty_header = (not params) and consumed > 0
+        return cls(
+            db_id,
+            stmt_id,
+            params,
+            _decoded_schema=schema,
+            _decoded_empty_header=empty_header,
+        )
 
 
 @final
@@ -430,6 +468,16 @@ class ExecSqlRequest(Message):
     sql: str
     params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
+    # Companion round-trip hint to ``_decoded_schema``. Tracks
+    # whether the inbound wire frame carried an explicit empty-params
+    # header (C-style: 8 zero bytes) or omitted the params tuple
+    # entirely (Go-style: 0 bytes). Both shapes are valid for
+    # zero-param requests but produce different wire bytes. Set by
+    # ``decode_body`` only when ``params`` is empty AND the inbound
+    # frame had bytes for the tuple; otherwise ``None`` (caller-
+    # originated default → Go-style omission). Excluded from
+    # repr/compare so it stays an internal round-trip hint.
+    _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
@@ -451,7 +499,7 @@ class ExecSqlRequest(Message):
             self.params,
             schema=schema,
             buffer_offset=len(result),
-            emit_empty_header=self._decoded_schema is not None,
+            emit_empty_header=bool(self._decoded_empty_header),
         )
         return result
 
@@ -467,7 +515,14 @@ class ExecSqlRequest(Message):
         offset += consumed
         if offset != len(data):
             raise DecodeError(f"ExecSqlRequest has {len(data) - offset} trailing bytes")
-        return cls(db_id, sql, params, _decoded_schema=schema)
+        empty_header = (not params) and consumed > 0
+        return cls(
+            db_id,
+            sql,
+            params,
+            _decoded_schema=schema,
+            _decoded_empty_header=empty_header,
+        )
 
 
 @final
@@ -485,6 +540,16 @@ class QuerySqlRequest(Message):
     sql: str
     params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
+    # Companion round-trip hint to ``_decoded_schema``. Tracks
+    # whether the inbound wire frame carried an explicit empty-params
+    # header (C-style: 8 zero bytes) or omitted the params tuple
+    # entirely (Go-style: 0 bytes). Both shapes are valid for
+    # zero-param requests but produce different wire bytes. Set by
+    # ``decode_body`` only when ``params`` is empty AND the inbound
+    # frame had bytes for the tuple; otherwise ``None`` (caller-
+    # originated default → Go-style omission). Excluded from
+    # repr/compare so it stays an internal round-trip hint.
+    _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
@@ -506,7 +571,7 @@ class QuerySqlRequest(Message):
             self.params,
             schema=schema,
             buffer_offset=len(result),
-            emit_empty_header=self._decoded_schema is not None,
+            emit_empty_header=bool(self._decoded_empty_header),
         )
         return result
 
@@ -522,7 +587,14 @@ class QuerySqlRequest(Message):
         offset += consumed
         if offset != len(data):
             raise DecodeError(f"QuerySqlRequest has {len(data) - offset} trailing bytes")
-        return cls(db_id, sql, params, _decoded_schema=schema)
+        empty_header = (not params) and consumed > 0
+        return cls(
+            db_id,
+            sql,
+            params,
+            _decoded_schema=schema,
+            _decoded_empty_header=empty_header,
+        )
 
 
 @final
