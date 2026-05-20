@@ -75,7 +75,7 @@ def test_sql_decode_oversize_error_names_field(cls: type) -> None:
     body = db_id_bytes + payload + b"\x00" * pad
 
     with pytest.raises(DecodeError, match="SQL"):
-        cls.decode_body(body)
+        cls.decode_body(body)  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
@@ -92,4 +92,4 @@ def test_sql_decode_unterminated_error_names_field(cls: type) -> None:
     body = db_id_bytes + sql_bytes + b"Y" * pad  # no NUL anywhere
 
     with pytest.raises(DecodeError, match="SQL"):
-        cls.decode_body(body)
+        cls.decode_body(body)  # type: ignore[attr-defined]
