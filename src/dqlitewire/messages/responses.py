@@ -369,6 +369,24 @@ class LeaderResponse(Message):
             raise DecodeError(
                 f"LeaderResponse has {len(data) - offset} trailing bytes after address"
             )
+        # Cross-field consistency. Upstream ``raft_leader`` in
+        # ``dqlite-upstream/src/gateway.c::handle_leader`` (lines
+        # 269-298) is atomic — emits ``(id=0, address="")`` for "no
+        # leader known" or ``(id>0, address!="")`` for a known leader,
+        # never the mixed shapes. A peer emitting ``(0, nonempty)``
+        # or ``(nonzero, "")`` is malformed; reject at the wire
+        # boundary so every consumer benefits, not just the client-
+        # side ``leader_info`` / ``_query_leader`` guards. Truncate
+        # the address in the error message to bound diagnostic noise
+        # (the full address has already been validated as ≤
+        # ``_MAX_ADDRESS_SIZE`` so this is overflow guarding only).
+        if (node_id == 0) != (not address):
+            display_addr = address if len(address) <= 64 else address[:64] + "…"
+            raise DecodeError(
+                "LeaderResponse: malformed (node_id, address) — "
+                f"got id={node_id!r} addr={display_addr!r}; "
+                "expected both or neither (raft_leader atomicity)"
+            )
         # Address is stored raw — it flows into TCP routing and
         # allowlist comparisons downstream. Sanitisation happens at
         # log / exception format time, not at decode.
