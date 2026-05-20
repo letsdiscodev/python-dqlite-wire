@@ -75,7 +75,7 @@ from dqlitewire.messages.responses import (
 # live on as the private ``_HeartbeatRequest`` and ``_ConnectRequest``
 # in ``messages.requests`` for test-mock / golden-byte harnesses that
 # synthesize the frames.
-REQUEST_TYPES: dict[int, type[Message]] = {
+REQUEST_TYPES: Final[dict[int, type[Message]]] = {
     RequestType.LEADER: LeaderRequest,
     RequestType.CLIENT: ClientRequest,
     RequestType.OPEN: OpenRequest,
@@ -96,7 +96,7 @@ REQUEST_TYPES: dict[int, type[Message]] = {
     RequestType.WEIGHT: WeightRequest,
 }
 
-RESPONSE_TYPES: dict[int, type[Message]] = {
+RESPONSE_TYPES: Final[dict[int, type[Message]]] = {
     ResponseType.FAILURE: FailureResponse,
     ResponseType.LEADER: LeaderResponse,
     ResponseType.WELCOME: WelcomeResponse,

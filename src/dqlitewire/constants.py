@@ -265,7 +265,17 @@ DQLITE_PROTO: Final[int] = 1001  # protocol.h:9 — Raft FSM-internal protocol e
 # but included here for namespace completeness so a
 # future change that surfaces it through the gateway
 # passes through ``primary_sqlite_code`` cleanly.
-DQLITE_NOTFOUND: Final[int] = 1002  # registry lookup miss (server-side scratch)
+DQLITE_NOTFOUND: Final[int] = 1002  # registry lookup miss
+# Unlike ``DQLITE_PROTO`` above, this code IS emitted over the wire by
+# the gateway: ``dqlite-upstream/src/gateway.c::handle_dump`` calls
+# ``failure(req, DQLITE_NOTFOUND, "database does not exists")`` when
+# the requested database is absent from the registry. A Python
+# ``cluster.dump(database="nonexistent")`` therefore surfaces as
+# ``FailureResponse(code=1002, message="database does not exists")``.
+# The dqlite-namespace classifier (``is_dqlite_namespace_code``) handles
+# the code via the range check; recording the upstream emission site
+# here so a future audit does not conclude the code is unreachable from
+# the wire by analogy to ``DQLITE_PROTO``'s narrower scope.
 DQLITE_PARSE: Final[int] = 1005  # gateway.c::INIT_V0 — unrecognized request type
 # or unrecognized schema for the eleven canonical-INIT_V0 handlers.
 # The five params-schema-aware handlers (handle_prepare /
