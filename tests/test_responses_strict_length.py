@@ -195,20 +195,23 @@ class TestServersResponseStrictLength:
     def test_multi_node_exact_round_trip(self) -> None:
         """Offset accumulation through multiple iterations — exercises
         the per-node loop boundary condition that the single-node test
-        cannot reach."""
+        cannot reach. node_id starts at 1 because raft reserves id=0
+        for "no node" and ``ServersResponse`` enforces the
+        ``(node_id, address)`` atomicity invariant — a 0-id entry
+        with a non-empty address is rejected at the wire boundary."""
         from dqlitewire.messages.responses import ServersResponse
         from dqlitewire.types import encode_text, encode_uint64
 
         body = encode_uint64(3)
-        for i in range(3):
+        for i in range(1, 4):
             body += encode_uint64(i)
             body += encode_text(f"node{i}.example:900{i}")
             body += encode_uint64(0)
         msg = ServersResponse.decode_body(body)
         assert [n.address for n in msg.nodes] == [
-            "node0.example:9000",
             "node1.example:9001",
             "node2.example:9002",
+            "node3.example:9003",
         ]
 
     def test_trailing_bytes_rejected(self) -> None:

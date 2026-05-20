@@ -1345,6 +1345,25 @@ class ServersResponse(Message):
             # allowlist comparisons stays authentic. See
             # ``LeaderResponse.decode_body`` for rationale.
             offset += consumed
+            # Atomicity check on the (node_id, address) pair, mirroring
+            # ``LeaderResponse.decode_body``. Raft node ids are >= 1 by
+            # invariant (0 is reserved for "no node"), and ``Add``
+            # requests reject empty addresses, so the only legitimate
+            # shapes are ``(0, "")`` (only meaningful in the
+            # ``LeaderResponse`` "no leader" context — never inside a
+            # ServersResponse entry where ``count > 0``) and
+            # ``(>=1, non-empty)``. A peer (mock / proxy / hostile fork)
+            # emitting a mixed shape would silently propagate to
+            # ``dqliteclient.cluster.NodeInfo`` and the SQLAlchemy slot
+            # cache; rejecting at the wire boundary keeps the
+            # downstream layers' invariants honest.
+            if (node_id == 0) != (not address):
+                display_addr = address if len(address) <= 64 else address[:64] + "…"
+                raise DecodeError(
+                    "ServersResponse: malformed (node_id, address) entry — "
+                    f"got id={node_id!r} addr={display_addr!r}; "
+                    "expected both or neither (raft configuration atomicity)"
+                )
             raw_role = decode_uint64(view[offset:])
             offset += 8
             try:
