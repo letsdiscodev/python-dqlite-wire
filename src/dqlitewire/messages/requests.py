@@ -247,6 +247,8 @@ class PrepareRequest(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
+        if not isinstance(self.sql, str):
+            raise EncodeError(f"PrepareRequest.sql must be str, got {type(self.sql).__name__}")
         if self.schema not in (0, 1):
             raise EncodeError(f"schema must be 0 or 1, got {self.schema}")
 
@@ -260,7 +262,9 @@ class PrepareRequest(Message):
         # own decoder. Mirrors the cap-symmetry pattern already
         # applied to OpenRequest / DumpRequest / AddRequest /
         # _ConnectRequest text fields.
-        return encode_uint64(self.db_id) + encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE)
+        return encode_uint64(self.db_id) + encode_text(
+            self.sql, max_size=_MAX_TEXT_VALUE_SIZE, label="SQL"
+        )
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
@@ -268,7 +272,7 @@ class PrepareRequest(Message):
             raise DecodeError(f"PrepareRequest unsupported schema version {schema}")
         view = memoryview(data)
         db_id = decode_uint64(view)
-        sql, consumed = decode_text(view[8:])
+        sql, consumed = decode_text(view[8:], max_size=_MAX_TEXT_VALUE_SIZE, label="SQL")
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"PrepareRequest has {len(data) - offset} trailing bytes")
@@ -429,6 +433,8 @@ class ExecSqlRequest(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
+        if not isinstance(self.sql, str):
+            raise EncodeError(f"ExecSqlRequest.sql must be str, got {type(self.sql).__name__}")
         _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
@@ -440,7 +446,7 @@ class ExecSqlRequest(Message):
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
         # Symmetric cap with decode (see PrepareRequest.encode_body).
-        result += encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE)
+        result += encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE, label="SQL")
         result += encode_params_tuple(
             self.params,
             schema=schema,
@@ -455,7 +461,7 @@ class ExecSqlRequest(Message):
             raise DecodeError(f"ExecSqlRequest unsupported schema version {schema}")
         view = memoryview(data)
         db_id = decode_uint64(view)
-        sql, offset = decode_text(view[8:])
+        sql, offset = decode_text(view[8:], max_size=_MAX_TEXT_VALUE_SIZE, label="SQL")
         offset += 8
         params, consumed = decode_params_tuple(view[offset:], schema=schema, buffer_offset=offset)
         offset += consumed
@@ -482,6 +488,8 @@ class QuerySqlRequest(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
+        if not isinstance(self.sql, str):
+            raise EncodeError(f"QuerySqlRequest.sql must be str, got {type(self.sql).__name__}")
         _validate_decoded_schema(self._decoded_schema, len(self.params))
 
     def _get_schema(self) -> int:
@@ -493,7 +501,7 @@ class QuerySqlRequest(Message):
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
         # Symmetric cap with decode (see PrepareRequest.encode_body).
-        result += encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE)
+        result += encode_text(self.sql, max_size=_MAX_TEXT_VALUE_SIZE, label="SQL")
         result += encode_params_tuple(
             self.params,
             schema=schema,
@@ -508,7 +516,7 @@ class QuerySqlRequest(Message):
             raise DecodeError(f"QuerySqlRequest unsupported schema version {schema}")
         view = memoryview(data)
         db_id = decode_uint64(view)
-        sql, offset = decode_text(view[8:])
+        sql, offset = decode_text(view[8:], max_size=_MAX_TEXT_VALUE_SIZE, label="SQL")
         offset += 8
         params, consumed = decode_params_tuple(view[offset:], schema=schema, buffer_offset=offset)
         offset += consumed
