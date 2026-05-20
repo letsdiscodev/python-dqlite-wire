@@ -80,3 +80,40 @@ def test_servers_response_long_malformed_address_truncated_in_error_message() ->
     msg = str(excinfo.value)
     assert huge not in msg, "full address must not leak into diagnostic"
     assert "…" in msg
+
+
+def test_servers_response_malformed_address_exactly_64_chars_not_truncated() -> None:
+    """Boundary: ``len(address) == 64`` renders verbatim, no ellipsis.
+    Symmetric with ``LeaderResponse`` sibling — a regression changing
+    the predicate to ``< 64`` would silently truncate at the boundary."""
+    addr = "B" * 64
+    body = (
+        encode_uint64(1)
+        + encode_uint64(0)
+        + encode_text(addr, max_size=256, label="address")
+        + encode_uint64(0)
+    )
+    with pytest.raises(DecodeError) as excinfo:
+        ServersResponse.decode_body(body)
+    msg = str(excinfo.value)
+    assert addr in msg
+    assert "…" not in msg
+
+
+def test_servers_response_malformed_address_65_chars_truncated() -> None:
+    """Off-by-one boundary: ``len(address) == 65`` trips truncation.
+    Symmetric with ``LeaderResponse`` sibling — a regression changing
+    ``<= 64`` to ``<= 65`` would defeat the log-flood cap at the
+    single-byte overflow point."""
+    addr = "C" * 65
+    body = (
+        encode_uint64(1)
+        + encode_uint64(0)
+        + encode_text(addr, max_size=256, label="address")
+        + encode_uint64(0)
+    )
+    with pytest.raises(DecodeError) as excinfo:
+        ServersResponse.decode_body(body)
+    msg = str(excinfo.value)
+    assert "…" in msg
+    assert addr not in msg

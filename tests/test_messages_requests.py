@@ -1166,9 +1166,14 @@ class TestDecodeBodySchemaGuard:
         with pytest.raises(DecodeError, match="QuerySqlRequest unsupported schema"):
             QuerySqlRequest.decode_body(body, schema=2)
 
-    def test_open_request_ignores_schema_byte(self) -> None:
-        """OpenRequest has no schema-carrying body; schema>1 passes through
-        to match upstream server behaviour (gateway ignores schema on OPEN)."""
+    def test_open_request_rejects_schema_2(self) -> None:
+        """OpenRequest's upstream handler uses the ``START_V0`` (i.e.
+        ``INIT_V0``) macro in ``gateway.c::handle_open`` which rejects
+        any ``req->schema != 0`` with ``DQLITE_PARSE`` before calling
+        ``request_open__decode``. The Python decoder must mirror that
+        narrowing so direct callers (tests, mock-server harnesses,
+        captured-traffic replay) cannot silently bypass the
+        wire-format gate the dispatcher otherwise enforces."""
         body = encode_text("main") + b"\x01\x00\x00\x00\x00\x00\x00\x00" + encode_text("")
-        # Should not raise despite schema=2; parity with upstream C.
-        OpenRequest.decode_body(body, schema=2)
+        with pytest.raises(DecodeError, match="OpenRequest unsupported schema"):
+            OpenRequest.decode_body(body, schema=2)

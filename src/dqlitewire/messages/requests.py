@@ -129,6 +129,8 @@ class LeaderRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderRequest":
+        if schema != 0:
+            raise DecodeError(f"LeaderRequest unsupported schema version {schema}")
         # Strict decode symmetric with ``encode_body``: the body is
         # exactly one uint64 reserved word, defined as 0 by upstream.
         # Reject truncated/extended bodies and non-zero reserved values
@@ -161,6 +163,8 @@ class ClientRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClientRequest":
+        if schema != 0:
+            raise DecodeError(f"ClientRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"ClientRequest body must be 8 bytes, got {len(data)}")
         client_id = decode_uint64(data)
@@ -207,6 +211,8 @@ class _HeartbeatRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "_HeartbeatRequest":
+        if schema != 0:
+            raise DecodeError(f"_HeartbeatRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"_HeartbeatRequest body must be 8 bytes, got {len(data)}")
         timestamp = decode_uint64(data)
@@ -244,6 +250,8 @@ class OpenRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "OpenRequest":
+        if schema != 0:
+            raise DecodeError(f"OpenRequest unsupported schema version {schema}")
         # memoryview wrap so per-slice cost stays O(1) on large bodies
         # with many embedded text fields, matching the response-side
         # decoders (RowsResponse, FilesResponse, ServersResponse) that
@@ -481,6 +489,8 @@ class FinalizeRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "FinalizeRequest":
+        if schema != 0:
+            raise DecodeError(f"FinalizeRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"FinalizeRequest body must be 8 bytes, got {len(data)}")
         db_id = decode_uint32(data)
@@ -662,6 +672,8 @@ class InterruptRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "InterruptRequest":
+        if schema != 0:
+            raise DecodeError(f"InterruptRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"InterruptRequest body must be 8 bytes, got {len(data)}")
         db_id = decode_uint64(data)
@@ -693,6 +705,10 @@ class _ConnectRequest(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("node_id", self.node_id)
+        if not isinstance(self.address, str):
+            raise EncodeError(
+                f"_ConnectRequest.address must be str, got {type(self.address).__name__}"
+            )
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
@@ -701,6 +717,8 @@ class _ConnectRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "_ConnectRequest":
+        if schema != 0:
+            raise DecodeError(f"_ConnectRequest unsupported schema version {schema}")
         node_id = decode_uint64(data)
         address, consumed = decode_text(
             data[8:], max_size=_MAX_ADDRESS_SIZE, label="connect address"
@@ -726,6 +744,8 @@ class AddRequest(Message):
 
     def __post_init__(self) -> None:
         _validate_uint64("node_id", self.node_id)
+        if not isinstance(self.address, str):
+            raise EncodeError(f"AddRequest.address must be str, got {type(self.address).__name__}")
 
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
@@ -734,6 +754,8 @@ class AddRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "AddRequest":
+        if schema != 0:
+            raise DecodeError(f"AddRequest unsupported schema version {schema}")
         node_id = decode_uint64(data)
         address, consumed = decode_text(data[8:], max_size=_MAX_ADDRESS_SIZE, label="add address")
         offset = 8 + consumed
@@ -763,6 +785,19 @@ class AssignRequest(Message):
     that genuinely need to re-emit the legacy 1-word shape (for
     relaying to an old server or for round-trip-identity tests) must
     call :meth:`encode_body_legacy` explicitly.
+
+    **Strict-decode role narrowing diverges from C.** The Python
+    decoder rejects role values outside :class:`NodeRole` with
+    :class:`DecodeError`. Upstream C silently folds unknown roles to
+    ``DQLITE_VOTER`` via the ``default:`` arm of
+    ``translateDqliteRole`` (``dqlite-upstream/src/translate.c``,
+    commented as "For backward compat with clients that don't set a
+    role"). The narrowing is deliberate — silent coercion would mask
+    a future role code (e.g. ``OBSERVER = 3``) added by upstream
+    during a mixed-version rollout. A mock-server / proxy that needs
+    C-style permissiveness can pre-decode the raw uint64 and
+    construct ``AssignRequest`` with ``role=NodeRole.VOTER``
+    explicitly.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.ASSIGN
@@ -787,6 +822,14 @@ class AssignRequest(Message):
                     coerced = NodeRole(self.role)
                 except ValueError as e:
                     raise EncodeError(f"AssignRequest: unknown role {self.role}") from e
+                # ``object.__setattr__`` is the post-init coercion idiom.
+                # If this dataclass is ever flipped to
+                # ``@dataclass(frozen=True)`` (for hashability or
+                # thread-safety), this line raises
+                # ``FrozenInstanceError`` — fold the coercion into a
+                # custom ``__init__`` that writes attributes once at
+                # the end. Sibling ``ServersResponse.NodeInfo`` has the
+                # same shape.
                 object.__setattr__(self, "role", coerced)
 
     def encode_body(self) -> bytes:
@@ -831,6 +874,8 @@ class AssignRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "AssignRequest":
+        if schema != 0:
+            raise DecodeError(f"AssignRequest unsupported schema version {schema}")
         # Upstream emits bodies of exactly 8 (PROMOTE) or 16 (ASSIGN)
         # bytes. Reject anything else rather than silently dropping
         # trailing bytes — parity with the C cursor-cap semantics.
@@ -876,6 +921,8 @@ class RemoveRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "RemoveRequest":
+        if schema != 0:
+            raise DecodeError(f"RemoveRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"RemoveRequest body must be 8 bytes, got {len(data)}")
         node_id = decode_uint64(data)
@@ -894,11 +941,17 @@ class DumpRequest(Message):
 
     name: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise EncodeError(f"DumpRequest.name must be str, got {type(self.name).__name__}")
+
     def encode_body(self) -> bytes:
         return encode_text(self.name, max_size=_MAX_FILENAME_SIZE, label="database name")
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
+        if schema != 0:
+            raise DecodeError(f"DumpRequest unsupported schema version {schema}")
         name, consumed = decode_text(data, max_size=_MAX_FILENAME_SIZE, label="database name")
         if consumed != len(data):
             raise DecodeError(f"DumpRequest has {len(data) - consumed} trailing bytes")
@@ -964,6 +1017,8 @@ class ClusterRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
+        if schema != 0:
+            raise DecodeError(f"ClusterRequest unsupported schema version {schema}")
         # Decode-side accepts V0 so a relaying proxy / mock server /
         # captured-traffic replay tool can round-trip a V0 frame
         # without losing the original byte shape. Re-encoding a
@@ -1011,6 +1066,8 @@ class TransferRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "TransferRequest":
+        if schema != 0:
+            raise DecodeError(f"TransferRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"TransferRequest body must be 8 bytes, got {len(data)}")
         target_node_id = decode_uint64(data)
@@ -1047,6 +1104,8 @@ class DescribeRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "DescribeRequest":
+        if schema != 0:
+            raise DecodeError(f"DescribeRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"DescribeRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
@@ -1075,6 +1134,8 @@ class WeightRequest(Message):
 
     @classmethod
     def decode_body(cls, data: bytes, schema: int = 0) -> "WeightRequest":
+        if schema != 0:
+            raise DecodeError(f"WeightRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"WeightRequest body must be 8 bytes, got {len(data)}")
         weight = decode_uint64(data)

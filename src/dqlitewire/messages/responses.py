@@ -1216,6 +1216,13 @@ class NodeInfo:
                 f"NodeInfo: unknown role {self.role!r}; valid roles are "
                 f"0 (VOTER), 1 (STANDBY), 2 (SPARE)"
             ) from e
+        # ``object.__setattr__`` is the post-init coercion idiom. If
+        # this dataclass is ever flipped to
+        # ``@dataclass(frozen=True)`` (for hashability or
+        # thread-safety), this line raises ``FrozenInstanceError`` —
+        # fold the coercion into a custom ``__init__`` that writes
+        # attributes once at the end. Sibling ``AssignRequest`` has
+        # the same shape.
         object.__setattr__(self, "role", coerced)
 
 

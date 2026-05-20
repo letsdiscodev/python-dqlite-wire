@@ -19,9 +19,11 @@ import pytest
 
 from dqlitewire.exceptions import EncodeError, ProtocolError
 from dqlitewire.messages.requests import (
+    AddRequest,
     AssignRequest,
     ClusterRequest,
     DescribeRequest,
+    DumpRequest,
     ExecRequest,
     ExecSqlRequest,
     PrepareRequest,
@@ -99,6 +101,20 @@ class TestNodeInfoRoleRaisesEncodeError:
     def test_unknown_role_int(self) -> None:
         with pytest.raises(EncodeError, match="role"):
             NodeInfo(node_id=1, address="leader:9001", role=999)  # type: ignore[arg-type]
+
+
+class TestAddRequestAddressTypeRaisesEncodeError:
+    @pytest.mark.parametrize("bad", [b"node:9001", None, 9001, ("host", 9001), ["host", 9001]])
+    def test_non_str_address_rejected(self, bad: object) -> None:
+        with pytest.raises(EncodeError, match="address must be str"):
+            AddRequest(node_id=2, address=bad)  # type: ignore[arg-type]
+
+
+class TestDumpRequestNameTypeRaisesEncodeError:
+    @pytest.mark.parametrize("bad", [b"db.sqlite", None, 0, ["db"], (1, 2)])
+    def test_non_str_name_rejected(self, bad: object) -> None:
+        with pytest.raises(EncodeError, match="name must be str"):
+            DumpRequest(name=bad)  # type: ignore[arg-type]
 
 
 # NOTE: ``ServersResponse.decode_body`` validates the
