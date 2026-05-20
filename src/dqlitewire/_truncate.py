@@ -41,6 +41,24 @@ __all__ = ["_DEFAULT_MAX_RAW_MESSAGE", "_cap_raw_message"]
 _DEFAULT_MAX_RAW_MESSAGE: Final[int] = 4 * 1024
 
 _TRUNCATION_SUFFIX_TEMPLATE: Final[str] = "... [raw_message truncated, {overflow} codepoints]"
+# Cross-package truncation-suffix divergence note:
+# Five sites carry truncation logic with three vocabularies. Both
+# "codepoints" and "chars" refer to the same quantity on CPython
+# (``len(str)`` counts codepoints), so the unit-divergence is purely
+# vocabulary, not measurement. The wording-divergence is intentional
+# scope drift across packages — keeping per-call-site templates lets
+# context-specific wording (``raw_message`` / ``aggregate`` /
+# bare-``truncated``) survive consolidation without a SSOT migration.
+# The five sites are:
+#   - this module (SSOT for FailureResponse-style raw_message capping)
+#   - python-dqlite-client/src/dqliteclient/exceptions.py — "[truncated, {overflow} codepoints]"
+#   - python-dqlite-client/src/dqliteclient/cluster.py — "[truncated, {overflow} chars]" and
+#                                                       "[aggregate truncated, {overflow} chars]"
+#   - python-dqlite-dbapi/src/dqlitedbapi/types.py — "[truncated, ... chars]"
+#   - sqlalchemy-dqlite/src/sqlalchemydqlite/base.py — "[truncated, {overflow} chars]"
+# A future consolidation could promote ``suffix_template`` to a kwarg
+# and route the four downstream sites through this helper; until then,
+# this comment is the single index of the divergence.
 
 
 def _cap_raw_message(raw_message: str | None, max_chars: int) -> str | None:
