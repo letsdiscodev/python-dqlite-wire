@@ -81,6 +81,39 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
         )
 
 
+def _validate_decoded_empty_header(decoded_empty_header: bool | None, param_count: int) -> None:
+    """Validate the optional ``_decoded_empty_header`` round-trip hint
+    shared by ExecRequest / QueryRequest / ExecSqlRequest /
+    QuerySqlRequest.
+
+    The field is a private hook used to reproduce empty-params wire
+    bytes identically on re-encode. ``None`` (caller-originated → Go-
+    style omission), ``False`` (decoded a Go-style frame, no header
+    bytes consumed), and ``True`` (decoded a C-style frame with an
+    explicit 8-byte zero header) are the only legitimate values, AND
+    ``True`` only makes sense with empty ``params`` — the field's
+    documented contract is "Set by ``decode_body`` only when
+    ``params`` is empty AND the inbound frame had bytes for the
+    tuple". A caller constructing a request with
+    ``_decoded_empty_header=True`` and non-empty params silently
+    produces an internally inconsistent state today (the encoder's
+    ``emit_empty_header=True`` arm is a no-op when ``params`` is
+    non-empty, so the wire bytes look fine, but the field disagrees
+    with the bytes). A future refactor that broadens the
+    ``emit_empty_header=True`` arm to "always emit the 8-byte header"
+    would then produce malformed wire bytes only when this caller
+    misuse pattern occurs. Pin the invariant at construction time so
+    the field stays in sync with the wire-byte semantics it claims to
+    represent. Mirrors ``_validate_decoded_schema``'s discipline.
+    """
+    if decoded_empty_header is True and param_count > 0:
+        raise EncodeError(
+            f"_decoded_empty_header=True requires empty params (the field is "
+            f"a C-style 8-byte empty-header round-trip hint); got params with "
+            f"{param_count} elements"
+        )
+
+
 @final
 @dataclass
 class LeaderRequest(Message):
@@ -314,6 +347,7 @@ class ExecRequest(Message):
         _validate_uint32("db_id", self.db_id)
         _validate_uint32("stmt_id", self.stmt_id)
         _validate_decoded_schema(self._decoded_schema, len(self.params))
+        _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
@@ -386,6 +420,7 @@ class QueryRequest(Message):
         _validate_uint32("db_id", self.db_id)
         _validate_uint32("stmt_id", self.stmt_id)
         _validate_decoded_schema(self._decoded_schema, len(self.params))
+        _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
@@ -484,6 +519,7 @@ class ExecSqlRequest(Message):
         if not isinstance(self.sql, str):
             raise EncodeError(f"ExecSqlRequest.sql must be str, got {type(self.sql).__name__}")
         _validate_decoded_schema(self._decoded_schema, len(self.params))
+        _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
@@ -556,6 +592,7 @@ class QuerySqlRequest(Message):
         if not isinstance(self.sql, str):
             raise EncodeError(f"QuerySqlRequest.sql must be str, got {type(self.sql).__name__}")
         _validate_decoded_schema(self._decoded_schema, len(self.params))
+        _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
