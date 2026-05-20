@@ -813,6 +813,14 @@ class ClusterRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.CLUSTER
 
     format: int = 1
+    # Decoded-V0 sentinel. Declared as a dataclass field (not a
+    # runtime-installed attribute) so it does not leak into
+    # ``vars(req)`` and survives ``dataclasses.replace`` cleanly.
+    # ``init=False`` keeps it out of the public constructor;
+    # ``repr=False`` / ``compare=False`` keep it out of equality and
+    # display. Mirrors the ``_decoded_schema`` field on the SQL
+    # request siblings.
+    _decoded: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("format", self.format)
@@ -821,7 +829,7 @@ class ClusterRequest(Message):
         # ``ServersResponse`` decoder reads the role fields). Upstream
         # defines only V0=0 and V1=1 (include/dqlite.h); the gateway
         # rejects anything else with DQLITE_PARSE.
-        if self.format == 0 and not getattr(self, "_decoded", False):
+        if self.format == 0 and not self._decoded:
             raise EncodeError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
@@ -860,12 +868,16 @@ class ClusterRequest(Message):
                 f"ClusterRequest format must be 0 (V0) or 1 (V1); upstream "
                 f"defines only those two values. Got {format_val}."
             )
-        # Bypass the V0 construction-time gate via a sentinel attr;
-        # the decoder is the one consumer that legitimately needs to
-        # round-trip a decoded V0 without raising.
+        # Bypass the V0 construction-time gate via the declared
+        # ``_decoded`` field; the decoder is the one consumer that
+        # legitimately needs to round-trip a decoded V0 without
+        # raising. As a declared field, ``_decoded`` participates in
+        # the dataclass machinery cleanly — it does not leak into
+        # ``vars(req)`` and is preserved across
+        # ``dataclasses.replace`` round-trips.
         instance = cls.__new__(cls)
-        instance._decoded = True  # type: ignore[attr-defined]
         instance.format = format_val
+        instance._decoded = True
         instance.__post_init__()
         return instance
 
