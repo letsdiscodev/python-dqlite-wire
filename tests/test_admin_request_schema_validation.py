@@ -19,6 +19,8 @@ must get a ``DecodeError`` for ``N != 0``, mirroring upstream C's
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from dqlitewire.exceptions import DecodeError
@@ -65,18 +67,18 @@ _ADMIN_CASES = [
 
 
 @pytest.mark.parametrize(("cls", "body"), _ADMIN_CASES, ids=[c.__name__ for c, _ in _ADMIN_CASES])
-def test_admin_decoder_rejects_nonzero_schema(cls: type, body: bytes) -> None:
+def test_admin_decoder_rejects_nonzero_schema(cls: Any, body: bytes) -> None:
     with pytest.raises(DecodeError, match="unsupported schema version"):
         cls.decode_body(body, schema=1)
 
 
 @pytest.mark.parametrize(("cls", "body"), _ADMIN_CASES, ids=[c.__name__ for c, _ in _ADMIN_CASES])
-def test_admin_decoder_rejects_garbage_schema(cls: type, body: bytes) -> None:
+def test_admin_decoder_rejects_garbage_schema(cls: Any, body: bytes) -> None:
     with pytest.raises(DecodeError, match="unsupported schema version"):
         cls.decode_body(body, schema=99)
 
 
 @pytest.mark.parametrize(("cls", "body"), _ADMIN_CASES, ids=[c.__name__ for c, _ in _ADMIN_CASES])
-def test_admin_decoder_accepts_default_schema(cls: type, body: bytes) -> None:
+def test_admin_decoder_accepts_default_schema(cls: Any, body: bytes) -> None:
     cls.decode_body(body)
     cls.decode_body(body, schema=0)

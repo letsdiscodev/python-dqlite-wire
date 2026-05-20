@@ -112,7 +112,7 @@ def test_v1_leader_response_does_not_route_through_legacy_decode() -> None:
     of the NUL-terminated address string. Third leg of the dispatch
     test triangle (the other two cover the positive LEGACY arm and
     the direction-negative ClientRequest arm)."""
-    from dqlitewire.codec import PROTOCOL_VERSION
+    from dqlitewire.constants import PROTOCOL_VERSION
 
     node_id = 0x4242
     address = "leader.example.com:9001"
