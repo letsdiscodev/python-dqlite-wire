@@ -268,11 +268,14 @@ class MessageDecoder:
                     is exclusive: a frame whose row count reaches
                     ``max_rows`` raises ``DecodeError``. To permit up to N
                     rows in one frame, set ``max_rows = N + 1``.
-            max_continuation_frames: Maximum number of continuation
-                    frames permitted in a single ROWS stream. A
-                    slow-dripping server emitting many 1-row frames
-                    can pin the client on Python decode work; the cap
-                    bounds total CPU. Defaults to
+            max_continuation_frames: Maximum number of ROWS frames
+                    permitted in a single streamed result set,
+                    **including the initial frame**. A slow-dripping
+                    server emitting many 1-row frames can pin the
+                    client on Python decode work; the cap bounds total
+                    CPU. A value of N permits at most N-1 continuation
+                    frames after the initial one — e.g. ``N=1``
+                    rejects the very first continuation. Defaults to
                     :data:`DEFAULT_MAX_CONTINUATION_FRAMES`. ``None``
                     disables the cap (operator opt-out for trusted
                     deployments).
