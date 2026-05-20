@@ -102,6 +102,41 @@ def test_legacy_dispatch_does_not_fire_on_request_side_client_msg_type() -> None
     assert result.client_id == 0x1234567812345678
 
 
+def test_v1_leader_response_does_not_route_through_legacy_decode() -> None:
+    """Negative version-guard pin: a V1 LEADER response (carrying the
+    ``node_id`` uint64 prefix) must route through V1 ``decode_body``,
+    NOT ``decode_body_legacy``. The version predicate
+    ``self._version == PROTOCOL_VERSION_LEGACY`` in the legacy
+    dispatch arm is load-bearing for V1 traffic; a regression that
+    drops it would mis-parse the first 8 bytes (node_id) as the start
+    of the NUL-terminated address string. Third leg of the dispatch
+    test triangle (the other two cover the positive LEGACY arm and
+    the direction-negative ClientRequest arm)."""
+    from dqlitewire.codec import PROTOCOL_VERSION
+
+    node_id = 0x4242
+    address = "leader.example.com:9001"
+    payload = address.encode("utf-8") + b"\x00"
+    pad = (-len(payload)) % 8
+    body = node_id.to_bytes(8, "little") + payload + b"\x00" * pad
+    header = Header(
+        size_words=len(body) // 8,
+        msg_type=ResponseType.LEADER,
+        schema=0,
+    )
+    wire = header.encode() + body
+
+    result = decode_message(wire, is_request=False, version=PROTOCOL_VERSION)
+
+    assert isinstance(result, LeaderResponse)
+    assert result.node_id == node_id, (
+        f"V1 decoder must read node_id from the 8-byte prefix; got "
+        f"{result.node_id}. node_id=0 would indicate legacy dispatch "
+        f"ran on V1 bytes."
+    )
+    assert result.address == address
+
+
 def test_client_request_and_leader_response_share_msg_type_code() -> None:
     """Documentation pin: the entire point of the direction guard is
     the numeric collision. If a future refactor renumbers either type
