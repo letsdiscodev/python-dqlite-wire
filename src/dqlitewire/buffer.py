@@ -84,9 +84,20 @@ class WriteBuffer:
             # See ``test_write_padded_no_interleaved_tearing_under_contention``
             # for the race shape this guards against.
             #
-            # Materialise via ``bytes(data)`` so the bytes-like input
-            # supports ``+`` with the padding ``bytes`` literal.
-            self._data.extend(bytes(data) + b"\x00" * (WORD_SIZE - remainder))
+            # Pre-build the payload + padding in a local ``bytearray``
+            # so the single ``extend`` consumes one already-contiguous
+            # buffer. The ``+=`` operator extends in place so the
+            # padding bytes are written into the local without a second
+            # allocation. Compared with the previous ``bytes(data) +
+            # b"\x00" * pad`` shape (which allocates a new ``bytes`` of
+            # length ``len(data) + pad`` for the concatenation, on top
+            # of the buffer-protocol consume by ``extend``), peak
+            # allocation drops from ``2 * len(data)`` to roughly
+            # ``len(data)`` — material on the hot encode paths
+            # (``FilesResponse`` dump emission, large BLOB row cells).
+            chunk = bytearray(data)
+            chunk += b"\x00" * (WORD_SIZE - remainder)
+            self._data.extend(chunk)
         else:
             self._data.extend(data)
 
