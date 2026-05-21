@@ -72,26 +72,39 @@ def test_servers_response_malformed_decode_error_sanitises_u2028() -> None:
 
 
 def test_leader_response_malformed_decode_error_truncation_still_applied() -> None:
-    """Belt-and-suspenders: a 200-char malformed address (no
-    sanitisable codepoints) still gets the 64-char display
-    truncation suffix. Sanitising before truncation must not bypass
-    the cap."""
-    forged = "A" * 200
+    """Belt-and-suspenders: a malformed address just over the 64-char
+    cap (no sanitisable codepoints) still gets the display truncation
+    suffix. Sanitising before truncation must not bypass the cap.
+
+    The input length is pinned at ``cap + 1`` (65 chars) rather than an
+    arbitrary 200: the assertion below verifies the rendered address is
+    shorter than the input, which is the truncation invariant. A future
+    cap raise would surface as a deliberate update to this single
+    length literal, not as a misread "sanitisation regression" against
+    an over-long forged input.
+    """
+    forged = "A" * 65
     body = encode_uint64(0) + encode_text(forged)
     with pytest.raises(DecodeError) as exc_info:
         LeaderResponse.decode_body(body)
     msg = str(exc_info.value)
     assert "…" in msg, (
-        "the 64-char cap's U+2026 ellipsis suffix must still apply after sanitisation"
+        "the cap's U+2026 ellipsis suffix must still apply after sanitisation "
+        "when the address exceeds the truncation cap"
     )
-    assert "A" * 200 not in msg
+    assert forged not in msg, (
+        "the rendered address must be shorter than the original forged "
+        "input — truncation must fire after sanitisation"
+    )
 
 
 def test_servers_response_malformed_decode_error_truncation_still_applied() -> None:
-    forged = "B" * 200
+    """Sibling pin for ``ServersResponse``. See sibling docstring above
+    for the ``cap + 1`` rationale."""
+    forged = "B" * 65
     body = encode_uint64(1) + encode_uint64(0) + encode_text(forged) + encode_uint64(0)
     with pytest.raises(DecodeError) as exc_info:
         ServersResponse.decode_body(body)
     msg = str(exc_info.value)
     assert "…" in msg
-    assert "B" * 200 not in msg
+    assert forged not in msg
