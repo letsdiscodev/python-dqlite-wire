@@ -4,7 +4,7 @@ import logging
 import re
 import struct
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Final, final
+from typing import Any, ClassVar, Final, final, override
 
 __all__ = [
     "DbResponse",
@@ -265,12 +265,14 @@ class FailureResponse(Message):
         # ``cursor.execute("-- comment\n")`` against a real cluster.
         _validate_uint64("code", self.code)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.code) + encode_text(
             self.message, max_size=_MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
         )
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         # Require at least 9 bytes: 8 for code + 1 minimum for the
         # null-terminator of an empty message. Without that, an
@@ -319,6 +321,7 @@ class LeaderResponse(Message):
     def __post_init__(self) -> None:
         _validate_uint64("node_id", self.node_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
             self.address, max_size=_MAX_ADDRESS_SIZE, label="leader address"
@@ -347,6 +350,7 @@ class LeaderResponse(Message):
         return encode_text(address, max_size=_MAX_ADDRESS_SIZE, label="leader address")
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
         """Decode leader response body (modern v1+ format).
 
@@ -464,10 +468,12 @@ class WelcomeResponse(Message):
         """Heartbeat interval converted to seconds (milliseconds / 1000)."""
         return self.heartbeat_timeout / 1000.0
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.heartbeat_timeout)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "WelcomeResponse":
         if len(data) != 8:
             raise DecodeError(f"WelcomeResponse body must be exactly 8 bytes, got {len(data)}")
@@ -490,10 +496,12 @@ class DbResponse(Message):
     def __post_init__(self) -> None:
         _validate_uint32("db_id", self.db_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint32(self.db_id) + encode_uint32(0)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "DbResponse":
         if len(data) != 8:
             raise DecodeError(f"DbResponse body must be exactly 8 bytes, got {len(data)}")
@@ -614,11 +622,13 @@ class StmtResponse(Message):
         if self.schema == 1 and self.tail_offset is None:
             self.tail_offset = 0
 
+    @override
     def _get_schema(self) -> int:
         if self.schema is not None:
             return self.schema
         return 1 if self.tail_offset is not None else 0
 
+    @override
     def encode_body(self) -> bytes:
         if self.num_params > _MAX_PARAM_COUNT:
             raise EncodeError(
@@ -640,6 +650,7 @@ class StmtResponse(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
         expected = 24 if schema >= 1 else 16
         if len(data) != expected:
@@ -752,10 +763,12 @@ class ResultResponse(Message):
         signed: int = struct.unpack("<q", struct.pack("<Q", self.last_insert_id))[0]
         return signed
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.last_insert_id) + encode_uint64(self.rows_affected)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "ResultResponse":
         if len(data) != 16:
             raise DecodeError(f"ResultResponse body must be exactly 16 bytes, got {len(data)}")
@@ -879,6 +892,7 @@ class RowsResponse(Message):
                 types[i] = ValueType.NULL
         return types
 
+    @override
     def encode_body(self) -> bytes:
         col_count = len(self.column_names)
         if col_count > _MAX_COLUMN_COUNT:
@@ -943,6 +957,7 @@ class RowsResponse(Message):
     DEFAULT_MAX_ROWS = 1_000_000
 
     @classmethod
+    @override
     def decode_body(
         cls, data: bytes, schema: int = 0, max_rows: int = DEFAULT_MAX_ROWS
     ) -> "RowsResponse":
@@ -1097,10 +1112,12 @@ class EmptyResponse(Message):
 
     MSG_TYPE: ClassVar[int] = ResponseType.EMPTY
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(0)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "EmptyResponse":
         if len(data) != 8:
             raise DecodeError(f"EmptyResponse body must be exactly 8 bytes, got {len(data)}")
@@ -1131,6 +1148,7 @@ class FilesResponse(Message):
 
     files: dict[str, bytes] = field(default_factory=dict)
 
+    @override
     def encode_body(self) -> bytes:
         if len(self.files) > _MAX_FILE_COUNT:
             raise EncodeError(
@@ -1168,6 +1186,7 @@ class FilesResponse(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
         # Memoryview for O(1) slicing in the per-file loop.
         view = memoryview(data)
@@ -1306,6 +1325,7 @@ class ServersResponse(Message):
 
     nodes: list[NodeInfo] = field(default_factory=list)
 
+    @override
     def encode_body(self) -> bytes:
         if len(self.nodes) > _MAX_NODE_COUNT:
             raise EncodeError(
@@ -1319,6 +1339,7 @@ class ServersResponse(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(
         cls,
         data: bytes,
@@ -1497,10 +1518,12 @@ class MetadataResponse(Message):
         _validate_uint64("failure_domain", self.failure_domain)
         _validate_uint64("weight", self.weight)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.failure_domain) + encode_uint64(self.weight)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "MetadataResponse":
         if len(data) != 16:
             raise DecodeError(f"MetadataResponse body must be exactly 16 bytes, got {len(data)}")

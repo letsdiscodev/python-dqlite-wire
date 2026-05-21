@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import ClassVar, final
+from typing import ClassVar, final, override
 
 from dqlitewire.constants import NodeRole, RequestType
 from dqlitewire.exceptions import DecodeError, EncodeError
@@ -137,10 +137,12 @@ class LeaderRequest(Message):
 
     MSG_TYPE: ClassVar[int] = RequestType.LEADER
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(0)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderRequest":
         if schema != 0:
             raise DecodeError(f"LeaderRequest unsupported schema version {schema}")
@@ -171,10 +173,12 @@ class ClientRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("client_id", self.client_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.client_id)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClientRequest":
         if schema != 0:
             raise DecodeError(f"ClientRequest unsupported schema version {schema}")
@@ -219,10 +223,12 @@ class _HeartbeatRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("timestamp", self.timestamp)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.timestamp)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "_HeartbeatRequest":
         if schema != 0:
             raise DecodeError(f"_HeartbeatRequest unsupported schema version {schema}")
@@ -259,6 +265,7 @@ class OpenRequest(Message):
             raise EncodeError(f"OpenRequest.vfs must be str, got {type(self.vfs).__name__}")
         _validate_uint64("flags", self.flags)
 
+    @override
     def encode_body(self) -> bytes:
         result = encode_text(self.name, max_size=_MAX_FILENAME_SIZE, label="database name")
         result += encode_uint64(self.flags)
@@ -266,6 +273,7 @@ class OpenRequest(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "OpenRequest":
         if schema != 0:
             raise DecodeError(f"OpenRequest unsupported schema version {schema}")
@@ -310,9 +318,11 @@ class PrepareRequest(Message):
         if self.schema not in (0, 1):
             raise EncodeError(f"schema must be 0 or 1, got {self.schema}")
 
+    @override
     def _get_schema(self) -> int:
         return self.schema
 
+    @override
     def encode_body(self) -> bytes:
         # Pass the same ``max_size`` the decoder uses by default so
         # encode/decode round-trip is symmetric — without this, an
@@ -325,6 +335,7 @@ class PrepareRequest(Message):
         )
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "PrepareRequest":
         if schema not in (0, 1):
             raise DecodeError(f"PrepareRequest unsupported schema version {schema}")
@@ -374,11 +385,13 @@ class ExecRequest(Message):
         _validate_decoded_schema(self._decoded_schema, len(self.params))
         _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
+    @override
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
             return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
+    @override
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
@@ -391,6 +404,7 @@ class ExecRequest(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecRequest":
         if schema not in (0, 1):
             raise DecodeError(f"ExecRequest unsupported schema version {schema}")
@@ -447,11 +461,13 @@ class QueryRequest(Message):
         _validate_decoded_schema(self._decoded_schema, len(self.params))
         _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
+    @override
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
             return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
+    @override
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
@@ -464,6 +480,7 @@ class QueryRequest(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "QueryRequest":
         if schema not in (0, 1):
             raise DecodeError(f"QueryRequest unsupported schema version {schema}")
@@ -501,10 +518,12 @@ class FinalizeRequest(Message):
         _validate_uint32("db_id", self.db_id)
         _validate_uint32("stmt_id", self.stmt_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint32(self.db_id) + encode_uint32(self.stmt_id)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "FinalizeRequest":
         if schema != 0:
             raise DecodeError(f"FinalizeRequest unsupported schema version {schema}")
@@ -548,11 +567,13 @@ class ExecSqlRequest(Message):
         _validate_decoded_schema(self._decoded_schema, len(self.params))
         _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
+    @override
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
             return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
+    @override
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
@@ -567,6 +588,7 @@ class ExecSqlRequest(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "ExecSqlRequest":
         if schema not in (0, 1):
             raise DecodeError(f"ExecSqlRequest unsupported schema version {schema}")
@@ -621,11 +643,13 @@ class QuerySqlRequest(Message):
         _validate_decoded_schema(self._decoded_schema, len(self.params))
         _validate_decoded_empty_header(self._decoded_empty_header, len(self.params))
 
+    @override
     def _get_schema(self) -> int:
         if self._decoded_schema is not None:
             return self._decoded_schema
         return 1 if len(self.params) > 255 else 0
 
+    @override
     def encode_body(self) -> bytes:
         schema = self._get_schema()
         result = encode_uint64(self.db_id)
@@ -640,6 +664,7 @@ class QuerySqlRequest(Message):
         return result
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "QuerySqlRequest":
         if schema not in (0, 1):
             raise DecodeError(f"QuerySqlRequest unsupported schema version {schema}")
@@ -684,10 +709,12 @@ class InterruptRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("db_id", self.db_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.db_id)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "InterruptRequest":
         if schema != 0:
             raise DecodeError(f"InterruptRequest unsupported schema version {schema}")
@@ -727,12 +754,14 @@ class _ConnectRequest(Message):
                 f"_ConnectRequest.address must be str, got {type(self.address).__name__}"
             )
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
             self.address, max_size=_MAX_ADDRESS_SIZE, label="connect address"
         )
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "_ConnectRequest":
         if schema != 0:
             raise DecodeError(f"_ConnectRequest unsupported schema version {schema}")
@@ -764,12 +793,14 @@ class AddRequest(Message):
         if not isinstance(self.address, str):
             raise EncodeError(f"AddRequest.address must be str, got {type(self.address).__name__}")
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
             self.address, max_size=_MAX_ADDRESS_SIZE, label="add address"
         )
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "AddRequest":
         if schema != 0:
             raise DecodeError(f"AddRequest unsupported schema version {schema}")
@@ -849,6 +880,7 @@ class AssignRequest(Message):
                 # same shape.
                 object.__setattr__(self, "role", coerced)
 
+    @override
     def encode_body(self) -> bytes:
         result = encode_uint64(self.node_id)
         if self.role is not None:
@@ -890,6 +922,7 @@ class AssignRequest(Message):
         return encode_uint64(self.node_id)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "AssignRequest":
         if schema != 0:
             raise DecodeError(f"AssignRequest unsupported schema version {schema}")
@@ -933,10 +966,12 @@ class RemoveRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("node_id", self.node_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "RemoveRequest":
         if schema != 0:
             raise DecodeError(f"RemoveRequest unsupported schema version {schema}")
@@ -962,10 +997,12 @@ class DumpRequest(Message):
         if not isinstance(self.name, str):
             raise EncodeError(f"DumpRequest.name must be str, got {type(self.name).__name__}")
 
+    @override
     def encode_body(self) -> bytes:
         return encode_text(self.name, max_size=_MAX_FILENAME_SIZE, label="database name")
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
         if schema != 0:
             raise DecodeError(f"DumpRequest unsupported schema version {schema}")
@@ -1020,6 +1057,7 @@ class ClusterRequest(Message):
                 f"defines only those two values. Got {self.format}."
             )
 
+    @override
     def encode_body(self) -> bytes:
         if self.format == 0:
             # Encode rejection mirrors the construction-time gate: this
@@ -1033,6 +1071,7 @@ class ClusterRequest(Message):
         return encode_uint64(self.format)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
         if schema != 0:
             raise DecodeError(f"ClusterRequest unsupported schema version {schema}")
@@ -1078,10 +1117,12 @@ class TransferRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("target_node_id", self.target_node_id)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.target_node_id)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "TransferRequest":
         if schema != 0:
             raise DecodeError(f"TransferRequest unsupported schema version {schema}")
@@ -1116,10 +1157,12 @@ class DescribeRequest(Message):
                 f"anything else with SQLITE_PROTOCOL. Got {self.format}."
             )
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.format)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "DescribeRequest":
         if schema != 0:
             raise DecodeError(f"DescribeRequest unsupported schema version {schema}")
@@ -1146,10 +1189,12 @@ class WeightRequest(Message):
     def __post_init__(self) -> None:
         _validate_uint64("weight", self.weight)
 
+    @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.weight)
 
     @classmethod
+    @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "WeightRequest":
         if schema != 0:
             raise DecodeError(f"WeightRequest unsupported schema version {schema}")
