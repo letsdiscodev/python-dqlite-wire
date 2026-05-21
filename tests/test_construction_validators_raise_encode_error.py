@@ -26,6 +26,7 @@ from dqlitewire.messages.requests import (
     DumpRequest,
     ExecRequest,
     ExecSqlRequest,
+    OpenRequest,
     PrepareRequest,
     QueryRequest,
     QuerySqlRequest,
@@ -115,6 +116,33 @@ class TestDumpRequestNameTypeRaisesEncodeError:
     def test_non_str_name_rejected(self, bad: object) -> None:
         with pytest.raises(EncodeError, match="name must be str"):
             DumpRequest(name=bad)  # type: ignore[arg-type]
+
+
+class TestOpenRequestNameTypeRaisesEncodeError:
+    """Sibling discipline pin: PrepareRequest.sql / _ConnectRequest.address
+    / AddRequest.address / DumpRequest.name all gate their text fields at
+    construction with an explicit ``isinstance(..., str)`` check. Without
+    the gate, ``OpenRequest(name=b"db", flags=0)`` constructs successfully
+    and only fails late at ``encode_body``'s ``encode_text`` call, after
+    the bad value has been stored in a dataclass field that may be
+    repr'd into logs or threaded through caller code.
+    """
+
+    @pytest.mark.parametrize("bad", [b"db.sqlite", None, 0, ["db"], (1, 2)])
+    def test_non_str_name_rejected(self, bad: object) -> None:
+        with pytest.raises(EncodeError, match="OpenRequest.name must be str"):
+            OpenRequest(name=bad, flags=0)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("bad", [b"vfs", None, 0, ["vfs"], (1, 2)])
+    def test_non_str_vfs_rejected(self, bad: object) -> None:
+        with pytest.raises(EncodeError, match="OpenRequest.vfs must be str"):
+            OpenRequest(name="db", flags=0, vfs=bad)  # type: ignore[arg-type]
+
+    def test_ordinary_str_name_and_vfs_accepted(self) -> None:
+        """Pin baseline: well-typed str fields construct without error."""
+        req = OpenRequest(name="users_db", flags=0, vfs="")
+        assert req.name == "users_db"
+        assert req.vfs == ""
 
 
 # NOTE: ``ServersResponse.decode_body`` validates the

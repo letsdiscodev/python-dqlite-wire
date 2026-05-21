@@ -253,6 +253,10 @@ class OpenRequest(Message):
     vfs: str = ""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            raise EncodeError(f"OpenRequest.name must be str, got {type(self.name).__name__}")
+        if not isinstance(self.vfs, str):
+            raise EncodeError(f"OpenRequest.vfs must be str, got {type(self.vfs).__name__}")
         _validate_uint64("flags", self.flags)
 
     def encode_body(self) -> bytes:
