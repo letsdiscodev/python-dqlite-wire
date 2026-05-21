@@ -45,6 +45,7 @@ from dqlitewire.tuples import (
 )
 from dqlitewire.types import (
     WireValue,
+    _infer_value_type,
     _validate_uint32,
     _validate_uint64,
     decode_text,
@@ -53,7 +54,6 @@ from dqlitewire.types import (
     encode_text,
     encode_uint32,
     encode_uint64,
-    encode_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -840,8 +840,17 @@ class RowsResponse(Message):
         elif self.column_types:
             types = list(self.column_types)
         else:
-            # Infer from values
-            return [encode_value(v)[1] for v in row]
+            # Infer from values via the type-only helper. Previously
+            # this called ``encode_value(v)[1]`` per cell, which ran
+            # the full encode pipeline (length-cap checks, BLOB
+            # materialisation, UTF-8 encoding) and threw the bytes
+            # away — paying the encode cost twice on this fallback
+            # path. ``_infer_value_type`` runs only the isinstance
+            # ladder. Oversize values still surface as ``EncodeError``,
+            # but on the subsequent ``encode_row_values`` pass rather
+            # than the inference pass; the failure point shifts by
+            # one call, the rejection still happens.
+            return [_infer_value_type(v) for v in row]
 
         # Override type to NULL for None values, matching Go's behavior
         for i, v in enumerate(row):

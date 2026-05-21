@@ -559,6 +559,51 @@ def decode_blob(
     return bytes(data[8 : 8 + length]), total_size
 
 
+def _infer_value_type(value: WireInput) -> ValueType:
+    """Infer the wire ``ValueType`` from a Python value without running
+    the encoder.
+
+    Mirrors ``encode_value``'s leading isinstance ladder, returning the
+    tag only — no length-cap check, no BLOB materialisation, no UTF-8
+    encode. The helper lets the row-header build path in
+    ``RowsResponse._get_row_types`` get a per-row type tuple at O(1)
+    per cell instead of running the full ``encode_value`` pipeline and
+    discarding the bytes (a 2x encode cost on the inference fallback
+    path, observed as ``2 * N * M`` ``encode_value`` calls for an
+    ``N`` row by ``M`` column inference frame).
+
+    The ``memoryview`` over a non-byte format is rejected here too so
+    the inference path stays consistent with the explicit-BLOB branch:
+    callers passing ``memoryview(array.array('i', ...))`` see the same
+    rejection regardless of whether the inference ladder or the BLOB
+    arm fires first. Oversize BLOB / TEXT values are NOT rejected by
+    this helper — that cap discipline still lives inside
+    ``encode_value`` and fires on the subsequent emission pass. The
+    behaviour is "fail at SOME point" not "fail at the inference pass";
+    the diagnostic now names the emission cap, not the inference.
+    """
+    if value is None:
+        return ValueType.NULL
+    if isinstance(value, bool):
+        return ValueType.BOOLEAN
+    if isinstance(value, int):
+        return ValueType.INTEGER
+    if isinstance(value, float):
+        return ValueType.FLOAT
+    if isinstance(value, str):
+        return ValueType.TEXT
+    if isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
+        if isinstance(value, memoryview):
+            _reject_non_byte_format_memoryview(value)
+        return ValueType.BLOB
+    raise EncodeError(
+        f"Cannot infer wire type for value of type {type(value).__name__!r}. "
+        f"The wire codec only accepts bool, int, float, str, bytes-like, "
+        f"or None. Callers passing datetime/date/etc. must convert to str "
+        f"(for ISO8601) or int (for UNIXTIME) at the driver layer."
+    )
+
+
 def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple[bytes, ValueType]:
     """Encode a Python value to wire format.
 
@@ -585,38 +630,15 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         return b"\x00" * 8, ValueType.NULL
 
     if value_type is None:
-        if isinstance(value, bool):
-            value_type = ValueType.BOOLEAN
-        elif isinstance(value, int):
-            value_type = ValueType.INTEGER
-        elif isinstance(value, float):
-            value_type = ValueType.FLOAT
-        elif isinstance(value, str):
-            value_type = ValueType.TEXT
-        elif isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
-            # Parity with the explicit BLOB branch and with stdlib
-            # ``sqlite3``: bytes-like types (incl. memoryview and
-            # memory-mapped regions) infer to BLOB. Callers building
-            # payloads via mutation (bytearray), zero-copy slicing
-            # (memoryview), or mmap-backed I/O no longer need to wrap
-            # values in ``bytes(...)`` before passing them here.
-            # ``array.array`` is intentionally NOT accepted: typed
-            # numeric arrays have platform-dependent bytes
-            # representation, so silent acceptance would yield
-            # non-portable BLOBs. ``memoryview`` over a non-byte
-            # format (e.g. ``memoryview(array.array('i', ...))``) is
-            # the same hazard via the buffer-protocol back door and
-            # is rejected here too.
-            if isinstance(value, memoryview):
-                _reject_non_byte_format_memoryview(value)
-            value_type = ValueType.BLOB
-        else:
-            raise EncodeError(
-                f"Cannot infer wire type for value of type {type(value).__name__!r}. "
-                f"The wire codec only accepts bool, int, float, str, bytes-like, "
-                f"or None. Callers passing datetime/date/etc. must convert to str "
-                f"(for ISO8601) or int (for UNIXTIME) at the driver layer."
-            )
+        # Parity with the explicit BLOB branch and with stdlib
+        # ``sqlite3``: bytes-like types (incl. memoryview and memory-
+        # mapped regions) infer to BLOB. ``array.array`` is intentionally
+        # NOT accepted by the inference helper: typed numeric arrays
+        # have platform-dependent bytes representation, so silent
+        # acceptance would yield non-portable BLOBs. ``memoryview`` over
+        # a non-byte format is rejected via ``_reject_non_byte_format_
+        # memoryview`` inside the helper.
+        value_type = _infer_value_type(value)
 
     if value_type == ValueType.BOOLEAN:
         # Accept bool directly; allow the exact ints 0 and 1 as a
