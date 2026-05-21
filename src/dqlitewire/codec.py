@@ -161,13 +161,33 @@ class MessageEncoder:
             f"in the target process."
         )
 
-    def __init__(self, version: int = PROTOCOL_VERSION) -> None:
+    def __init__(
+        self,
+        version: int = PROTOCOL_VERSION,
+        max_message_size: int = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE,
+    ) -> None:
         """Initialize encoder.
 
         Args:
             version: Protocol version to use in handshake. Defaults to
                      PROTOCOL_VERSION (1). Use PROTOCOL_VERSION_LEGACY
                      (0x86104dd760433fe5) for pre-1.0 dqlite servers.
+            max_message_size: Maximum allowed total frame size in bytes
+                     (header + body). Defaults to
+                     ``ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE`` (64 MiB),
+                     matching the decoder default so a caller using
+                     both defaults stays symmetric. A frame exceeding
+                     this cap raises ``EncodeError``. Per-field caps
+                     (``_MAX_BLOB_SIZE``, ``_MAX_TEXT_VALUE_SIZE``,
+                     ``_MAX_FILE_CONTENT_SIZE``, ``_MAX_FILE_COUNT``,
+                     ``_MAX_NODE_COUNT``, column count <= 255)
+                     partially bound the envelope, but a composite
+                     frame (e.g. a ``FilesResponse`` with many files
+                     near the per-file content cap) can still overflow
+                     the matching decoder's envelope; the envelope cap
+                     here closes that asymmetry. Operators with a
+                     genuinely larger cluster (``raft.log.entry_size_max``
+                     above 64 MiB) must raise the cap on BOTH sides.
 
         Note: ``version`` is used for the handshake bytes only.
         Body shape is the caller's responsibility — ``encode(message)``
@@ -184,11 +204,29 @@ class MessageEncoder:
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
             )
+        if max_message_size < 1:
+            raise ValueError(f"max_message_size must be >= 1, got {max_message_size}")
         self._version = version
+        self._max_message_size = max_message_size
 
     def encode(self, message: Message) -> bytes:
-        """Encode a message to bytes."""
-        return message.encode()
+        """Encode a message to bytes.
+
+        The resulting frame is checked against ``max_message_size``
+        and rejected with ``EncodeError`` if it exceeds the cap. The
+        diagnostic mirrors ``MessageDecoder``'s shape so a caller
+        catching ``"exceeds maximum"`` sees the same wording on both
+        sides of the symmetry.
+        """
+        frame = message.encode()
+        if len(frame) > self._max_message_size:
+            # Same diagnostic shape as ``MessageDecoder.decode_bytes``
+            # / ``ReadBuffer.read_message`` so a caller catching either
+            # side's ``"exceeds maximum"`` reads the same wording.
+            raise EncodeError(
+                f"Message size {len(frame):#x} bytes exceeds maximum {self._max_message_size}"
+            )
+        return frame
 
     def encode_handshake(self) -> bytes:
         """Encode the protocol version handshake.
@@ -963,6 +1001,19 @@ def decode_message(
     return decoder.decode_bytes(data)
 
 
-def encode_message(message: Message) -> bytes:
-    """Convenience function to encode a single message."""
-    return message.encode()
+def encode_message(message: Message, *, max_message_size: int | None = None) -> bytes:
+    """Convenience function to encode a single message.
+
+    Args:
+        message: The message to encode.
+        max_message_size: Forwarded to ``MessageEncoder``. ``None``
+                 keeps the default (``ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE``,
+                 64 MiB) — symmetric with ``decode_message``'s same
+                 kwarg. Legitimate large frames (a real cluster's
+                 ``FilesResponse`` dump, a wide ``RowsResponse``) need
+                 the cap raised on the encoder AND the decoder for the
+                 round trip to stay symmetric.
+    """
+    if max_message_size is None:
+        return MessageEncoder().encode(message)
+    return MessageEncoder(max_message_size=max_message_size).encode(message)
