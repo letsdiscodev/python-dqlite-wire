@@ -520,12 +520,14 @@ def encode_blob(value: bytes, *, max_blob_size: int = _MAX_BLOB_SIZE) -> bytes:
     Format: uint64 length + data + padding
 
     ``max_blob_size`` is the per-blob cap. Defaults to
-    ``_MAX_BLOB_SIZE`` (64 MiB) — aligned with the message-size cap
-    so a value fitting in the frame envelope is not rejected at
-    the inner cap. Callers handling larger BLOBs (per their
-    deployment's actual ``raft.log.entry_size_max``) can raise this
-    explicitly. The outer ``max_message_size`` cap on the codec
-    always wins regardless.
+    ``_MAX_BLOB_SIZE`` (``64 MiB - 64 B`` = 67_108_800 bytes — sits
+    64 bytes below ``DEFAULT_MAX_MESSAGE_SIZE`` to leave room for the
+    length prefix plus row framing so a blob at the documented cap
+    fits inside the default 64 MiB message envelope; see the
+    ``_MAX_BLOB_SIZE`` definition for the full per-row arithmetic).
+    Callers handling larger BLOBs (per their deployment's actual
+    ``raft.log.entry_size_max``) can raise this explicitly. The outer
+    ``max_message_size`` cap on the codec always wins regardless.
     """
     length = len(value)
     if length > max_blob_size:
@@ -542,8 +544,21 @@ def decode_blob(
     Accepts either ``bytes`` or ``memoryview``. Returns the blob data
     (always as ``bytes``) and the number of bytes consumed.
 
-    ``max_blob_size`` mirrors the ``encode_blob`` parameter — see that
-    docstring for the rationale.
+    **Round-trip type asymmetry.** Callers that bind a ``memoryview``
+    or ``bytearray`` on the encode side see ``bytes`` on the decode
+    side — ``decode_blob`` always materialises an owned ``bytes``
+    copy regardless of the input shape that was originally encoded.
+    This matches stdlib ``sqlite3`` semantics (``sqlite3.Binary =
+    memoryview`` on bind; ``bytes`` on fetch) and is the right owned-
+    copy shape across the deserialisation boundary. Callers needing
+    a ``memoryview`` view of the result must wrap explicitly:
+    ``memoryview(decoded)``.
+
+    ``max_blob_size`` mirrors the ``encode_blob`` parameter — defaults
+    to ``_MAX_BLOB_SIZE`` (``64 MiB - 64 B`` = 67_108_800 bytes; the
+    64-byte shortfall reserves room for length prefix + row framing
+    under the default 64 MiB message envelope). See ``encode_blob``
+    for the rationale.
     """
     if len(data) < 8:
         raise DecodeError("Not enough data for blob length")
