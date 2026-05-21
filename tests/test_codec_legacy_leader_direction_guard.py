@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from dqlitewire import PROTOCOL_VERSION_LEGACY
 from dqlitewire.codec import (
     MessageDecoder,
@@ -144,3 +146,51 @@ def test_client_request_and_leader_response_share_msg_type_code() -> None:
     would fail and the dev would re-evaluate whether the guard still
     serves its purpose."""
     assert RequestType.CLIENT == ResponseType.LEADER == 1
+
+
+def test_request_side_with_aliased_response_type_at_collision_still_skips_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Future-proof behavioural pin: even if ``RESPONSE_TYPES[1]`` is
+    rebound to share a class with the request side (so the
+    ``msg_class is LeaderResponse`` identity check no longer
+    discriminates direction), the direction guard
+    ``not self._is_request`` must still prevent request-side legacy
+    dispatch.
+
+    The existing positive / negative behavioural twins (above) pass
+    against a regression that drops ``not self._is_request`` and
+    relies on the identity coincidence — today ``RESPONSE_TYPES[1] is
+    LeaderResponse`` and ``REQUEST_TYPES[1] is ClientRequest`` differ,
+    so the identity check incidentally enforces direction
+    discrimination. A maintainer "simplifying" the dispatch by
+    dropping the direction guard would slip past all the existing
+    behavioural twins — only the source-substring pin (which itself
+    breaks under benign rephrasing) catches it.
+
+    This pin forces the identity-coincidence away by monkey-patching
+    ``RESPONSE_TYPES[1]`` to ``ClientRequest``. With the direction
+    guard intact, request-side dispatch on ``msg_type=1`` still routes
+    via the per-class ``decode_body``, not through
+    ``LeaderResponse.decode_body_legacy``. Without the direction
+    guard, the dispatch would fall into the legacy arm and mis-parse
+    the uint64 ``client_id`` as the start of a NUL-terminated address.
+    """
+    import dqlitewire.codec as codec_module
+
+    # ``monkeypatch.setitem`` restores the original on teardown so
+    # test isolation holds.
+    monkeypatch.setitem(codec_module.RESPONSE_TYPES, 1, ClientRequest)
+    wire = _build_client_request_bytes(client_id=0xDEADBEEFCAFEBABE)
+
+    # Even with version=LEGACY (which would otherwise gate the legacy
+    # arm on its own), the request-side direction must steer the
+    # dispatch through ClientRequest.decode_body.
+    result = decode_message(wire, is_request=True, version=PROTOCOL_VERSION_LEGACY)
+
+    assert isinstance(result, ClientRequest), (
+        f"request-side decoder must route msg_type=1 to ClientRequest "
+        f"via the direction guard, not LeaderResponse.decode_body_legacy "
+        f"via the identity check; got {type(result).__name__}"
+    )
+    assert result.client_id == 0xDEADBEEFCAFEBABE
