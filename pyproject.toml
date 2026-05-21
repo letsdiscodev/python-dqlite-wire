@@ -44,6 +44,15 @@ packages = ["src/dqlitewire"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+    # Promote deprecations to errors so the suite catches stdlib
+    # deprecation surface under the CPython version the workspace
+    # already runs CI on (3.13/3.14). Whitelist genuine third-party
+    # noise with explicit ``ignore:<pattern>:DeprecationWarning:<module>``
+    # entries below, with a comment explaining the upstream tracker.
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+]
 
 [tool.mypy]
 strict = true
