@@ -576,6 +576,21 @@ class StmtResponse(Message):
             )
         if self.tail_offset is not None:
             _validate_uint64("tail_offset", self.tail_offset)
+            # Construction-time cap mirroring the encode_body / decode_body
+            # caps below. Without this, StmtResponse(schema=1, tail_offset
+            # =_MAX_TAIL_OFFSET+1) constructs cleanly and the cap fires
+            # only at first encode — far from the construction site.
+            # The sibling num_params field on this same dataclass is
+            # already construction-capped (see _MAX_PARAM_COUNT above);
+            # ResultResponse.__post_init__ cites this StmtResponse field
+            # as its precedent for construction-time cap discipline.
+            # Same diagnostic shape as encode_body so an audit grep on
+            # _MAX_TAIL_OFFSET finds both sites with parallel wording.
+            if self.tail_offset > _MAX_TAIL_OFFSET:
+                raise EncodeError(
+                    f"StmtResponse tail_offset {self.tail_offset} exceeds maximum "
+                    f"({_MAX_TAIL_OFFSET})"
+                )
         if self.schema is not None and self.schema not in (0, 1):
             raise EncodeError(f"StmtResponse.schema must be 0 or 1, got {self.schema}")
         if self.schema == 0 and self.tail_offset is not None:
