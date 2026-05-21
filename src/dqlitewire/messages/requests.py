@@ -105,7 +105,20 @@ def _validate_decoded_empty_header(decoded_empty_header: bool | None, param_coun
     misuse pattern occurs. Pin the invariant at construction time so
     the field stays in sync with the wire-byte semantics it claims to
     represent. Mirrors ``_validate_decoded_schema``'s discipline.
+
+    The type narrowing uses ``isinstance(x, bool)`` rather than ``x is
+    True`` / ``x is False`` so any non-bool input — ``1``, ``"yes"``,
+    ``object()`` — is rejected explicitly. Without the type check the
+    downstream ``bool(self._decoded_empty_header)`` at ``encode_body``
+    promotes truthy non-bool inputs to the C-style 8-byte empty-header
+    emission silently, contradicting the documented ``None | False |
+    True`` contract that the sibling ``_validate_decoded_schema``
+    pins via membership.
     """
+    if decoded_empty_header is not None and not isinstance(decoded_empty_header, bool):
+        raise EncodeError(
+            f"_decoded_empty_header must be None or bool, got {type(decoded_empty_header).__name__}"
+        )
     if decoded_empty_header is True and param_count > 0:
         raise EncodeError(
             f"_decoded_empty_header=True requires empty params (the field is "

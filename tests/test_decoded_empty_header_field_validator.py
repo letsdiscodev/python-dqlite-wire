@@ -89,3 +89,25 @@ def test_caller_originated_default_is_none() -> None:
     decoded"."""
     req = ExecRequest(db_id=1, stmt_id=2)
     assert req._decoded_empty_header is None
+
+
+@pytest.mark.parametrize("bad_value", [1, 0, "yes", "", object(), [], (1,)])
+def test_decoded_empty_header_non_bool_rejected(bad_value: object) -> None:
+    """The validator must reject non-bool / non-None inputs explicitly.
+
+    Without this narrowing, ``bool(self._decoded_empty_header)`` at
+    encode time silently promotes truthy non-bool inputs (``1``,
+    ``"yes"``, an arbitrary truthy object) to the C-style 8-byte
+    empty-header emission. The documented ``None | False | True``
+    contract is preserved only via this type check — the sibling
+    ``_validate_decoded_schema`` rejects bad inputs the same way.
+    """
+    with pytest.raises(EncodeError, match="_decoded_empty_header must be None or bool"):
+        ExecRequest(db_id=1, stmt_id=2, params=[], _decoded_empty_header=bad_value)  # type: ignore[arg-type]
+
+
+def test_decoded_empty_header_none_accepted_explicitly() -> None:
+    """``None`` is the caller-originated default and must be accepted
+    when passed explicitly."""
+    req = ExecRequest(db_id=1, stmt_id=2, params=[], _decoded_empty_header=None)
+    assert req._decoded_empty_header is None

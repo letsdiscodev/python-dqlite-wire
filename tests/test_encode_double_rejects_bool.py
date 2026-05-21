@@ -31,10 +31,34 @@ def test_encode_double_accepts_zero_and_finite_floats() -> None:
     assert len(encoded) == 8
 
 
-def test_encode_double_accepts_int_passes_through() -> None:
-    """Bare int (not bool) is accepted and coerced to float by struct."""
-    encoded = encode_double(5)
-    assert len(encoded) == 8
+def test_encode_double_rejects_bare_int() -> None:
+    """Bare ``int`` (not ``bool``) is rejected too.
+
+    ``struct.pack("<d", 42)`` would silently coerce via C-level float
+    promotion, but the same coercion drops bits for ``|x| >= 2**53``
+    and raises ``OverflowError`` (outside ``EncodeError``) for
+    ``|x| >= 2**1024``. Callers wanting int → FLOAT must call
+    ``float(x)`` themselves.
+    """
+    with pytest.raises(EncodeError, match="requires float"):
+        encode_double(5)
+
+
+def test_encode_double_rejects_numpy_bool_proxy() -> None:
+    """``numpy.bool_`` is NOT a Python ``bool`` subclass (NumPy reparented
+    it long ago). The bool guard alone leaves it slip through; the
+    float-subclass check is what rejects it. A minimal proxy mirrors
+    the NumPy shape: not a bool subclass, exposes ``__float__``."""
+
+    class FakeNpBool:
+        def __init__(self, v: bool) -> None:
+            self._v = v
+
+        def __float__(self) -> float:
+            return float(self._v)
+
+    with pytest.raises(EncodeError, match="requires float"):
+        encode_double(FakeNpBool(True))  # type: ignore[arg-type]
 
 
 def test_encode_double_accepts_nan_and_inf() -> None:

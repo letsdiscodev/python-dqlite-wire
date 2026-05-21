@@ -148,8 +148,15 @@ def _validate_uint64(name: str, value: int) -> None:
     sites so construction-time and encode-time checks raise the same
     exception class (``EncodeError``) and both reject ``bool`` (which
     ``isinstance(True, int)`` otherwise silently admits).
+
+    The predicate orders ``isinstance(value, bool)`` first so the three
+    sibling validators (``_validate_uint32`` / ``_validate_int64``) and
+    the package's other type-narrowing guards (``Header.__post_init__``,
+    every dataclass ``__post_init__``) all read the same shape. The two
+    clauses commute on every input, but a single canonical form keeps a
+    future maintainer's grep across the family productive.
     """
-    if not isinstance(value, int) or isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not 0 <= value < 2**64:
         raise EncodeError(
@@ -160,9 +167,10 @@ def _validate_uint64(name: str, value: int) -> None:
 def _validate_uint32(name: str, value: int) -> None:
     """Validate ``value`` is an int (not bool) in the uint32 range.
 
-    Symmetric with :func:`_validate_uint64`.
+    Symmetric with :func:`_validate_uint64` — see that helper for the
+    rationale on the bool-first predicate order.
     """
-    if not isinstance(value, int) or isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not 0 <= value < 2**32:
         raise EncodeError(
@@ -248,16 +256,40 @@ def decode_uint32(data: bytes | memoryview) -> int:
 def encode_double(value: float) -> bytes:
     """Encode a 64-bit floating point number (little-endian).
 
-    All IEEE 754 values are accepted, including NaN and infinity,
-    matching the Go reference implementation behavior. ``bool`` is
-    rejected explicitly: ``isinstance(True, int)`` is True and
-    ``float(True) == 1.0``, so without the guard a caller passing
-    ``True`` would silently encode ``1.0`` onto the wire. Mirrors
-    the discipline already applied at ``_validate_uint64``,
+    All IEEE 754 ``float`` values are accepted, including NaN and
+    infinity, matching the Go reference implementation behavior.
+
+    Non-``float`` inputs are rejected:
+
+    - ``bool`` is rejected explicitly because ``isinstance(True, int)``
+      is True and ``float(True) == 1.0`` — without the guard a caller
+      passing ``True`` would silently encode ``1.0`` onto the wire.
+    - Plain ``int`` is rejected: ``struct.pack("<d", 42)`` succeeds via
+      C-level coercion but the same coercion silently loses bits for
+      ``|x| >= 2**53`` and raises ``OverflowError`` (outside the
+      ``EncodeError`` family) for ``|x| >= 2**1024``. Callers that
+      genuinely want int → FLOAT should call ``float(x)`` themselves
+      and accept the precision boundary explicitly.
+    - Third-party bool/numeric proxies (``numpy.bool_``,
+      ``numpy.float64``, ``Decimal``, ``Fraction``) are all rejected
+      via the float-subclass check. ``numpy.bool_`` in particular is
+      not a Python ``bool`` subclass, so the bool guard alone leaves
+      it slip through to ``struct.pack``'s ``__float__`` coercion —
+      the exact silent-coerce footgun this function exists to prevent.
+      Callers passing third-party numerics must coerce explicitly
+      (``float(np_value)``).
+
+    Mirrors the discipline already applied at ``_validate_uint64``,
     ``encode_int64``, and the ``encode_value`` FLOAT arm.
     """
     if isinstance(value, bool):
         raise EncodeError(f"encode_double rejects bool, got {value!r}")
+    if not isinstance(value, float):
+        raise EncodeError(
+            f"encode_double requires float, got {type(value).__name__}; "
+            "cast with float(x) explicitly if int / numeric-proxy "
+            "semantics are intended."
+        )
     return struct.pack("<d", value)
 
 
