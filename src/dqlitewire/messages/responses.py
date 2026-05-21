@@ -896,7 +896,7 @@ class RowsResponse(Message):
 
         # Column names
         for name in self.column_names:
-            result += encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="Column name")
+            result += encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="column name")
 
         # Rows - each row gets its own type header
         for i, row in enumerate(self.rows):
