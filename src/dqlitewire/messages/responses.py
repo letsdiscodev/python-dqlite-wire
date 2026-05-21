@@ -393,7 +393,13 @@ class LeaderResponse(Message):
         # (the full address has already been validated as ≤
         # ``_MAX_ADDRESS_SIZE`` so this is overflow guarding only).
         if (node_id == 0) != (not address):
-            display_addr = address if len(address) <= 64 else address[:64] + "…"
+            # Sanitise before truncation so a hostile peer cannot smuggle
+            # U+2028 / bidi marks / ZWSP through ``!r`` (``repr`` escapes
+            # LF / CR but not the other line-separator-class control
+            # codepoints). The 64-char cap alone does not help — every
+            # such glyph fits in 1 codepoint.
+            sanitised = sanitize_server_text(address)
+            display_addr = sanitised if len(sanitised) <= 64 else sanitised[:64] + "…"
             raise DecodeError(
                 "LeaderResponse: malformed (node_id, address) — "
                 f"got id={node_id!r} addr={display_addr!r}; "
@@ -1427,7 +1433,10 @@ class ServersResponse(Message):
             # cache; rejecting at the wire boundary keeps the
             # downstream layers' invariants honest.
             if (node_id == 0) != (not address):
-                display_addr = address if len(address) <= 64 else address[:64] + "…"
+                # Sanitise before truncation; see ``LeaderResponse``
+                # sibling for the U+2028 / bidi-class rationale.
+                sanitised = sanitize_server_text(address)
+                display_addr = sanitised if len(sanitised) <= 64 else sanitised[:64] + "…"
                 raise DecodeError(
                     "ServersResponse: malformed (node_id, address) entry — "
                     f"got id={node_id!r} addr={display_addr!r}; "
