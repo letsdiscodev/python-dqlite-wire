@@ -332,6 +332,12 @@ class MessageDecoder:
             )
         self._unknown_role_policy = unknown_role_policy
         self._buffer = ReadBuffer(max_message_size=max_message_size)
+        # Promote ``max_message_size`` to a decoder-level attribute so the
+        # stateless ``decode_bytes`` path can enforce the cap without
+        # reaching into the buffer's private. The streaming path checks
+        # via ``ReadBuffer.read_message``; both checks read the same
+        # ceiling, kept in lockstep by storing it once at construction.
+        self._max_message_size = max_message_size
         self._is_request = is_request
         self._type_map = REQUEST_TYPES if is_request else RESPONSE_TYPES
         self._max_schema = _REQUEST_MAX_SCHEMA if is_request else _RESPONSE_MAX_SCHEMA
@@ -756,6 +762,20 @@ class MessageDecoder:
 
         header = Header.decode(data[:HEADER_SIZE])
         body_size = header.size_words * 8
+        # Enforce ``max_message_size`` on the stateless path so the
+        # cap discipline matches the streaming path's ``ReadBuffer.
+        # read_message`` check. Apply AFTER ``Header.decode`` succeeds
+        # (so a torn header still produces the standard "too short"
+        # diagnostic) and BEFORE the body-slice / per-class dispatch
+        # (so the cap fires before any potentially-large allocation).
+        # When ``decode()`` delegates here through the streaming path
+        # the cap check is benign and redundant — the cost is constant
+        # per message.
+        total_size = HEADER_SIZE + body_size
+        if total_size > self._max_message_size:
+            raise DecodeError(
+                f"Message size {total_size:#x} bytes exceeds maximum {self._max_message_size}"
+            )
         if len(data) < HEADER_SIZE + body_size:
             raise DecodeError(
                 f"Message body too short: header says {body_size} bytes, "
@@ -869,11 +889,18 @@ class MessageDecoder:
         return version
 
 
+_UNSET: Final[object] = object()
+
+
 def decode_message(
     data: bytes | bytearray | memoryview,
     is_request: bool = False,
     version: int = PROTOCOL_VERSION,
     unknown_role_policy: str = "reject",
+    max_message_size: int | None = None,
+    max_rows: int | None = None,
+    max_continuation_frames: int | None | object = _UNSET,
+    max_total_rows: int | None | object = _UNSET,
 ) -> Message:
     """Convenience function to decode a single message.
 
@@ -892,12 +919,42 @@ def decode_message(
                  byte is decoded. One of ``"reject"`` (default,
                  raises), ``"warn"`` (substitute SPARE + log warning),
                  or ``"accept"`` (substitute SPARE silently).
+        max_message_size: Forwarded to ``MessageDecoder``. ``None``
+                 keeps the default (``ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE``,
+                 64 MiB). Legitimate large frames (a real cluster's
+                 ``FilesResponse`` dump, a wide ``RowsResponse``) need
+                 the cap raised; without this kwarg callers had to drop
+                 the helper and instantiate ``MessageDecoder`` by hand.
+        max_rows: Forwarded to ``MessageDecoder``. ``None`` keeps the
+                 default (``RowsResponse.DEFAULT_MAX_ROWS``, 1_000_000).
+        max_continuation_frames: Forwarded to ``MessageDecoder``. Pass
+                 ``None`` to disable the cap; omit to keep
+                 ``DEFAULT_MAX_CONTINUATION_FRAMES``. The stateless
+                 helper decodes a single frame so the cap is mostly
+                 inert here, but the kwarg is wired through so a
+                 caller building a streaming-equivalent decoder via
+                 the helper sees the same cap surface.
+        max_total_rows: Forwarded to ``MessageDecoder``. Same
+                 semantics as ``max_continuation_frames``.
     """
-    decoder = MessageDecoder(
-        is_request=is_request,
-        version=version,
-        unknown_role_policy=unknown_role_policy,
-    )
+    kwargs: dict[str, object] = {
+        "is_request": is_request,
+        "version": version,
+        "unknown_role_policy": unknown_role_policy,
+    }
+    if max_message_size is not None:
+        kwargs["max_message_size"] = max_message_size
+    if max_rows is not None:
+        kwargs["max_rows"] = max_rows
+    # ``max_continuation_frames`` / ``max_total_rows`` accept ``None``
+    # (disable cap) AND a positive int as legitimate values, so a
+    # sentinel is needed to discriminate "caller omitted the kwarg" from
+    # "caller passed None explicitly to disable the cap".
+    if max_continuation_frames is not _UNSET:
+        kwargs["max_continuation_frames"] = max_continuation_frames
+    if max_total_rows is not _UNSET:
+        kwargs["max_total_rows"] = max_total_rows
+    decoder = MessageDecoder(**kwargs)  # type: ignore[arg-type]
     if is_request:
         # Request decoders start with handshake_done=False; bypass for
         # stateless single-message decoding.

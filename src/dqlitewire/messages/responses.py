@@ -106,6 +106,18 @@ _MAX_COLUMN_NAME_SIZE: Final[int] = 4096
 # PATH_MAX is 4 KiB and mirrors the column-name cap.
 _MAX_FILENAME_SIZE: Final[int] = 4096
 
+# Per-file content cap on ``FilesResponse``. The frame envelope (default
+# 64 MiB ``max_message_size``) already bounds total bytes, but the
+# package's discipline pairs every variable-length field with a per-
+# field cap below the envelope so a single hostile entry cannot consume
+# the entire budget. Aligned with ``_MAX_BLOB_SIZE`` (64 MiB minus
+# framing overhead) so the file-content cap matches the BLOB row-cell
+# cap. Legitimate dqlite dumps from a real cluster carry SQLite page
+# files bounded by the raft log-entry-size config; a deployment that
+# expects dumps above 64 MiB must raise ``max_message_size`` AND import
+# this constant to raise the per-field cap at the same time.
+_MAX_FILE_CONTENT_SIZE: Final[int] = 64 * 1024 * 1024 - 64
+
 # Per-address cap on ``LeaderResponse`` / ``ServersResponse`` (and their
 # legacy variants). Legitimate cluster addresses are small (hostname
 # + port, or IPv6 literal in brackets + port); RFC 1035 sets domain
@@ -1109,6 +1121,17 @@ class FilesResponse(Message):
                     f"(got {len(content)} bytes); dqlite file entries carry no "
                     "per-file padding"
                 )
+            # Per-file content cap mirroring the decode-side guard below.
+            # The frame envelope bounds total bytes, but a single
+            # hostile entry could otherwise claim the entire budget;
+            # aligning the cap to ``_MAX_BLOB_SIZE`` (64 MiB minus
+            # framing overhead) keeps the per-field discipline parallel
+            # with the BLOB row-cell cap.
+            if len(content) > _MAX_FILE_CONTENT_SIZE:
+                raise EncodeError(
+                    f"FilesResponse content for {name!r} length {len(content)} "
+                    f"exceeds maximum ({_MAX_FILE_CONTENT_SIZE})"
+                )
             result += encode_text(name, max_size=_MAX_FILENAME_SIZE, label="filename")
             result += encode_uint64(len(content))
             result += content
@@ -1146,6 +1169,21 @@ class FilesResponse(Message):
             if size % 8 != 0:
                 raise DecodeError(
                     f"FilesResponse content for {name!r} must be 8-byte aligned (got {size} bytes)"
+                )
+            # Per-file content cap mirroring the encode-side guard
+            # above. Defense-in-depth: the outer ``max_message_size``
+            # already bounds total bytes, but a single hostile entry
+            # could otherwise claim the entire 64 MiB envelope for one
+            # file (the count cap of 100 is meaningless if one file
+            # takes the whole budget). Check BEFORE the over-read
+            # bounds-check so an oversize claim is rejected with a
+            # specific diagnostic rather than the generic truncation
+            # message. Cap aligned with ``_MAX_BLOB_SIZE`` so the
+            # per-field discipline matches the BLOB row-cell cap.
+            if size > _MAX_FILE_CONTENT_SIZE:
+                raise DecodeError(
+                    f"FilesResponse content for {name!r} length {size} "
+                    f"exceeds maximum ({_MAX_FILE_CONTENT_SIZE})"
                 )
             if offset + size > len(view):
                 raise DecodeError(
