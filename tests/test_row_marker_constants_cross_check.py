@@ -15,6 +15,13 @@ These four must agree byte-for-byte. Without a cross-check pin, a typo
 in any single-byte constant propagates only to the bytes form (which
 is derived from it) and not to the uint64 int form (or vice versa),
 silently breaking the encode/decode round-trip.
+
+The ``test_row_*_marker_canonical_hex_value`` pins below are also the
+runtime enforcement for the ``if __debug__:`` invariant block in
+``constants.py``: under ``python -O`` the in-module assertions are
+stripped, but these tests run regardless of optimisation level (the
+pytest runner does not pass ``-O`` to interpreter startup) and would
+fail loudly on any derivation regression.
 """
 
 from __future__ import annotations

@@ -104,8 +104,17 @@ ROW_DONE_BYTE: Final[int] = 0xFF
 ROW_PART_BYTE: Final[int] = 0xEE
 ROW_DONE_MARKER: Final[int] = int.from_bytes(bytes([ROW_DONE_BYTE]) * 8, "little")
 ROW_PART_MARKER: Final[int] = int.from_bytes(bytes([ROW_PART_BYTE]) * 8, "little")
-assert ROW_DONE_MARKER == 0xFFFFFFFFFFFFFFFF
-assert ROW_PART_MARKER == 0xEEEEEEEEEEEEEEEE
+# Wrapped in ``if __debug__:`` to make the strip-under-``python -O``
+# posture explicit. The asserts are derivation-correctness invariants,
+# not runtime defences — the encode/decode paths consult the derived
+# constants directly, and the cross-check pin in
+# ``tests/test_row_marker_constants_cross_check.py`` independently
+# verifies the canonical values regardless of optimisation level. The
+# explicit ``if __debug__:`` form documents the intent so a reader
+# does not mistake the bare asserts for load-bearing runtime guards.
+if __debug__:
+    assert ROW_DONE_MARKER == 0xFFFFFFFFFFFFFFFF
+    assert ROW_PART_MARKER == 0xEEEEEEEEEEEEEEEE
 
 
 class RequestType(IntEnum):
