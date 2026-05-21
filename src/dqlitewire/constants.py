@@ -87,10 +87,25 @@ HEADER_SIZE: Final[int] = 8
 # or 0xEE could be confused with a marker. Use the uint64 constants
 # below for encoding and the single-byte constants to build the detection
 # byte sequences.
+#
+# The four constants form two paired representations of the same wire
+# sentinel: the single-byte form (``ROW_DONE_BYTE`` / ``ROW_PART_BYTE``)
+# is the source of truth — the bytes form in ``tuples.py`` is derived
+# from it via ``bytes([ROW_DONE_BYTE]) * 8``, and the uint64 int form is
+# derived here via ``int.from_bytes(..., "little")``. Module-load
+# assertions pin both halves to the original hex literals so a typo in
+# either single-byte constant surfaces at import time rather than as a
+# silent encode/decode round-trip break far downstream. The little-
+# endian byte order is load-bearing in general — for the current
+# palindrome patterns (``0xFF`` and ``0xEE`` repeated) the byte order is
+# observationally symmetric, but any non-palindrome marker would
+# disagree across endianness.
 ROW_DONE_BYTE: Final[int] = 0xFF
 ROW_PART_BYTE: Final[int] = 0xEE
-ROW_DONE_MARKER: Final[int] = 0xFFFFFFFFFFFFFFFF
-ROW_PART_MARKER: Final[int] = 0xEEEEEEEEEEEEEEEE
+ROW_DONE_MARKER: Final[int] = int.from_bytes(bytes([ROW_DONE_BYTE]) * 8, "little")
+ROW_PART_MARKER: Final[int] = int.from_bytes(bytes([ROW_PART_BYTE]) * 8, "little")
+assert ROW_DONE_MARKER == 0xFFFFFFFFFFFFFFFF
+assert ROW_PART_MARKER == 0xEEEEEEEEEEEEEEEE
 
 
 class RequestType(IntEnum):
