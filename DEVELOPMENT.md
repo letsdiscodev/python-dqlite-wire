@@ -76,3 +76,43 @@ uv run ruff check --fix src tests
 uv run mypy src
 uv run pytest
 ```
+
+## Commit Message Conventions
+
+Commit messages MUST NOT contain workflow vocabulary. The forbidden
+tokens are:
+
+- Capital-leading "Round N", "Cycle N", "Phase N", "Bundle N" (and the
+  lowercase variants) when used as workflow markers.
+- `ISSUE-N` issue identifiers (e.g. `ISSUE-T4`, `ISSUE-1438`).
+- References to `done/<name>.md` filenames.
+- Prose markers like "ultrathink", "this round", "next round",
+  "prior round", "earlier round".
+
+The substantive citation in a commit body should always be expressed
+as the durable name it points at (constant name, contract name, public
+symbol) — never as the workflow step that introduced it.
+
+A forward-looking guard lives at `scripts/check-commit-msg.sh`. Run
+it against the most recent commit:
+
+```bash
+git log -1 --format=%B | scripts/check-commit-msg.sh -
+```
+
+Or against a range of commits:
+
+```bash
+scripts/check-commit-msg.sh --range origin/main..HEAD
+```
+
+To install it as a local commit-msg hook:
+
+```bash
+ln -s ../../scripts/check-commit-msg.sh .git/hooks/commit-msg
+```
+
+Three legacy commits (`19ae33e8`, `d806944d`, `4b516dee`) carry
+"round 29" / "round 30" markers in their bodies. These are published
+and have not been amended (rewriting SHAs would break cross-package
+commit references); the linter is the regression-prevention measure.
