@@ -1709,6 +1709,52 @@ class TestContinuationFlagCompleteness:
         with pytest.raises(ProtocolError, match="continuation"):
             decoder.skip_message()
 
+    def test_skip_message_during_continuation_reset_recovery(self) -> None:
+        """After ``skip_message()`` is rejected mid-continuation, the
+        caller can ``reset()`` and re-use the decoder for a fresh
+        top-level message. The docstring at
+        ``MessageDecoder.skip_message`` documents this as the
+        "abandon the stream" recovery path; pin the full cycle so a
+        future refactor of ``_finalize_continuation_state`` cannot
+        silently break it.
+        """
+        from dqlitewire.constants import ROW_PART_MARKER, ValueType
+        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.messages.base import Header
+        from dqlitewire.messages.responses import ResultResponse, RowsResponse
+        from dqlitewire.tuples import encode_row_header, encode_row_values
+        from dqlitewire.types import encode_text, encode_uint64
+
+        types = [ValueType.INTEGER]
+        body = encode_uint64(1)
+        body += encode_text("id")
+        body += encode_row_header(types)
+        body += encode_row_values([1], types)
+        body += encode_uint64(ROW_PART_MARKER)
+        header = Header(size_words=len(body) // 8, msg_type=7, schema=0)
+
+        decoder = MessageDecoder(is_request=False)
+        decoder.feed(header.encode() + body)
+        first = decoder.decode()
+        assert isinstance(first, RowsResponse) and first.has_more
+
+        # Mid-continuation: skip_message refuses. The decoder retains
+        # ``_continuation_expected=True``.
+        with pytest.raises(ProtocolError, match="continuation"):
+            decoder.skip_message()
+
+        # ``reset()`` is the documented recovery from a rejected
+        # ``skip_message`` mid-continuation. After reset the decoder
+        # must accept and correctly decode a fresh top-level message.
+        decoder.reset()
+
+        recovered = ResultResponse(last_insert_id=0, rows_affected=0)
+        decoder.feed(recovered.encode())
+        msg = decoder.decode()
+        assert isinstance(msg, ResultResponse)
+        assert msg.last_insert_id == 0
+        assert msg.rows_affected == 0
+
 
 class TestDecoderSkipMessage:
     """Test skip_message() and is_skipping on MessageDecoder."""
