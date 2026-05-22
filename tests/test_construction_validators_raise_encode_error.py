@@ -30,6 +30,7 @@ from dqlitewire.messages.requests import (
     PrepareRequest,
     QueryRequest,
     QuerySqlRequest,
+    _ConnectRequest,
 )
 from dqlitewire.messages.responses import NodeInfo, StmtResponse
 
@@ -102,6 +103,24 @@ class TestNodeInfoRoleRaisesEncodeError:
     def test_unknown_role_int(self) -> None:
         with pytest.raises(EncodeError, match="role"):
             NodeInfo(node_id=1, address="leader:9001", role=999)  # type: ignore[arg-type]
+
+
+class TestConnectRequestAddressTypeRaisesEncodeError:
+    """Sibling-discipline pin matching ``AddRequest.address`` /
+    ``DumpRequest.name`` / ``OpenRequest.name``: ``_ConnectRequest``
+    gates its ``address`` field at construction with an explicit
+    ``isinstance(address, str)`` check.
+
+    Without the gate, ``_ConnectRequest(node_id=1, address=b"x:1")``
+    would construct successfully and only fail late at
+    ``encode_body``'s ``encode_text`` call, after the bad value was
+    stored in a dataclass field that may be repr'd into logs.
+    """
+
+    @pytest.mark.parametrize("bad", [b"x:1", None, 9001, ("host", 9001), ["host", 9001]])
+    def test_non_str_address_rejected(self, bad: object) -> None:
+        with pytest.raises(EncodeError, match="address must be str"):
+            _ConnectRequest(node_id=1, address=bad)  # type: ignore[arg-type]
 
 
 class TestAddRequestAddressTypeRaisesEncodeError:
