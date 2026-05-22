@@ -341,6 +341,16 @@ class TestLeaderResponseStrictLength:
         with pytest.raises(DecodeError, match=r"LeaderResponse body too short"):
             LeaderResponse.decode_body(b"\x01" * 7)
 
+    def test_legacy_short_body_rejected_at_response_layer(self) -> None:
+        # Sibling pin for the legacy decoder: ``decode_text`` rejects
+        # bodies shorter than the 8-byte length prefix, but its
+        # diagnostic does not name the response. Mirror the modern
+        # guard so pre-1.0 server log lines are self-describing.
+        from dqlitewire.messages.responses import LeaderResponse
+
+        with pytest.raises(DecodeError, match=r"LeaderResponse \(legacy\) body too short"):
+            LeaderResponse.decode_body_legacy(b"\x01" * 7)
+
 
 class TestMetadataResponseStrictLength:
     """Body is two uint64s (failure_domain + weight) — exactly 16 bytes."""

@@ -432,6 +432,19 @@ class LeaderResponse(Message):
         Legacy format: text address only (no node_id). Returns node_id=0.
         Go reference: DecodeNodeLegacy in internal/protocol/message.go.
         """
+        # Response-layer length guard. Without this, a short body
+        # surfaces ``decode_text``'s generic "need N bytes for text
+        # length" diagnostic which does not identify the response
+        # being decoded. Mirrors the modern ``decode_body`` guard so
+        # operators reading the failed-decode log line from a pre-1.0
+        # server can tell which response was malformed. Legacy body is
+        # ``decode_text`` only (no ``node_id`` prefix) so the minimum
+        # is the 8-byte text length prefix.
+        if len(data) < 8:
+            raise DecodeError(
+                f"LeaderResponse (legacy) body too short; need at least "
+                f"8 bytes for the text length prefix, got {len(data)}"
+            )
         address, consumed = decode_text(data, max_size=_MAX_ADDRESS_SIZE, label="leader address")
         if consumed != len(data):
             raise DecodeError(
