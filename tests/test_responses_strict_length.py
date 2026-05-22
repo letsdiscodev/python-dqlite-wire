@@ -327,6 +327,20 @@ class TestLeaderResponseStrictLength:
         with pytest.raises(DecodeError, match=r"LeaderResponse \(legacy\) has 8 trailing byte"):
             LeaderResponse.decode_body_legacy(body)
 
+    def test_modern_short_body_rejected_at_response_layer(self) -> None:
+        # ``decode_uint64`` already rejects bodies shorter than 8 bytes,
+        # but its diagnostic does not mention which response was being
+        # decoded. Sibling response decoders (FailureResponse,
+        # WelcomeResponse, MetadataResponse) all emit an explicit
+        # response-level length guard so the diagnostic is self-
+        # describing. Pin the wording so a future refactor of
+        # ``decode_uint64`` cannot silently demote LeaderResponse to
+        # the helper's wording.
+        from dqlitewire.messages.responses import LeaderResponse
+
+        with pytest.raises(DecodeError, match=r"LeaderResponse body too short"):
+            LeaderResponse.decode_body(b"\x01" * 7)
+
 
 class TestMetadataResponseStrictLength:
     """Body is two uint64s (failure_domain + weight) — exactly 16 bytes."""

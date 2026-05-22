@@ -374,6 +374,17 @@ class LeaderResponse(Message):
         constructor ``version`` matching the per-connection
         negotiated value (the same value the encoder used).
         """
+        # Response-layer length guard. Without this, a short body
+        # surfaces as the inner helper's "Need 8 bytes for uint64"
+        # diagnostic which does not identify the response being
+        # decoded. Sibling response decoders (FailureResponse,
+        # WelcomeResponse, MetadataResponse) all emit an explicit
+        # response-level guard for self-describing diagnostics on
+        # malformed-peer paths.
+        if len(data) < 8:
+            raise DecodeError(
+                f"LeaderResponse body too short; need 8 bytes for node_id, got {len(data)}"
+            )
         node_id = decode_uint64(data)
         address, consumed = decode_text(
             data[8:], max_size=_MAX_ADDRESS_SIZE, label="leader address"
