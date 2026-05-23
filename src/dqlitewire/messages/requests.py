@@ -28,7 +28,11 @@ __all__ = [
     "TransferRequest",
     "WeightRequest",
 ]
-from dqlitewire.messages.responses import _MAX_ADDRESS_SIZE, _MAX_FILENAME_SIZE
+from dqlitewire.messages.responses import (
+    _MAX_ADDRESS_SIZE,
+    _MAX_DUMP_FILENAME_SIZE,
+    _MAX_FILENAME_SIZE,
+)
 from dqlitewire.tuples import _MAX_PARAM_COUNT, decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
     _MAX_TEXT_VALUE_SIZE,
@@ -999,14 +1003,24 @@ class DumpRequest(Message):
 
     @override
     def encode_body(self) -> bytes:
-        return encode_text(self.name, max_size=_MAX_FILENAME_SIZE, label="database name")
+        # The C gateway's ``handle_dump`` uses a 1024-byte stack
+        # buffer for the WAL filename, leaving 1019 bytes once the
+        # ``-wal`` suffix and NUL terminator are accounted for
+        # (dqlite-upstream ``src/gateway.c::handle_dump``). Cap the
+        # encoder at the C ceiling so a longer name fails fast on
+        # the Python side rather than producing a ``FilesResponse``
+        # whose WAL entry refers to a truncated path.
+        return encode_text(self.name, max_size=_MAX_DUMP_FILENAME_SIZE, label="database name")
 
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
         if schema != 0:
             raise DecodeError(f"DumpRequest unsupported schema version {schema}")
-        name, consumed = decode_text(data, max_size=_MAX_FILENAME_SIZE, label="database name")
+        # Symmetric with ``encode_body`` — refuse a peer-supplied
+        # ``DumpRequest`` whose name exceeds the C ceiling so the
+        # decoder cannot accept a request the encoder would reject.
+        name, consumed = decode_text(data, max_size=_MAX_DUMP_FILENAME_SIZE, label="database name")
         if consumed != len(data):
             raise DecodeError(f"DumpRequest has {len(data) - consumed} trailing bytes")
         return cls(name)

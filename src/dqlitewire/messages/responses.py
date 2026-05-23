@@ -116,6 +116,19 @@ _MAX_COLUMN_NAME_SIZE: Final[int] = 4096
 # PATH_MAX is 4 KiB and mirrors the column-name cap.
 _MAX_FILENAME_SIZE: Final[int] = 4096
 
+# Per-filename cap on ``DumpRequest.name``. The C gateway's
+# ``handle_dump`` (dqlite-upstream ``src/gateway.c::handle_dump``)
+# uses a 1024-byte stack buffer for the WAL filename and reserves
+# room for the ``-wal`` suffix and a NUL terminator
+# (``sizeof(buf) - strlen("-wal") - 1`` = ``1024 - 4 - 1`` = 1019).
+# A longer name encodes valid wire bytes but the C side silently
+# truncates the WAL filename, returning a ``FilesResponse`` whose
+# ``-wal`` entry refers to a different path than the main entry —
+# silent data loss / inconsistent dump output. Cap the encoder /
+# decoder at the C ceiling so the Python surface refuses the
+# request rather than emit a torn dump.
+_MAX_DUMP_FILENAME_SIZE: Final[int] = 1019
+
 # Per-file content cap on ``FilesResponse``. The frame envelope (default
 # 64 MiB ``max_message_size``) already bounds total bytes, but the
 # package's discipline pairs every variable-length field with a per-
