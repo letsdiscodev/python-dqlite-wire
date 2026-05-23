@@ -29,6 +29,7 @@ _SUBMODULES = [
     "dqlitewire.messages.base",
     "dqlitewire.messages.requests",
     "dqlitewire.messages.responses",
+    "dqlitewire.truncate",
     "dqlitewire.tuples",
     "dqlitewire.types",
 ]

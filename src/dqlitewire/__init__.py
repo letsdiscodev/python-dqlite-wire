@@ -222,6 +222,7 @@ from dqlitewire.exceptions import (
 )
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_server_text
+from dqlitewire.truncate import DEFAULT_MAX_RAW_MESSAGE, cap_raw_message
 from dqlitewire.types import WireInput, WireValue
 
 __version__: _Final[str] = "0.1.6"
@@ -283,6 +284,7 @@ __all__ = [
     "TX_AUTO_ROLLBACK_PRIMARY_CODES",
     "WIRE_DECODE_FAILED_PREFIX",
     "ContinuationError",
+    "DEFAULT_MAX_RAW_MESSAGE",
     "DecodeError",
     "EncodeError",
     "HandshakeError",
@@ -304,6 +306,7 @@ __all__ = [
     "WireValue",
     "WriteBuffer",
     "__version__",
+    "cap_raw_message",
     "decode_message",
     "encode_message",
     "is_dqlite_namespace_code",
