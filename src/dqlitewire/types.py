@@ -513,10 +513,15 @@ def decode_text(
     return text, total_size
 
 
-def encode_blob(value: bytes, *, max_blob_size: int = _MAX_BLOB_SIZE) -> bytes:
+def encode_blob(
+    value: bytes | bytearray | memoryview, *, max_blob_size: int = _MAX_BLOB_SIZE
+) -> bytes:
     """Encode a blob (length-prefixed binary data, padded to 8-byte boundary).
 
     Format: uint64 length + data + padding
+
+    Accepts any bytes-like input (``bytes``, ``bytearray``, ``memoryview``);
+    the wire payload is materialised once before concatenation.
 
     ``max_blob_size`` is the per-blob cap. Defaults to
     ``_MAX_BLOB_SIZE`` (``64 MiB - 64 B`` = 67_108_800 bytes — sits
@@ -528,11 +533,16 @@ def encode_blob(value: bytes, *, max_blob_size: int = _MAX_BLOB_SIZE) -> bytes:
     ``raft.log.entry_size_max``) can raise this explicitly. The outer
     ``max_message_size`` cap on the codec always wins regardless.
     """
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise EncodeError(
+            f"Blob value must be bytes, bytearray, or memoryview; got {type(value).__name__}"
+        )
     length = len(value)
     if length > max_blob_size:
         raise EncodeError(f"Blob length {length} exceeds maximum ({max_blob_size})")
+    payload = bytes(value)
     padding = pad_to_word(length)
-    return encode_uint64(length) + value + (b"\x00" * padding)
+    return encode_uint64(length) + payload + (b"\x00" * padding)
 
 
 def decode_blob(
