@@ -360,11 +360,13 @@ class MessageDecoder:
         if max_total_rows is not None and max_total_rows < 1:
             raise ValueError(f"max_total_rows must be >= 1 or None, got {max_total_rows}")
         if unknown_role_policy not in ("reject", "warn", "accept"):
-            # NOTE: EncodeError (not ValueError) — aligns with the deeper
-            # ``ServersResponse.decode_body`` validator so callers can use
-            # a single ``except EncodeError`` for both layers. Do not flip
-            # back.
-            raise EncodeError(
+            # NOTE: DecodeError (not ValueError, not EncodeError) — mirrors
+            # the deeper ``ServersResponse.decode_body`` validator (which
+            # raises DecodeError for the same domain). The policy is
+            # consumed by a decode path; DecodeError is the right layer.
+            # Callers can use a single ``except DecodeError`` for both
+            # the construction-time and decode-time validators.
+            raise DecodeError(
                 f"unknown_role_policy must be one of 'reject', 'warn', 'accept'; "
                 f"got {unknown_role_policy!r}"
             )
