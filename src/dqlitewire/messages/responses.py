@@ -681,7 +681,19 @@ class StmtResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
-        expected = 24 if schema >= 1 else 16
+        # Upstream defines exactly V0=0 and V1=1
+        # (``dqlite-upstream/src/protocol.h``:
+        # ``DQLITE_PREPARE_STMT_SCHEMA_V0`` /
+        # ``DQLITE_PREPARE_STMT_SCHEMA_V1``); ``gateway.c::handle_prepare``
+        # itself rejects any other value. The codec dispatcher at
+        # ``codec.py::_RESPONSE_MAX_SCHEMA`` already caps inbound STMT
+        # schemas at 1, so this guard is defense-in-depth for direct
+        # callers of ``decode_body`` (tests, future refactors). Sibling
+        # decoders (``ExecRequest``, ``QueryRequest``, ``PrepareRequest``,
+        # ``AssignRequest``) use the same exact-match shape.
+        if schema not in (0, 1):
+            raise DecodeError(f"StmtResponse unsupported schema version {schema}; expected 0 or 1")
+        expected = 24 if schema == 1 else 16
         if len(data) != expected:
             raise DecodeError(
                 f"StmtResponse schema={schema} body must be exactly {expected} bytes, "
@@ -699,7 +711,7 @@ class StmtResponse(Message):
             raise DecodeError(
                 f"StmtResponse num_params {num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
             )
-        tail_offset = decode_uint64(data[16:]) if schema >= 1 else None
+        tail_offset = decode_uint64(data[16:]) if schema == 1 else None
         # Defense-in-depth cap: ``tail_offset`` is the byte offset of
         # the unparsed SQL tail; a hostile peer could emit ``2**63`` and
         # Python's slice semantics would silently return "" on
