@@ -943,9 +943,14 @@ class RowsResponse(Message):
             # but on the subsequent ``encode_row_values`` pass rather
             # than the inference pass; the failure point shifts by
             # one call, the rejection still happens.
-            return [_infer_value_type(v) for v in row]
+            types = [_infer_value_type(v) for v in row]
 
-        # Override type to NULL for None values, matching Go's behavior
+        # Override type to NULL for None values, matching Go's behavior.
+        # Applied uniformly across the three type-selection paths above
+        # so the override is not silently load-bearing on
+        # ``_infer_value_type(None) == NULL``: a future helper that
+        # learned a typed-null shape would otherwise drop the override
+        # on the inference path while keeping it on the declared paths.
         for i, v in enumerate(row):
             if v is None and i < len(types):
                 types[i] = ValueType.NULL
