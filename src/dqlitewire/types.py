@@ -800,7 +800,9 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
         # interprets truthiness). The dqlite C server emits a
         # ``DQLITE_BOOLEAN`` cell whenever the column's decltype is
         # ``BOOLEAN`` and the value comes from
-        # ``sqlite3_column_int64`` (``query.c:82``) — i.e. any int the
+        # ``sqlite3_column_int64`` (``encodeColumn`` in
+        # ``dqlite-upstream/src/query.c``, ``DQLITE_BOOLEAN`` case) —
+        # i.e. any int the
         # column actually contains. SQLite typing is dynamic, so a row
         # inserted as ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives
         # with raw=5 on the wire. Strict-rejection would deterministically
