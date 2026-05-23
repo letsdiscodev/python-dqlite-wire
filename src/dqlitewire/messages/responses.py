@@ -58,19 +58,26 @@ from dqlitewire.types import (
 
 logger = logging.getLogger(__name__)
 
-# Defense-in-depth upper bounds for count fields in response messages.
-# Tightened to dqlite's actual emission ceiling: the C server's
-# ``stmt.c:10`` defines ``STMT__MAX_COLUMNS = (1 << 8) - 1 = 255``
-# with the explicit comment "fits in one byte". Any column count
-# above 255 from a real cluster is provably malformed.
+# Defense-in-depth upper bound on the column count in
+# ``RowsResponse``. The C server's ``query.c:111-120`` calls
+# ``sqlite3_column_count(stmt)`` and encodes the result as
+# ``uint64`` WITHOUT a wire-protocol cap; the
+# ``STMT__MAX_COLUMNS`` macro in ``stmt.c:10`` is defined but
+# never referenced (verified by grep across the canonical/dqlite
+# C tree). The Python-side cap is therefore defence-in-depth
+# against pathological peer emissions, not a wire-protocol mirror.
 #
-# SQLite itself documents ``SQLITE_MAX_COLUMN = 32767`` as the
-# absolute build-time maximum (https://www.sqlite.org/limits.html),
-# but dqlite never approaches it. Capping at 255 closes a
-# defence-in-depth amplification window: a hostile peer emitting
-# ``column_count = 32766`` would force ~32k empty-string
-# allocations before per-string size caps kick in.
-_MAX_COLUMN_COUNT: Final[int] = 255
+# SQLite's compile-time ``SQLITE_MAX_COLUMN`` default is 2000
+# (raisable to 32767 via build flag); a wide-table SELECT against
+# an analytics / feature-store schema legitimately crosses the
+# prior 255 cap. Cap at SQLite's documented default so legitimate
+# frames decode while still rejecting absurd peer emissions. The
+# per-name cap (``_MAX_COLUMN_NAME_SIZE = 4096``) and the frame-
+# envelope cap (default 64 MiB) already bound memory growth from
+# the N × name allocation.
+#
+# Reference: https://www.sqlite.org/limits.html#max_column.
+_MAX_COLUMN_COUNT: Final[int] = 2000
 _MAX_FILE_COUNT: Final[int] = 100
 # Defence-in-depth cap on the ServersResponse node count. Upstream
 # (C ``gateway.c::handle_cluster`` reads ``response.n =
