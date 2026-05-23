@@ -492,12 +492,11 @@ def decode_text(
             if scan_end < len(data):
                 raise DecodeError(f"{label} length exceeds maximum ({max_size})")
             raise DecodeError(f"{label} not null-terminated")
-        # Cap on bytes BEFORE the UTF-8 decode allocation. Without
-        # this, a 100 MiB hostile-peer payload that happens to be
-        # NUL-terminated near the end is materialised in full just to
-        # be rejected. Symmetric with the memoryview branch.
-        if null_pos > max_size:
-            raise DecodeError(f"{label} length {null_pos} exceeds maximum ({max_size})")
+        # ``bytes.find(needle, 0, scan_end)`` returns ``-1`` or a
+        # value strictly less than ``scan_end = min(len(data),
+        # max_size + 1)``, so ``null_pos <= max_size`` by
+        # construction. The cap is enforced by the ``scan_end``
+        # bound; no post-find check is needed.
         try:
             text = data[:null_pos].decode("utf-8", errors=errors)
         except UnicodeDecodeError as e:

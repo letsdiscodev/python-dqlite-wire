@@ -1,16 +1,13 @@
 """``decode_text`` defends against attacker-controlled lengths past
 the cap on both the bytes branch and the chunked-memoryview branch.
-The chunked branch is well-tested; the bytes branch's not-terminated
-and ``null_pos > max_size`` post-cap arms were uncovered.
+The chunked branch is well-tested; the bytes branch's
+not-null-terminated and length-exceeds-maximum arms were uncovered.
 
-Pin both:
-- A bytes payload whose NUL lands within the scan window but past
-  ``max_size`` raises with a length-cited ``DecodeError``.
-- The same shape via the bytes-branch ``if null_pos > max_size:``
-  post-cap check (the ``raise DecodeError(f"{label} length {null_pos}
-  exceeds maximum ({max_size})")`` arm) is exercised by the existing
-  chunked path tests; here we assert the bytes path emits the same
-  error.
+The bytes branch caps the NUL scan at ``scan_end = min(len(data),
+max_size + 1)``. If no NUL is found within that window but the
+payload itself is longer than the window, that is the "length
+exceeds maximum" shape. The boundary case (NUL at exactly
+``max_size``) is accepted.
 """
 
 import pytest
@@ -21,11 +18,11 @@ from dqlitewire.types import decode_text
 
 def test_bytes_branch_post_cap_check_rejects() -> None:
     """``max_size=10`` with a 12-byte payload whose NUL lies at byte
-    11 — within the ``max_size + 1 = 11`` scan window but past
-    ``max_size``. Pre-fix this was caught by an outer
-    ``null_pos > max_size`` check after the decode; the bytes-branch
-    ``if null_pos > max_size:`` short-circuits BEFORE the UTF-8
-    decode."""
+    11 — outside the ``scan_end = max_size + 1 = 11`` window
+    (``find``'s ``end`` argument is exclusive). The
+    ``null_pos < 0 and scan_end < len(data)`` arm raises
+    ``DecodeError`` with the length-exceeds-maximum wording before
+    any UTF-8 decode runs."""
     # 11 bytes of 'X' followed by NUL.
     data = b"X" * 11 + b"\x00"
     with pytest.raises(DecodeError, match="exceeds maximum"):
