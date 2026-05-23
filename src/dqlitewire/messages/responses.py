@@ -72,6 +72,16 @@ logger = logging.getLogger(__name__)
 # allocations before per-string size caps kick in.
 _MAX_COLUMN_COUNT: Final[int] = 255
 _MAX_FILE_COUNT: Final[int] = 100
+# Defence-in-depth cap on the ServersResponse node count. Upstream
+# (C ``gateway.c::handle_cluster`` reads ``response.n =
+# g->raft->configuration.n``, an ``unsigned``; Go ``getNodes`` in
+# ``internal/protocol/message.go`` accepts any uint64 it receives)
+# imposes no protocol-level limit on the wire field. 10_000 is chosen
+# because Raft consensus latency precludes realistic deployments
+# materially above ~100 nodes; anything beyond that range from a real
+# cluster is hostile or buggy. Tracked distinctly from
+# ``_MAX_COLUMN_COUNT`` (anchored to the C ``STMT__MAX_COLUMNS``
+# constant) — this constant has no equivalent C/Go anchor.
 _MAX_NODE_COUNT: Final[int] = 10_000
 
 # Upper bound on ``StmtResponse.tail_offset``. The field is a byte
