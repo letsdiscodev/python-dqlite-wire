@@ -398,16 +398,27 @@ class LeaderResponse(Message):
             )
         # Cross-field consistency. Upstream ``raft_leader`` in
         # ``dqlite-upstream/src/gateway.c::handle_leader`` (lines
-        # 269-298) is atomic — emits ``(id=0, address="")`` for "no
-        # leader known" or ``(id>0, address!="")`` for a known leader,
-        # never the mixed shapes. A peer emitting ``(0, nonempty)``
-        # or ``(nonzero, "")`` is malformed; reject at the wire
-        # boundary so every consumer benefits, not just the client-
-        # side ``leader_info`` / ``_query_leader`` guards. Truncate
-        # the address in the error message to bound diagnostic noise
-        # (the full address has already been validated as ≤
-        # ``_MAX_ADDRESS_SIZE`` so this is overflow guarding only).
-        if (node_id == 0) != (not address):
+        # 269-298) emits ``(id=0, address="")`` for "no leader known"
+        # or ``(id>0, address!="")`` for a known leader. The
+        # ``(0, nonempty)`` shape is malformed by construction — a
+        # peer setting an address but reporting id=0 is hostile or
+        # corrupt — and we reject it here.
+        #
+        # The ``(nonzero, "")`` shape is reachable on a real follower
+        # after a ``RAFT_NOMEM`` from
+        # ``dqlite-upstream/src/raft/recv.c::recvUpdateLeader``: step 1
+        # assigns ``current_leader.id = id``; step 4 mallocs the new
+        # address. If the malloc fails, the follower is left with
+        # ``(id=N, address=NULL)`` until the next AppendEntries
+        # arrival re-tries the update. ``gateway.c::handle_leader``
+        # null-coerces ``address=NULL`` to ``""``, so the on-wire
+        # shape is ``(N, "")``. Treat this as "leader id known,
+        # address not yet propagated" — a recoverable cluster
+        # window. The Go client (``go-dqlite``) and the C client
+        # (``dqlite-upstream/src/client/protocol.c``) both accept
+        # this shape and treat it as "leader unknown". Logging at
+        # WARNING preserves forensic visibility for operators.
+        if node_id == 0 and address:
             # Sanitise before truncation so a hostile peer cannot smuggle
             # U+2028 / bidi marks / ZWSP through ``!r`` (``repr`` escapes
             # LF / CR but not the other line-separator-class control
@@ -418,7 +429,14 @@ class LeaderResponse(Message):
             raise DecodeError(
                 "LeaderResponse: malformed (node_id, address) — "
                 f"got id={node_id!r} addr={display_addr!r}; "
-                "expected both or neither (raft_leader atomicity)"
+                "node_id=0 must be paired with an empty address"
+            )
+        if node_id != 0 and not address:
+            logger.warning(
+                "LeaderResponse: follower reports leader_id=%d with empty "
+                "address; treating as 'leader unknown' (likely RAFT_NOMEM "
+                "transient on the follower's leader-update path)",
+                node_id,
             )
         # Address is stored raw — it flows into TCP routing and
         # allowlist comparisons downstream. Sanitisation happens at

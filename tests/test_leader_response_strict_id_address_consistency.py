@@ -1,12 +1,21 @@
-"""Pin: ``LeaderResponse.decode_body`` rejects malformed
-``(node_id=0, address!="")`` and ``(node_id>0, address="")`` shapes
-that a conforming upstream C server never emits.
+"""Pin: ``LeaderResponse.decode_body`` rejects the malformed
+``(node_id=0, address!="")`` shape and tolerates the
+``(node_id>0, address="")`` shape that a real follower can transiently
+emit after a ``RAFT_NOMEM`` from ``recvUpdateLeader``.
 
 Upstream ``raft_leader`` in ``dqlite-upstream/src/gateway.c::handle_leader``
-is atomic — both fields are set together or neither. The wire-layer
-rejection is defense-in-depth: the client-side ``_query_leader`` and
-``leader_info`` already reject these shapes, but a non-client
-consumer of ``LeaderResponse`` would not benefit from those guards.
+normally emits paired ``(0, "")`` or ``(id>0, address!="")``. The
+``(node_id>0, address="")`` shape is reachable persistently when
+``recvUpdateLeader`` (raft/recv.c) sets ``current_leader.id = id``
+in step 1 and then fails to malloc the address buffer in step 4
+(``RAFT_NOMEM``). ``handle_leader`` null-coerces the NULL address
+to ``""`` on the wire. The Go client and the C client both treat
+this as "leader unknown"; the Python decoder matches that behaviour
+with a WARNING for forensic visibility.
+
+The ``(node_id=0, address!="")`` shape remains malformed by
+construction — a peer setting an address but reporting id=0 is
+hostile or corrupt — and is still rejected.
 """
 
 from __future__ import annotations
@@ -45,11 +54,20 @@ def test_leader_response_zero_id_with_nonempty_address_rejected() -> None:
         LeaderResponse.decode_body(body)
 
 
-def test_leader_response_nonzero_id_with_empty_address_rejected() -> None:
-    """Hostile/buggy peer emitting ``(42, "")`` is rejected."""
+def test_leader_response_nonzero_id_with_empty_address_accepted_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``(42, "")`` is the RAFT_NOMEM transient: ``recvUpdateLeader``
+    sets ``current_leader.id`` first and may then fail to malloc the
+    address. A WARNING records the transient; the message decodes to
+    an unusable shape that the client layer treats as "leader unknown"
+    (same as Go / C clients)."""
     body = _build_body(42, "")
-    with pytest.raises(DecodeError, match="malformed"):
-        LeaderResponse.decode_body(body)
+    with caplog.at_level("WARNING", logger="dqlitewire.messages.responses"):
+        resp = LeaderResponse.decode_body(body)
+    assert resp.node_id == 42
+    assert resp.address == ""
+    assert any("RAFT_NOMEM" in rec.message for rec in caplog.records)
 
 
 def _build_body_raw_text(node_id: int, address: str) -> bytes:
