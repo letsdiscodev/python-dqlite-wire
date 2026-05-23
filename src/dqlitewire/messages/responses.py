@@ -1470,9 +1470,6 @@ class ServersResponse(Message):
         seen_ids: set[int] = set()
         for _ in range(count):
             node_id = decode_uint64(view[offset:])
-            if node_id in seen_ids:
-                raise DecodeError(f"Duplicate node_id {node_id} in ServersResponse")
-            seen_ids.add(node_id)
             offset += 8
             address, consumed = decode_text(
                 view[offset:], max_size=_MAX_ADDRESS_SIZE, label="server address"
@@ -1482,19 +1479,21 @@ class ServersResponse(Message):
             # allowlist comparisons stays authentic. See
             # ``LeaderResponse.decode_body`` for rationale.
             offset += consumed
-            # Atomicity check on the (node_id, address) pair, mirroring
-            # ``LeaderResponse.decode_body``. Raft node ids are >= 1 by
-            # invariant (0 is reserved for "no node"), and ``Add``
-            # requests reject empty addresses, so the only legitimate
-            # shapes are ``(0, "")`` (only meaningful in the
-            # ``LeaderResponse`` "no leader" context — never inside a
-            # ServersResponse entry where ``count > 0``) and
-            # ``(>=1, non-empty)``. A peer (mock / proxy / hostile fork)
-            # emitting a mixed shape would silently propagate to
-            # ``dqliteclient.cluster.NodeInfo`` and the SQLAlchemy slot
-            # cache; rejecting at the wire boundary keeps the
-            # downstream layers' invariants honest.
-            if (node_id == 0) != (not address):
+            # Reject any entry that's not a legitimate raft
+            # configuration row. Upstream
+            # ``gateway.c::encodeServer`` populates entries from
+            # ``raft->configuration.servers`` which always have
+            # ``node_id >= 1`` (id=0 is reserved for the
+            # ``LeaderResponse`` "no leader" sentinel) and a
+            # non-empty address (``Add`` requests reject empty
+            # addresses upstream). The only legitimate shape is
+            # ``(>=1, non-empty)``. A peer (mock / proxy / hostile
+            # fork) emitting ``(0, *)`` or ``(>=1, "")`` would
+            # silently propagate phantom nodes or routeless ids
+            # into ``dqliteclient.cluster.NodeInfo`` and the
+            # SQLAlchemy slot cache; rejecting at the wire boundary
+            # keeps downstream invariants honest.
+            if node_id == 0 or not address:
                 # Sanitise before truncation; see ``LeaderResponse``
                 # sibling for the U+2028 / bidi-class rationale.
                 sanitised = sanitize_server_text(address)
@@ -1502,8 +1501,12 @@ class ServersResponse(Message):
                 raise DecodeError(
                     "ServersResponse: malformed (node_id, address) entry — "
                     f"got id={node_id!r} addr={display_addr!r}; "
-                    "expected both or neither (raft configuration atomicity)"
+                    "expected node_id>=1 with non-empty address "
+                    "(raft configuration invariant)"
                 )
+            if node_id in seen_ids:
+                raise DecodeError(f"Duplicate node_id {node_id} in ServersResponse")
+            seen_ids.add(node_id)
             raw_role = decode_uint64(view[offset:])
             offset += 8
             try:

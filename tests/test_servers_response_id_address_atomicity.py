@@ -52,6 +52,23 @@ def test_servers_response_rejects_nonzero_id_with_empty_address() -> None:
         ServersResponse.decode_body(body)
 
 
+def test_servers_response_rejects_zero_id_with_empty_address() -> None:
+    """Symmetric ``(0, "")`` is also rejected inside a ServersResponse
+    entry. The shape is meaningful only in ``LeaderResponse`` ("no
+    leader known"); inside a ServersResponse it represents a phantom
+    no-op node that the prior atomicity-only predicate silently
+    accepted. Raft node ids are >= 1 by invariant — a configuration
+    entry with id=0 is never legitimate."""
+    body = (
+        encode_uint64(1)  # count = 1
+        + encode_uint64(0)  # node_id = 0 (invalid in ServersResponse)
+        + encode_text("")  # address = "" (the symmetric pair)
+        + encode_uint64(0)  # role = VOTER
+    )
+    with pytest.raises(DecodeError, match="malformed"):
+        ServersResponse.decode_body(body)
+
+
 def test_servers_response_accepts_legitimate_entry() -> None:
     """``(node_id=42, address="leader:9001", role=VOTER)`` is the
     canonical happy-path shape — no atomicity reject."""
