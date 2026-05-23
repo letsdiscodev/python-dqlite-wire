@@ -1931,31 +1931,53 @@ class TestDecoderPoisonedState:
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.decode()
 
-    def test_decode_continuation_poisons_on_wrong_type(self) -> None:
-        """decode_continuation() must poison the decoder when the next
-        message is not a ROWS continuation, FAILURE, or EMPTY. The bytes
-        have been consumed from the buffer; subsequent operations cannot
-        trust the offset.
+    def test_decode_continuation_raises_streamerror_on_wrong_type_without_poison(
+        self,
+    ) -> None:
+        """decode_continuation() raises StreamError when the next
+        message is not a ROWS continuation, FAILURE, or EMPTY — and
+        does NOT poison the decoder.
 
-        ``EmptyResponse`` is now treated as a clean interrupt-ack
+        ``read_message`` already advanced past the offending frame, so
+        the buffer offset is correctly aligned with the next frame
+        boundary. A hostile or buggy peer sending one unexpected-type
+        frame must not kill the connection's decoder; the caller can
+        choose to invalidate or resync. Mirrors the existing
+        ``ServerFailure`` precedent (clean offset, do NOT poison) and
+        Go's ``Protocol.Recv`` which also does not poison on
+        unexpected types.
+
+        ``EmptyResponse`` is treated as a clean interrupt-ack
         terminator and does NOT poison — that case is covered in
-        :class:`TestDecoderContinuation` separately. Use a
-        ``ResultResponse`` here to exercise the genuine-desync path.
+        :class:`TestDecoderContinuation` separately.
         """
-        from dqlitewire.exceptions import ProtocolError
+        from dqlitewire.exceptions import StreamError
 
         decoder = MessageDecoder(is_request=False)
         decoder._continuation_expected = True
         result = ResultResponse(last_insert_id=0, rows_affected=0).encode()
         decoder.feed(result)
 
-        with pytest.raises(ProtocolError, match="Expected ROWS continuation"):
+        with pytest.raises(StreamError, match="Expected ROWS continuation"):
             decoder.decode_continuation()
-        assert decoder.is_poisoned is True
+        # Load-bearing: the decoder is NOT poisoned. The offending
+        # frame was consumed cleanly; the next legitimate frame on the
+        # wire can still be decoded after the caller handles the
+        # StreamError.
+        assert decoder.is_poisoned is False
+        # The continuation flag was also cleared at the raise site.
+        assert decoder._continuation_expected is False
 
-        # Subsequent decode() also fails poisoned.
-        with pytest.raises(ProtocolError, match="poisoned"):
-            decoder.decode()
+        # A subsequent legitimate decode() works against the now-empty
+        # buffer (returns None — no more bytes), not poisoned.
+        assert decoder.decode() is None
+
+        # And feeding a fresh well-formed message decodes cleanly.
+        msg = LeaderResponse(node_id=1, address="x:1").encode()
+        decoder.feed(msg)
+        decoded = decoder.decode()
+        assert isinstance(decoded, LeaderResponse)
+        assert decoded.node_id == 1
 
     def test_decode_bytes_honors_poison(self) -> None:
         """Regression: decode_bytes must honor the poison flag.

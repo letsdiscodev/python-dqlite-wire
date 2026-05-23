@@ -675,6 +675,20 @@ class MessageDecoder:
             # so subsequent requests (after the user handles the
             # OperationalError) decode normally. Do NOT poison.
             raise
+        except StreamError:
+            # Wrong ``msg_type`` mid-continuation. ``read_message``
+            # already advanced past the offending frame; the buffer
+            # offset is correctly aligned with the next frame
+            # boundary and the continuation flag was cleared at the
+            # raise site. The connection is wire-coherent — a hostile
+            # or buggy peer that sent one unexpected-type frame
+            # should not kill the connection. Mirror the
+            # ``ServerFailure`` precedent above: do NOT poison.
+            # ``StreamError`` propagates so the caller can choose to
+            # invalidate or resync (e.g. issue the next request) —
+            # Go's ``Protocol.Recv`` has the same non-poisoning
+            # behaviour for unexpected types.
+            raise
         except BaseException as e:
             # Counter-finalise BEFORE poisoning so the discipline is
             # symmetric with the clean-exit arms — staleness is
