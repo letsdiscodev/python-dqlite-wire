@@ -225,7 +225,7 @@ from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_s
 from dqlitewire.truncate import DEFAULT_MAX_RAW_MESSAGE, cap_raw_message
 from dqlitewire.types import WireInput, WireValue
 
-__version__: _Final[str] = "0.2.0"
+__version__: _Final[str] = "0.2.1"
 
 __all__ = [
     "BARE_DATABASE_ERROR_CODES",

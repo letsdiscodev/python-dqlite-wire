@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dqlite-wire"
-version = "0.2.0"
+version = "0.2.1"
 description = "Pure Python wire protocol implementation for dqlite"
 readme = "README.md"
 requires-python = ">=3.13"
