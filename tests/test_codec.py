@@ -926,15 +926,22 @@ class TestRoundTrip:
         assert isinstance(decoded, StmtResponse)
         assert decoded.tail_offset == 42
 
-    def test_decode_bytes_slices_body_to_header_size(self) -> None:
-        """decode_bytes() must not pass trailing bytes to the message decoder.
+    def test_decode_bytes_rejects_envelope_trailing_bytes(self) -> None:
+        """decode_bytes() must reject envelope trailing bytes beyond
+        the declared body size (strict-decode parity with the per-
+        message body-trailing-bytes checks).
 
-        AssignRequest uses len(data) to distinguish Promote (1 word) from
-        Assign (2 words). If trailing bytes leak through, a Promote message
-        would be misinterpreted as Assign with a garbage role.
+        Before the strict-envelope fix, the envelope strip silently
+        sliced any input length > ``HEADER_SIZE + body_size``, so a
+        caller passing ``data = header + body + garbage`` got a
+        successful decode with no signal that the input was
+        malformed. AssignRequest's per-decoder branching (1 word =
+        Promote, 2 words = Assign) was held together by the silent
+        slice but that contract failed every other per-message
+        decoder's strict-trailing-bytes posture. The envelope-level
+        check now matches the per-message-level discipline.
         """
         from dqlitewire.messages.base import Header
-        from dqlitewire.messages.requests import AssignRequest
         from dqlitewire.types import encode_uint64
 
         # Build a Promote message (1 word body: just node_id)
@@ -945,14 +952,8 @@ class TestRoundTrip:
         trailing = encode_uint64(99)
         data = header.encode() + body + trailing
 
-        decoded = decode_message(data, is_request=True)
-        assert isinstance(decoded, AssignRequest)
-        assert decoded.node_id == 42
-        # Legacy PROMOTE decodes to VOTER (not 99 from trailing
-        # bytes; the body slice is bounded by the header word count).
-        from dqlitewire.constants import NodeRole
-
-        assert decoded.role == NodeRole.VOTER
+        with pytest.raises(DecodeError, match="trailing"):
+            decode_message(data, is_request=True)
 
     def test_decode_bytes_rejects_short_body(self) -> None:
         """decode_bytes() must raise DecodeError if body is shorter than header claims."""

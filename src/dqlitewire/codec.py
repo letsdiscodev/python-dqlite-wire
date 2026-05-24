@@ -835,7 +835,29 @@ class MessageDecoder:
                 f"Message body too short: header says {body_size} bytes, "
                 f"got {len(data) - HEADER_SIZE}"
             )
-        body = data[HEADER_SIZE : HEADER_SIZE + body_size]
+        # Strict-decode parity with every per-message decoder
+        # (FailureResponse, LeaderResponse, RowsResponse,
+        # ServersResponse, FilesResponse, all request decoders), each
+        # of which enforces ``if offset != len(data): raise
+        # DecodeError("trailing bytes")`` for its own body. The
+        # envelope-level strip previously sliced silently on any input
+        # length > ``HEADER_SIZE + body_size``, so a caller passing
+        # ``data = header + body + garbage`` got a successful decode
+        # with no indication that the input was malformed.
+        # The streaming path (``ReadBuffer.read_message``) returns
+        # exactly ``HEADER_SIZE + body_size`` bytes so this guard is
+        # unreachable through streaming — the cost is borne only by
+        # direct callers (mock servers, golden-byte harnesses,
+        # fuzzers, packet replay tools) that benefit most from the
+        # strict diagnostic.
+        if len(data) > total_size:
+            raise DecodeError(
+                f"Message has {len(data) - total_size} trailing bytes "
+                f"after declared body (header says {body_size} bytes "
+                f"+ {HEADER_SIZE}-byte header = {total_size}, "
+                f"got {len(data)})"
+            )
+        body = data[HEADER_SIZE:total_size]
 
         msg_class = self._type_map.get(header.msg_type)
         if msg_class is None:
