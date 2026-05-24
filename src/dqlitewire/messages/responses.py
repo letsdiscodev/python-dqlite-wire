@@ -353,6 +353,40 @@ class LeaderResponse(Message):
 
     @override
     def encode_body(self) -> bytes:
+        # Raft-leader atomicity invariant (mirrors decode_body's check
+        # below). Upstream ``gateway.c::handle_leader`` only ever
+        # emits ``(0, "")`` or ``(N, addr)`` for ``N >= 1``. The
+        # ``(N, "")`` shape is also reachable on a real follower
+        # after a ``RAFT_NOMEM`` on the leader-update path (see
+        # decode_body's tolerant arm). The ``(0, non-empty)`` shape
+        # is malformed by construction — without this guard,
+        # ``LeaderResponse(node_id=0, address="evil").encode_body()``
+        # would produce bytes the matching decode_body refuses,
+        # leaving mock-server / proxy / golden-byte authors with a
+        # value that round-trips in neither direction.
+        #
+        # Enforced at encode_body (not ``__post_init__``) because
+        # ``decode_body_legacy`` legitimately constructs
+        # ``LeaderResponse(0, addr)`` from the legacy wire shape
+        # (legacy bodies carry only the address; ``node_id`` is
+        # hard-coded 0 on decode). ``encode_body_legacy`` already
+        # rejects non-zero ``node_id`` symmetrically — the modern
+        # encoder now mirrors that "encode-time strict" pattern.
+        if self.node_id == 0 and self.address:
+            # Sanitise + truncate for log-safe diagnostics — the raised
+            # message can land in shared operator logs and the address
+            # is caller-supplied. Mirrors the decode-side reject's
+            # ``sanitize_server_text`` + 64-char cap discipline
+            # (defense in depth against U+2028 / bidi / ZWSP smuggling
+            # through ``!r``, which escapes LF / CR but not the other
+            # line-separator-class glyphs).
+            sanitised = sanitize_server_text(self.address)
+            display_addr = sanitised if len(sanitised) <= 64 else sanitised[:64] + "…"
+            raise EncodeError(
+                f"LeaderResponse: node_id=0 must be paired with an "
+                f"empty address (raft-leader atomicity invariant); "
+                f"got address={display_addr!r}"
+            )
         return encode_uint64(self.node_id) + encode_text(
             self.address, max_size=_MAX_ADDRESS_SIZE, label="leader address"
         )
