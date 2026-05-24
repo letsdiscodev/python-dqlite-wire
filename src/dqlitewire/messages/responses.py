@@ -1416,6 +1416,31 @@ class NodeInfo:
         # ``AssignRequest.__post_init__`` which does the same
         # coercion + validation.
         _validate_uint64("node_id", self.node_id)
+        # Raft-configuration invariant (mirrors ServersResponse.
+        # decode_body's per-entry check). Upstream ``gateway.c::
+        # encodeServer`` populates from ``raft->configuration.servers``,
+        # which the Raft API requires to have ``node_id >= 1`` (id=0 is
+        # the LeaderResponse "no leader" sentinel and never a real
+        # configuration row) and a non-empty address (the ``Add``
+        # request rejects empty addresses upstream). Without this guard,
+        # a caller-built ``NodeInfo(0, "evil", VOTER)`` passed to a
+        # ``ServersResponse`` would encode to bytes the same package's
+        # decoder refuses — values that round-trip in neither direction.
+        # Unlike LeaderResponse, no legacy decoder produces (0, addr)
+        # entries; every NodeInfo construction site uses the legitimate
+        # shape, so the check lives on ``__post_init__`` (cheapest fail-
+        # point at the offending caller frame). Symmetric with the
+        # LeaderResponse.encode_body atomicity check.
+        if self.node_id == 0:
+            raise EncodeError(
+                f"NodeInfo: node_id must be >= 1 (raft-configuration "
+                f"invariant); got node_id={self.node_id}"
+            )
+        if not self.address:
+            raise EncodeError(
+                f"NodeInfo: address must be non-empty for node_id="
+                f"{self.node_id} (raft-configuration invariant)"
+            )
         if isinstance(self.role, NodeRole):
             return
         # ``IntEnum`` accepts ``NodeRole(0)`` etc. but not

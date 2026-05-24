@@ -2087,9 +2087,13 @@ class TestEncodeSideCaps:
             LeaderResponse(node_id=7, address="x:1").encode_body_legacy()
 
     def test_servers_response_rejects_oversize_node_count(self) -> None:
+        # ``range(1, _MAX_NODE_COUNT + 2)`` skips node_id=0 (rejected
+        # at construction by NodeInfo.__post_init__'s raft-config
+        # invariant). Still produces _MAX_NODE_COUNT + 1 entries to
+        # trip the count cap.
         nodes = [
             NodeInfo(node_id=i, address="n:9", role=NodeRole.SPARE)
-            for i in range(_MAX_NODE_COUNT + 1)
+            for i in range(1, _MAX_NODE_COUNT + 2)
         ]
         with pytest.raises(EncodeError, match="node count"):
             ServersResponse(nodes=nodes).encode_body()
