@@ -64,7 +64,7 @@ Go which returns ``time.Time``. Conversion to ``datetime`` is the
 dbapi layer's job; bare wire-layer consumers must convert
 themselves.
 
-``RowsResponse._get_row_types`` falls through to ``encode_value(v)[1]``
+``RowsResponse._get_row_types`` falls through to ``_infer_value_type(v)``
 inference when both ``row_types`` and ``column_types`` are empty.
 This inference cannot pick UNIXTIME (server-only), ISO8601 (string
 indistinguishable from TEXT), or BOOLEAN (only Python ``bool``
