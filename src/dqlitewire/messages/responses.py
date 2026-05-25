@@ -609,6 +609,22 @@ class WelcomeResponse(Message):
         if len(data) != 8:
             raise DecodeError(f"WelcomeResponse body must be exactly 8 bytes, got {len(data)}")
         heartbeat_timeout = decode_uint64(data)
+        if heartbeat_timeout == 0:
+            # Surface the docstring's "misconfigured peer or non-
+            # conforming server" diagnostic content into the log
+            # stream. Upstream ``config.c`` defaults to 15000 and
+            # never emits 0, so a 0 from the wire indicates a peer
+            # bug; downstream consumers (``trust_server_heartbeat``)
+            # fall back to the static read_timeout floor. Aligns
+            # with the ``ServersResponse.decode_body`` warn-mode
+            # precedent below. The permissive-accept contract is
+            # preserved — no DecodeError raised.
+            logger.warning(
+                "WelcomeResponse: heartbeat_timeout=0 — peer is "
+                "misconfigured or non-conforming (upstream config.c "
+                "defaults to 15000ms and never emits 0); downstream "
+                "consumers fall back to the static read_timeout floor"
+            )
         return cls(heartbeat_timeout)
 
 
