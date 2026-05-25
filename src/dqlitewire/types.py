@@ -737,12 +737,28 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         # coercion silently mapped values like ``5`` or ``-1`` to True,
         # which round-trips as the bool True and loses the caller's
         # original value.
+        #
+        # The ``isinstance(value, int)`` guard intentionally admits
+        # int SUBCLASSES (e.g. ``enum.IntEnum`` members) but not
+        # numeric proxies like ``numpy.int64`` / ``numpy.bool_`` /
+        # ``decimal.Decimal`` / ``fractions.Fraction`` — they expose
+        # ``__int__`` / ``__index__`` but do NOT subclass ``int``.
+        # Silently accepting them would round-trip ``numpy.int64(5)``
+        # through ``True`` and lose the caller's original value (same
+        # footgun as the strictness above). Mirrors the documented
+        # rejection rationale at ``encode_double``: callers passing
+        # numeric proxies must coerce explicitly (``int(x)`` /
+        # ``bool(x)``) at the bind site.
         if isinstance(value, bool):
             return encode_uint64(1 if value else 0), value_type
         if isinstance(value, int) and value in (0, 1):
             return encode_uint64(value), value_type
         raise EncodeError(
-            f"BOOLEAN requires bool (or exactly 0/1), got {type(value).__name__}={value!r}"
+            f"BOOLEAN requires bool (or exactly 0/1), "
+            f"got {type(value).__name__}={value!r}. "
+            f"Numeric proxies (numpy.int64, numpy.bool_, Decimal, "
+            f"Fraction, etc.) are not int subclasses and must be "
+            f"coerced via int(x) or bool(x) at the bind site."
         )
     elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
         # Note: UNIXTIME is a server-to-client-only type (the C server's
