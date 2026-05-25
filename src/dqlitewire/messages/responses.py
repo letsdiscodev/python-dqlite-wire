@@ -318,6 +318,8 @@ class FailureResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
+        if schema != 0:
+            raise DecodeError(f"FailureResponse unsupported schema version {schema}")
         # Require at least 9 bytes: 8 for code + 1 minimum for the
         # null-terminator of an empty message. Without that, an
         # exactly-8-byte body passes the size check and surfaces a
@@ -452,6 +454,8 @@ class LeaderResponse(Message):
         constructor ``version`` matching the per-connection
         negotiated value (the same value the encoder used).
         """
+        if schema != 0:
+            raise DecodeError(f"LeaderResponse unsupported schema version {schema}")
         # Response-layer length guard. Without this, a short body
         # surfaces as the inner helper's "Need 8 bytes for uint64"
         # diagnostic which does not identify the response being
@@ -600,6 +604,8 @@ class WelcomeResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "WelcomeResponse":
+        if schema != 0:
+            raise DecodeError(f"WelcomeResponse unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"WelcomeResponse body must be exactly 8 bytes, got {len(data)}")
         heartbeat_timeout = decode_uint64(data)
@@ -628,6 +634,8 @@ class DbResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "DbResponse":
+        if schema != 0:
+            raise DecodeError(f"DbResponse unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"DbResponse body must be exactly 8 bytes, got {len(data)}")
         db_id = decode_uint32(data)
@@ -907,6 +915,8 @@ class ResultResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "ResultResponse":
+        if schema != 0:
+            raise DecodeError(f"ResultResponse unsupported schema version {schema}")
         if len(data) != 16:
             raise DecodeError(f"ResultResponse body must be exactly 16 bytes, got {len(data)}")
         last_insert_id = decode_uint64(data)
@@ -1107,6 +1117,8 @@ class RowsResponse(Message):
         *,
         text_errors: str = "strict",
     ) -> "RowsResponse":
+        if schema != 0:
+            raise DecodeError(f"RowsResponse unsupported schema version {schema}")
         # Wrap in memoryview so per-iteration slices are O(1) rather
         # than O(remaining). Without this, a body with many small rows
         # triggers quadratic-time decode: each
@@ -1265,6 +1277,8 @@ class EmptyResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "EmptyResponse":
+        if schema != 0:
+            raise DecodeError(f"EmptyResponse unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"EmptyResponse body must be exactly 8 bytes, got {len(data)}")
         # Read-and-discard the reserved uint64 to match Go's
@@ -1334,6 +1348,8 @@ class FilesResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
+        if schema != 0:
+            raise DecodeError(f"FilesResponse unsupported schema version {schema}")
         # Memoryview for O(1) slicing in the per-file loop.
         view = memoryview(data)
         files: dict[str, bytes] = {}
@@ -1561,6 +1577,8 @@ class ServersResponse(Message):
         ``"unknown role"``. Python's ``"warn"`` / ``"accept"`` modes
         approach that posture; ``"reject"`` keeps the strict default.
         """
+        if schema != 0:
+            raise DecodeError(f"ServersResponse unsupported schema version {schema}")
         if unknown_role_policy not in ("reject", "warn", "accept"):
             raise DecodeError(
                 "unknown_role_policy must be 'reject', 'warn', or "
@@ -1699,6 +1717,8 @@ class MetadataResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "MetadataResponse":
+        if schema != 0:
+            raise DecodeError(f"MetadataResponse unsupported schema version {schema}")
         if len(data) != 16:
             raise DecodeError(f"MetadataResponse body must be exactly 16 bytes, got {len(data)}")
         failure_domain = decode_uint64(data)
