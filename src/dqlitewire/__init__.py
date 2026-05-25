@@ -235,6 +235,7 @@ from dqlitewire.exceptions import (
 from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_server_text
 from dqlitewire.truncate import DEFAULT_MAX_RAW_MESSAGE, cap_raw_message
+from dqlitewire.tuples import RowMarker
 from dqlitewire.types import WireInput, WireValue
 
 __version__: _Final[str] = "0.2.1"
@@ -313,6 +314,7 @@ __all__ = [
     "ReadBuffer",
     "RequestType",
     "ResponseType",
+    "RowMarker",
     "ServerFailure",
     "StreamError",
     "ValueType",

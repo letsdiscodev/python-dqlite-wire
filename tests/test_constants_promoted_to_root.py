@@ -32,3 +32,11 @@ def test_header_size_and_word_size_reachable_at_root() -> None:
     promoted; the broader test above catches future drift."""
     assert dqlitewire.HEADER_SIZE == constants.HEADER_SIZE
     assert dqlitewire.WORD_SIZE == constants.WORD_SIZE
+
+
+def test_row_marker_reachable_at_root() -> None:
+    """``RowMarker`` (defined in ``tuples.py`` and listed in
+    ``tuples.__all__``) is also reachable from the package root."""
+    from dqlitewire import tuples
+
+    assert dqlitewire.RowMarker is tuples.RowMarker
