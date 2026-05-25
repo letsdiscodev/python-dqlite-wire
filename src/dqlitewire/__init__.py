@@ -35,9 +35,13 @@ Cap defaults that affect interop and hostile-server resistance:
 - ``_MAX_BLOB_SIZE`` and ``_MAX_TEXT_VALUE_SIZE``: 64 MiB each
   (aligned with the message-size cap so a value fitting in the
   frame envelope is not rejected at the inner cap).
-- ``_MAX_COLUMN_COUNT``: 255 (matches the C server's
-  ``STMT__MAX_COLUMNS``; any column count above 255 from a real
-  cluster is provably malformed).
+- ``_MAX_COLUMN_COUNT``: 2000 (SQLite's documented
+  ``SQLITE_MAX_COLUMN`` compile-time default; the dqlite C server
+  has no wire-protocol cap on the column count, so this is a
+  Python-side defense-in-depth bound. The C ``STMT__MAX_COLUMNS``
+  macro exists but is unreferenced upstream, so it is no longer
+  the anchor. Reference:
+  https://www.sqlite.org/limits.html#max_column).
 
 Empty-params encoding: empty ``Tuple`` parameters encode as zero
 bytes by default (Go-style); the C server's ``tuple_encoder``
