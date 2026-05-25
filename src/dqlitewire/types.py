@@ -687,8 +687,21 @@ def _infer_value_type(value: WireInput) -> ValueType:
     raise EncodeError(
         f"Cannot infer wire type for value of type {type(value).__name__!r}. "
         f"The wire codec only accepts bool, int, float, str, bytes-like, "
-        f"or None. Callers passing datetime/date/etc. must convert to str "
-        f"(for ISO8601) or int (for UNIXTIME) at the driver layer."
+        f"or None. Conversion guidance for common date/time types:\n"
+        f"  - datetime.datetime: str via .isoformat() (ValueType.ISO8601), "
+        f"or int via int(dt.timestamp()) (ValueType.UNIXTIME, aware "
+        f"datetimes only)\n"
+        f"  - datetime.date: str via .isoformat() (ValueType.ISO8601) "
+        f"only — no UNIXTIME mapping (UNIXTIME is seconds since epoch; "
+        f"dates have no time component, so ordinal-vs-epoch conversions "
+        f"silently round-trip to year 0001)\n"
+        f"  - datetime.time: str via .isoformat() (ValueType.ISO8601) "
+        f"only — no UNIXTIME mapping\n"
+        f"  - decimal.Decimal / fractions.Fraction: float(x) "
+        f"(ValueType.FLOAT) with explicit precision-loss "
+        f"acknowledgement, or str(x) (ValueType.TEXT) for exact "
+        f"preservation\n"
+        f"Convert at the driver layer before binding."
     )
 
 
