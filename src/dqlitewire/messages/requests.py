@@ -1215,15 +1215,32 @@ class DescribeRequest(Message):
     (``gateway.c`` rejects anything else with ``SQLITE_PROTOCOL``).
     Reject unknown formats client-side so callers get a local
     ``EncodeError`` instead of a confusing server failure.
+
+    Decode-side escape: :meth:`decode_body` accepts a ``strict=False``
+    kwarg that admits any uint64 ``format`` for inspection of
+    captured / synthetic traffic (Go's ``DecodeDescribe`` is a bare
+    ``getUint64``). The instance carries ``_decoded=True`` so the
+    construction-time gate short-circuits; re-encoding such an
+    instance succeeds, but a fresh ``DescribeRequest(format=N)`` with
+    ``N != 0`` is still rejected at construction so production
+    outbound emission cannot accidentally synthesise a payload the
+    server would reject.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.DESCRIBE
 
     format: int = 0
+    # Decoded-non-zero sentinel. Mirrors ``ClusterRequest._decoded`` /
+    # ``AssignRequest._legacy_intent`` — set to ``True`` by the
+    # ``strict=False`` decode path so the V0-only construction gate
+    # short-circuits for proxy / replay tooling. Excluded from
+    # equality / repr; ``init=True`` so the decoder can pass it as a
+    # constructor kwarg uniformly through dataclass machinery.
+    _decoded: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("format", self.format)
-        if self.format != 0:
+        if self.format != 0 and not self._decoded:
             raise EncodeError(
                 f"DescribeRequest format must be 0 (V0); upstream rejects "
                 f"anything else with SQLITE_PROTOCOL. Got {self.format}."
@@ -1235,14 +1252,19 @@ class DescribeRequest(Message):
 
     @classmethod
     @override
-    def decode_body(cls, data: bytes, schema: int = 0) -> "DescribeRequest":
+    def decode_body(cls, data: bytes, schema: int = 0, *, strict: bool = True) -> "DescribeRequest":
         if schema != 0:
             raise DecodeError(f"DescribeRequest unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"DescribeRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
         if format_val != 0:
-            raise DecodeError(f"DescribeRequest format must be 0 (V0); got {format_val}")
+            if strict:
+                raise DecodeError(f"DescribeRequest format must be 0 (V0); got {format_val}")
+            # Non-strict: admit the value so proxy / replay tooling can
+            # round-trip captured traffic from a buggy peer. The
+            # ``_decoded`` sentinel exempts the construction-time gate.
+            return cls(format=format_val, _decoded=True)
         return cls(format_val)
 
 
