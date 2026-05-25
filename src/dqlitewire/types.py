@@ -403,6 +403,21 @@ def decode_text(
     default is a Python-side defensive narrowing, not a wire-spec
     requirement.
 
+    WARNING: ``errors="replace"`` produces ``U+FFFD`` (REPLACEMENT
+    CHARACTER) and ``errors="surrogateescape"`` produces the
+    ``U+DC80``-``U+DCFF`` surrogate range; neither is covered by the
+    ``_CONTROL_CHARS_RE`` character class consulted by
+    :func:`dqlitewire.messages.responses.sanitize_for_log` /
+    :func:`dqlitewire.messages.responses.sanitize_server_text`, so a
+    log-side scrub does NOT replace them. ``surrogateescape`` is also
+    not round-trippable via :func:`encode_text` (the surrogates fail
+    re-encode) and breaks naive ``json.dumps``. Callers using a
+    non-strict mode AND forwarding the result to a log sink should
+    apply their own additional sanitisation (e.g.
+    ``s.encode("ascii", errors="replace").decode("ascii")``) or route
+    the value through a structured-log encoder that handles the
+    residual codepoints explicitly.
+
     Wire-protocol limitation: TEXT is NUL-terminated, so a value with
     embedded NULs on the server side (e.g. written by a non-dqlite
     SQLite client that accepts TEXT with NULs) reads back **truncated
