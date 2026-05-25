@@ -1,6 +1,6 @@
 """Buffer utilities for streaming protocol data."""
 
-from typing import Final, NoReturn
+from typing import ClassVar, Final, NoReturn
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, PoisonedError
@@ -145,7 +145,7 @@ class ReadBuffer:
     socket and decoder.
     """
 
-    DEFAULT_MAX_MESSAGE_SIZE = 64 * 1024 * 1024  # 64 MiB
+    DEFAULT_MAX_MESSAGE_SIZE: ClassVar[int] = 64 * 1024 * 1024  # 64 MiB
 
     def __reduce__(self) -> NoReturn:
         # The class only carries ``bytearray + ints + None`` — no

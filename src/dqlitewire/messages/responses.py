@@ -156,6 +156,14 @@ _MAX_FILE_CONTENT_SIZE: Final[int] = 64 * 1024 * 1024 - 64
 # exception messages even after ``_sanitize_server_text``.
 _MAX_ADDRESS_SIZE: Final[int] = 256
 
+# Default cap on the row count in a single ``RowsResponse`` frame
+# (including the initial frame of a continuation stream). Lifted to
+# module level so the class-attribute alias on ``RowsResponse`` can
+# annotate with ``ClassVar[int]`` AND ``decode_body``'s default-arg
+# can reference a single source. The value is the same defensive
+# cap the ``MessageDecoder.__init__`` ``max_rows`` kwarg defaults to.
+_DEFAULT_MAX_ROWS: Final[int] = 1_000_000
+
 # Sanitize server-supplied text destined for exception messages and
 # logs. The C server promises UTF-8 but makes no promise about terminal
 # escapes or log-injection characters: a malicious or compromised peer
@@ -951,6 +959,7 @@ class RowsResponse(Message):
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.ROWS
+    DEFAULT_MAX_ROWS: ClassVar[int] = _DEFAULT_MAX_ROWS
 
     column_names: list[str] = field(default_factory=list)
     column_types: list[ValueType] = field(default_factory=list)
@@ -1082,15 +1091,13 @@ class RowsResponse(Message):
 
         return result
 
-    DEFAULT_MAX_ROWS = 1_000_000
-
     @classmethod
     @override
     def decode_body(
         cls,
         data: bytes,
         schema: int = 0,
-        max_rows: int = DEFAULT_MAX_ROWS,
+        max_rows: int = _DEFAULT_MAX_ROWS,
         *,
         text_errors: str = "strict",
     ) -> "RowsResponse":
