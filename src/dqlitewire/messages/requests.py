@@ -744,6 +744,17 @@ class _ConnectRequest(Message):
     dispatcher (``REQUEST_TYPES`` in ``codec.py``) and the public
     ``dqlitewire.messages`` re-export list — mirroring the same
     treatment applied to ``_HeartbeatRequest``.
+
+    Body-layout anchor (C only): the Raft TCP transport handshake in
+    ``dqlite-upstream/src/raft/uv_tcp_listen.c`` (server side) and
+    ``dqlite-upstream/src/raft/uv_tcp_connect.c`` (dial side) is the
+    canonical reference for the byte shape. Go has no equivalent —
+    ``internal/protocol/schema.go`` contains no Connect directive, and
+    ``go-dqlite`` runs its Raft transport via the embedded raft
+    library rather than re-implementing the wire shape. A maintainer
+    reconciling against a future protocol revision must consult the C
+    transport handshake; the Go schema-directive grep used for every
+    other request class returns nothing here.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CONNECT
