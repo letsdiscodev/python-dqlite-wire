@@ -23,10 +23,16 @@ class Header:
     - size: uint32 - Size of message body in words (8-byte units)
     - type: uint8 - Message type code
     - schema: uint8 - Schema version. Construction accepts any uint8
-      (0..255); the per-message-type ceiling (``MAX_SUPPORTED_SCHEMA``,
-      typically 0 or 1 — V1 extends param tuples and StmtResponse) is
-      enforced at decode-dispatch in ``codec.py``, not at construction
-      time, to avoid a circular import on the per-type tables.
+      (0..255); the per-message-type ceiling — keyed by direction in
+      ``codec.py`` as ``_REQUEST_MAX_SCHEMA`` (requests) and
+      ``_RESPONSE_MAX_SCHEMA`` (responses), typically 0 or 1 (V1
+      extends param tuples and StmtResponse) — is enforced at
+      decode-dispatch, not at construction time, to avoid a circular
+      import on the per-type tables. The two dicts are direction-keyed
+      to prevent a type-code collision between ``RequestType`` and
+      ``ResponseType`` from slipping a hostile schema byte past a
+      ceiling meant for the other direction (e.g. ``FILES`` response
+      code 9 vs ``QUERY_SQL`` request code 9).
     - reserved: uint16 - Reserved (always 0; enforced symmetrically
       on encode and decode).
     """
