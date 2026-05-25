@@ -146,6 +146,19 @@ class ReadBuffer:
     """
 
     DEFAULT_MAX_MESSAGE_SIZE: ClassVar[int] = 64 * 1024 * 1024  # 64 MiB
+    # Defense-in-depth upper bound on ``max_message_size``. Mirrors the
+    # C server's per-frame structural ceiling at
+    # ``dqlite-upstream/src/conn.c:169``
+    # (``if (8 * c->request.words > UINT32_MAX) return DQLITE_ERROR``),
+    # which rejects any single inbound frame above ``UINT32_MAX`` bytes.
+    # A Python ``max_message_size`` above this bound can never
+    # legitimately see a frame the C server would accept, so the cap
+    # below blocks operator typos / mis-forwarded config values from
+    # silently disabling the composite-frame protection the envelope
+    # is supposed to provide. The class-attribute lives on
+    # ``ReadBuffer`` so both the encoder and the decoder can import it
+    # without a magic-number duplication.
+    MAX_MESSAGE_SIZE_CEILING: ClassVar[int] = 0xFFFFFFFF
 
     def __reduce__(self) -> NoReturn:
         # The class only carries ``bytearray + ints + None`` — no
@@ -164,6 +177,13 @@ class ReadBuffer:
     def __init__(self, max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE) -> None:
         if max_message_size < 1:
             raise ValueError(f"max_message_size must be >= 1, got {max_message_size}")
+        if max_message_size > self.MAX_MESSAGE_SIZE_CEILING:
+            raise ValueError(
+                f"max_message_size must be <= {self.MAX_MESSAGE_SIZE_CEILING} "
+                f"(UINT32_MAX bytes; the C server's per-frame ceiling at "
+                f"dqlite-upstream/src/conn.c:169 rejects any single frame above this "
+                f"bound), got {max_message_size}"
+            )
         self._data = bytearray()
         self._pos = 0
         self._max_message_size = max_message_size

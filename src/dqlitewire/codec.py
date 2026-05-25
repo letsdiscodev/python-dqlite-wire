@@ -246,6 +246,16 @@ class MessageEncoder:
             )
         if max_message_size < 1:
             raise ValueError(f"max_message_size must be >= 1, got {max_message_size}")
+        if max_message_size > ReadBuffer.MAX_MESSAGE_SIZE_CEILING:
+            # Defense-in-depth: see ReadBuffer.MAX_MESSAGE_SIZE_CEILING
+            # for the rationale (C server's per-frame UINT32_MAX
+            # ceiling at dqlite-upstream/src/conn.c:169).
+            raise ValueError(
+                f"max_message_size must be <= {ReadBuffer.MAX_MESSAGE_SIZE_CEILING} "
+                f"(UINT32_MAX bytes; the C server's per-frame ceiling at "
+                f"dqlite-upstream/src/conn.c:169 rejects any single frame above this "
+                f"bound), got {max_message_size}"
+            )
         self._version = version
         self._max_message_size = max_message_size
 
@@ -434,6 +444,19 @@ class MessageDecoder:
             raise HandshakeError(
                 f"Unsupported protocol version: {version:#x}. "
                 f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
+            )
+        if max_message_size > ReadBuffer.MAX_MESSAGE_SIZE_CEILING:
+            # Belt-and-suspenders: the ReadBuffer constructor below
+            # also enforces this ceiling; checking here lets the
+            # decoder validate the full kwarg set before instantiating
+            # any owned objects. See
+            # ReadBuffer.MAX_MESSAGE_SIZE_CEILING for the C-server-
+            # anchored rationale.
+            raise ValueError(
+                f"max_message_size must be <= {ReadBuffer.MAX_MESSAGE_SIZE_CEILING} "
+                f"(UINT32_MAX bytes; the C server's per-frame ceiling at "
+                f"dqlite-upstream/src/conn.c:169 rejects any single frame above this "
+                f"bound), got {max_message_size}"
             )
         if max_rows < 1:
             raise ValueError(f"max_rows must be >= 1, got {max_rows}")
