@@ -1,0 +1,34 @@
+"""Pin: every name in ``dqlitewire.constants.__all__`` is re-exported
+from the package root (``dqlitewire.__all__`` AND ``dqlitewire.<name>``
+is importable).
+
+The previous gap left ``HEADER_SIZE`` / ``WORD_SIZE`` listed at the
+subpackage but absent from the root, breaking the otherwise-uniform
+"promote ``constants.__all__`` to root" pattern. This test guards
+against future drift if a constant is added to the subpackage list
+without a matching root re-export.
+"""
+
+from __future__ import annotations
+
+import dqlitewire
+from dqlitewire import constants
+
+
+def test_constants_all_promoted_to_root_all() -> None:
+    missing = sorted(set(constants.__all__) - set(dqlitewire.__all__))
+    assert not missing, f"constants.__all__ items missing from dqlitewire.__all__: {missing}"
+
+
+def test_constants_all_attribute_reachable_at_root() -> None:
+    missing = [name for name in constants.__all__ if not hasattr(dqlitewire, name)]
+    assert not missing, (
+        f"constants.__all__ items not attribute-reachable on dqlitewire: {sorted(missing)}"
+    )
+
+
+def test_header_size_and_word_size_reachable_at_root() -> None:
+    """Direct regression pin on the two specific names this fix
+    promoted; the broader test above catches future drift."""
+    assert dqlitewire.HEADER_SIZE == constants.HEADER_SIZE
+    assert dqlitewire.WORD_SIZE == constants.WORD_SIZE
