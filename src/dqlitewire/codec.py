@@ -1011,6 +1011,36 @@ class MessageDecoder:
             raise
         return version
 
+    def _force_handshake_for_stateless(self, version: int) -> None:
+        """Bypass the handshake state machine for the stateless helper.
+
+        Used ONLY by :func:`decode_message`, the stateless single-frame
+        convenience function that has no inbound handshake bytes.
+        Production / streaming callers MUST go through
+        :meth:`decode_handshake` so the peek/commit/consume discipline
+        runs against real wire bytes.
+
+        Centralising the bypass on the class gives any future
+        observability / metrics / setter introduction on the handshake
+        state a single anchor to update — the previous inline
+        ``decoder._handshake_done = True; decoder._version = version``
+        write in ``decode_message`` would silently skip a future
+        ``version.setter`` or ``_handshake_done`` property and lose
+        whatever side effects the setter encapsulated.
+        """
+        # Defense-in-depth re-validation: ``MessageDecoder.__init__``
+        # already runs the same check against ``_SUPPORTED_VERSIONS``,
+        # so this branch is unreachable today. It future-proofs the
+        # helper against a refactor that moves the constructor's
+        # validation elsewhere.
+        if version not in _SUPPORTED_VERSIONS:
+            raise HandshakeError(
+                f"Unsupported protocol version: {version:#x}. "
+                f"Supported: {', '.join(f'{v:#x}' for v in sorted(_SUPPORTED_VERSIONS))}"
+            )
+        self._version = version
+        self._handshake_done = True
+
 
 _UNSET: Final[object] = object()
 
@@ -1079,10 +1109,13 @@ def decode_message(
         kwargs["max_total_rows"] = max_total_rows
     decoder = MessageDecoder(**kwargs)  # type: ignore[arg-type]
     if is_request:
-        # Request decoders start with handshake_done=False; bypass for
-        # stateless single-message decoding.
-        decoder._handshake_done = True
-        decoder._version = version
+        # Request decoders start with ``_handshake_done=False`` because
+        # production callers obtain the version from the inbound
+        # handshake. The stateless helper has no wire, so route the
+        # bypass through the named ``_force_handshake_for_stateless``
+        # method — a single anchor for any future observability /
+        # setter introduction on the handshake state machine.
+        decoder._force_handshake_for_stateless(version)
     return decoder.decode_bytes(data)
 
 
