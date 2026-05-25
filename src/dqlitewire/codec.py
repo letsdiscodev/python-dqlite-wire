@@ -209,6 +209,20 @@ class MessageEncoder:
                      genuinely larger cluster (``raft.log.entry_size_max``
                      above 64 MiB) must raise the cap on BOTH sides.
 
+                     Go-parity asymmetry: Go's encoder helpers in
+                     ``go-dqlite/internal/protocol/message.go`` do
+                     NOT enforce a per-frame cap. Go's cap lives
+                     server-side as ``raft.log.entry_size_max`` and
+                     applies per-Raft-log-entry rather than per-wire-
+                     frame. This Python encoder narrows that posture
+                     to match the matching Python decoder default. An
+                     operator with a raised
+                     ``raft.log.entry_size_max`` must pass the same
+                     higher cap to BOTH encoder and decoder — the
+                     encoder's per-frame check will otherwise reject
+                     large legitimate frames the cluster would
+                     accept.
+
         Raises:
             HandshakeError: If ``version`` is not in
                 ``_SUPPORTED_VERSIONS`` (currently
@@ -326,7 +340,14 @@ class MessageDecoder:
                     Ignored for request decoders (version comes from handshake).
             max_message_size: Maximum allowed message size in bytes.
                     Defaults to 64 MiB. Messages exceeding this limit are
-                    rejected with DecodeError.
+                    rejected with DecodeError. Go-parity asymmetry: Go's
+                    decoder (``go-dqlite/internal/protocol/message.go``)
+                    has no per-frame cap; the server-side cap lives in
+                    ``raft.log.entry_size_max`` and applies per Raft
+                    log entry rather than per wire frame. Operators
+                    raising ``raft.log.entry_size_max`` must pass the
+                    same higher cap to BOTH encoder and decoder to
+                    keep round-trip symmetric.
             max_rows: Maximum number of rows permitted in a single
                     ``RowsResponse`` frame (including continuation frames).
                     Defaults to ``RowsResponse.DEFAULT_MAX_ROWS``. The cap
