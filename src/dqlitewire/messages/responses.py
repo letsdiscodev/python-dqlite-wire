@@ -95,14 +95,20 @@ _MAX_NODE_COUNT: Final[int] = 10_000
 # offset into the prepared-SQL text; a malicious peer could emit an
 # enormous value and Python's slice semantics would silently return
 # ``""`` on ``sql[offset:]``, dropping later statements with no
-# diagnostic. Aligned with ``_MAX_BLOB_SIZE`` / ``_MAX_TEXT_VALUE_SIZE``
-# / the default ``max_message_size`` (64 MiB) so any tail offset that
-# could legitimately appear in a prepare-response — bounded by the
-# server's message envelope per ``gateway.c:410`` (``response_v1.offset
-# = (uint64_t)(tail - sql)``) — decodes cleanly. The cap is still a
-# defense-in-depth bound against an enormous-offset attack; callers
-# who know their SQL is small can lower the per-decoder
-# ``max_message_size`` instead.
+# diagnostic. The cap is the bare ``64 MiB`` envelope, NOT
+# ``64 MiB - 64`` like the sibling payload caps (``_MAX_BLOB_SIZE``,
+# ``_MAX_TEXT_VALUE_SIZE``, ``_MAX_FILE_CONTENT_SIZE``): tail_offset
+# is a *position* into the prepared-SQL text, not a payload subject
+# to per-frame framing overhead. The legitimate maximum is bounded
+# transitively by ``_MAX_TEXT_VALUE_SIZE`` (= ``64 MiB - 64``), so
+# the text-cap reject fires first against any over-cap offset; this
+# defensive ceiling matches the envelope rather than the text cap so
+# the cap stays the structural high-water mark, never the
+# load-bearing reject. Anchored to the server's message envelope per
+# ``gateway.c:410`` (``response_v1.offset = (uint64_t)(tail - sql)``)
+# so the value tracks ``DEFAULT_MAX_MESSAGE_SIZE``. Callers who know
+# their SQL is small can lower the per-decoder ``max_message_size``
+# instead.
 _MAX_TAIL_OFFSET: Final[int] = 64 * 1024 * 1024
 
 # Per-field cap on ``FailureResponse.message``. The frame-size cap
