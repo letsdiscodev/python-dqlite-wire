@@ -548,7 +548,7 @@ class MessageDecoder:
 
         try:
             header = Header.decode(data[:HEADER_SIZE])
-            body = data[HEADER_SIZE : HEADER_SIZE + header.size_words * 8]
+            body = data[HEADER_SIZE : HEADER_SIZE + header.body_size]
 
             # Type-recognition check FIRST, then schema cap. Mirrors
             # ``decode_bytes``'s ordering at the bottom of this file.
@@ -815,7 +815,7 @@ class MessageDecoder:
             raise DecodeError(f"Message too short: {len(data)} bytes")
 
         header = Header.decode(data[:HEADER_SIZE])
-        body_size = header.size_words * 8
+        body_size = header.body_size
         # Enforce ``max_message_size`` on the stateless path so the
         # cap discipline matches the streaming path's ``ReadBuffer.
         # read_message`` check. Apply AFTER ``Header.decode`` succeeds
