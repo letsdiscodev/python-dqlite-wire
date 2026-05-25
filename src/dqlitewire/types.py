@@ -96,6 +96,22 @@ def _bounded_repr(value: int) -> str:
     return f"{s[:_MAX_VALUE_REPR]}... [{len(s)} digits]"
 
 
+def _bounded_repr_any(value: object) -> str:
+    """``repr(value)`` capped at ``_MAX_VALUE_REPR`` chars.
+
+    Sibling of :func:`_bounded_repr` (which is int-specific and emits
+    raw digits without quotes). Apply at every encode-error site that
+    quotes caller-controlled data via ``{value!r}`` so the documented
+    discipline (``_MAX_VALUE_REPR`` rationale above) holds uniformly
+    across all rejection branches — not just the int-validator
+    helpers.
+    """
+    s = repr(value)
+    if len(s) <= _MAX_VALUE_REPR:
+        return s
+    return f"{s[:_MAX_VALUE_REPR]}... [{len(s)} chars]"
+
+
 # Single-byte buffer-protocol formats. ``memoryview`` accepts these as
 # documented zero-copy BLOB binding shapes (``memoryview(b'...')`` is
 # 'B', ``memoryview(bytearray(...))`` is 'B', and ``array.array('b'/
@@ -767,7 +783,7 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             return encode_uint64(value), value_type
         raise EncodeError(
             f"BOOLEAN requires bool (or exactly 0/1), "
-            f"got {type(value).__name__}={value!r}. "
+            f"got {type(value).__name__}={_bounded_repr_any(value)}. "
             f"Numeric proxies (numpy.int64, numpy.bool_, Decimal, "
             f"Fraction, etc.) are not int subclasses and must be "
             f"coerced via int(x) or bool(x) at the bind site."
@@ -887,7 +903,7 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         # None is already handled in the early-return branch above, so reaching
         # here means value is not None with explicit NULL type — always a bug.
         raise EncodeError(
-            f"Cannot encode non-None value {value!r} as NULL. "
+            f"Cannot encode non-None value {_bounded_repr_any(value)} as NULL. "
             f"Pass value=None or use the appropriate ValueType."
         )
     else:
