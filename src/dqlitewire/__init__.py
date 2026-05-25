@@ -32,9 +32,15 @@ Cap defaults that affect interop and hostile-server resistance:
   do NOT plumb the override through their public surfaces — large-
   result workloads must either drive the wire layer directly or
   accept the 64 MiB default at the higher layers.
-- ``_MAX_BLOB_SIZE`` and ``_MAX_TEXT_VALUE_SIZE``: 64 MiB each
-  (aligned with the message-size cap so a value fitting in the
-  frame envelope is not rejected at the inner cap).
+- ``_MAX_BLOB_SIZE`` and ``_MAX_TEXT_VALUE_SIZE``: 64 MiB minus 64
+  bytes each. The 64-byte reservation accommodates the worst-case
+  in-row framing overhead (message header + column-count + column
+  name + row header + length prefix + row marker, rounded up for
+  alignment slop) so a value sized to exactly 64 MiB does not push
+  the encoded frame above the message-size envelope. A caller
+  building a payload to the documented BLOB / TEXT cap should size
+  bytes against ``_MAX_BLOB_SIZE`` / ``_MAX_TEXT_VALUE_SIZE``
+  directly rather than against a flat 64 MiB number.
 - ``_MAX_COLUMN_COUNT``: 2000 (SQLite's documented
   ``SQLITE_MAX_COLUMN`` compile-time default; the dqlite C server
   has no wire-protocol cap on the column count, so this is a
