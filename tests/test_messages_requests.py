@@ -742,19 +742,28 @@ class TestClusterRequest:
         decoded = ClusterRequest.decode_body(body)
         assert decoded.format == 0
 
-    def test_re_encode_decoded_v0_rejected(self) -> None:
-        """Decode-then-encode of a V0 ClusterRequest is NOT a
-        round-trip: the decoder accepts V0 to preserve the byte
-        shape for inspection, but encoding raises EncodeError so a
-        caller cannot accidentally emit a frame the client itself
-        cannot consume."""
-        from dqlitewire.exceptions import EncodeError
+    def test_re_encode_decoded_v0_round_trips_byte_identical(self) -> None:
+        """Decode-then-encode of a V0 ClusterRequest now round-trips
+        byte-identically: the ``_decoded`` sentinel exempts the
+        encode-time reject so proxy / replay / capture-replay tooling
+        can route V0 traffic through the dataclass. Fresh construction
+        with ``format=0`` is still rejected at construction (see
+        ``test_unknown_format_rejected_in_constructor`` and
+        ``test_fresh_construct_v0_still_rejected``)."""
         from dqlitewire.types import encode_uint64
 
         body = encode_uint64(0)
         decoded = ClusterRequest.decode_body(body)
-        with pytest.raises(EncodeError, match="format=0"):
-            decoded.encode_body()
+        assert decoded.encode_body() == body
+
+    def test_fresh_construct_v0_still_rejected(self) -> None:
+        """Construction-time rejection of a bare ``format=0`` is
+        unchanged: the V0 escape hatch requires the ``_decoded``
+        sentinel from ``decode_body``."""
+        from dqlitewire.exceptions import EncodeError
+
+        with pytest.raises(EncodeError, match="V0"):
+            ClusterRequest(format=0)
 
     @pytest.mark.parametrize("fmt", [2, 3, 255, 0xFFFFFFFFFFFFFFFF])
     def test_unknown_format_rejected_in_constructor(self, fmt: int) -> None:

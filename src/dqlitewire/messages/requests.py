@@ -1073,6 +1073,13 @@ class ClusterRequest(Message):
     because :class:`ServersResponse` only decodes V1 (id+address+role).
     Callers that need V0 compatibility should decode :class:`ServersResponse`
     themselves. Use ``format=1`` for the default path.
+
+    **Decoded V0 round-trip is supported.** A V0 frame decoded via
+    :meth:`decode_body` carries the ``_decoded=True`` sentinel and may
+    be re-encoded byte-identically — proxy / replay / capture-replay
+    tooling can therefore route V0 traffic through the dataclass
+    without manual ``encode_uint64`` plumbing. Fresh construction with
+    ``format=0`` (no sentinel) remains rejected at construction.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CLUSTER
@@ -1109,14 +1116,20 @@ class ClusterRequest(Message):
 
     @override
     def encode_body(self) -> bytes:
-        if self.format == 0:
-            # Encode rejection mirrors the construction-time gate: this
-            # client cannot consume the V0 ServersResponse, so emitting
-            # a V0 request is a wire-shape inconsistency.
+        if self.format == 0 and not self._decoded:
+            # Fresh construction with format=0 is rejected: this client
+            # cannot consume the V0 ServersResponse, so emitting a V0
+            # request would be a wire-shape inconsistency. A decoded V0
+            # instance (``_decoded=True``) is exempt — proxy / replay /
+            # capture-replay tooling can byte-identically round-trip a
+            # captured V0 frame through the dataclass without resorting
+            # to manual ``encode_uint64`` plumbing.
             raise EncodeError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
-                "decodes V1. Use format=1."
+                "decodes V1. Use format=1, or construct via decode_body so the "
+                "_decoded sentinel exempts the encode-time reject for "
+                "round-trip / replay use cases."
             )
         return encode_uint64(self.format)
 
