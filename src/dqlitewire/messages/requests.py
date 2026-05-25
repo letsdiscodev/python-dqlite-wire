@@ -295,7 +295,7 @@ class OpenRequest(Message):
         # already use this pattern.
         view = memoryview(data)
         name, offset = decode_text(view, max_size=_MAX_FILENAME_SIZE, label="database name")
-        flags = decode_uint64(view[offset:])
+        flags = decode_uint64(view[offset:], label="OpenRequest.flags")
         offset += 8
         vfs, consumed = decode_text(view[offset:], max_size=_MAX_FILENAME_SIZE, label="vfs name")
         offset += consumed

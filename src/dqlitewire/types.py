@@ -199,14 +199,21 @@ def encode_uint64(value: int) -> bytes:
     return struct.pack("<Q", value)
 
 
-def decode_uint64(data: bytes | memoryview) -> int:
+def decode_uint64(data: bytes | memoryview, *, label: str = "uint64") -> int:
     """Decode an unsigned 64-bit integer (little-endian).
 
     Accepts ``bytes`` or ``memoryview`` so hot-path body decoders
     can pass memoryview slices without copying.
+
+    ``label`` is interpolated into the truncation diagnostic so a
+    caller decoding a specific field (e.g. ``OpenRequest.flags``)
+    can surface a per-field error message — symmetric with
+    :func:`decode_text`'s ``label=`` discipline. The default
+    ``"uint64"`` preserves the historical message wording for callers
+    that omit the kwarg.
     """
     if len(data) < 8:
-        raise DecodeError(f"Need 8 bytes for uint64, got {len(data)}")
+        raise DecodeError(f"Need 8 bytes for {label}, got {len(data)}")
     result: int = struct.unpack("<Q", data[:8])[0]
     return result
 
