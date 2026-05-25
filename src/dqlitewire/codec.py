@@ -209,6 +209,12 @@ class MessageEncoder:
                      genuinely larger cluster (``raft.log.entry_size_max``
                      above 64 MiB) must raise the cap on BOTH sides.
 
+        Raises:
+            HandshakeError: If ``version`` is not in
+                ``_SUPPORTED_VERSIONS`` (currently
+                ``{PROTOCOL_VERSION, PROTOCOL_VERSION_LEGACY}``).
+            ValueError: If ``max_message_size`` is less than 1.
+
         Note: ``version`` is used for the handshake bytes only.
         Body shape is the caller's responsibility — ``encode(message)``
         always invokes the modern ``message.encode()``. To emit a
@@ -372,6 +378,25 @@ class MessageDecoder:
                     — surrogateescape is not round-trippable via
                     :func:`encode_text` and the replacement codepoint
                     bypasses ``sanitize_for_log``.
+
+        Raises:
+            HandshakeError: If ``version`` is not in
+                ``_SUPPORTED_VERSIONS``. Applied uniformly for both
+                request- and response-side constructors; see the
+                inline rationale on uniform validation.
+            ValueError: If ``max_rows`` is less than 1, or if
+                ``max_continuation_frames`` / ``max_total_rows`` is
+                less than 1 (when not ``None``), or if
+                ``text_errors`` is not a recognised UTF-8 decode
+                error handler name.
+            DecodeError: If ``unknown_role_policy`` is not one of
+                ``"reject"``, ``"warn"``, ``"accept"``. Raised as
+                ``DecodeError`` (not ``ValueError``) so callers
+                using ``except DecodeError`` catch BOTH the
+                construction-time and the deeper decode-time
+                validators with a single arm — mirrors the
+                ``ServersResponse.decode_body`` validator the
+                policy is forwarded to.
         """
         # Validate ``version`` uniformly across both request- and
         # response-side construction. Originally gated on
