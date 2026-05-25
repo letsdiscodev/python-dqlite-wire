@@ -660,8 +660,12 @@ def _infer_value_type(value: WireInput) -> ValueType:
     if isinstance(value, str):
         return ValueType.TEXT
     if isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
-        if isinstance(value, memoryview):
-            _reject_non_byte_format_memoryview(value)
+        # The format-reject check used to live here, but is now hoisted
+        # to the top of ``encode_value`` so it fires exactly once per
+        # call regardless of inferred-vs-explicit path. Inferred BLOB
+        # callers used to pay the cost twice (here + in the explicit
+        # BLOB arm); the hoist restores O(1)-per-cell on the row-encode
+        # fallback path the helper docstring promises.
         return ValueType.BLOB
     raise EncodeError(
         f"Cannot infer wire type for value of type {type(value).__name__!r}. "
@@ -695,6 +699,17 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
                 f"Pass value_type=ValueType.NULL or omit value_type."
             )
         return b"\x00" * 8, ValueType.NULL
+
+    # Hoist the memoryview format check to fire exactly once, before
+    # any branching (inferred-vs-explicit, BLOB-vs-other). Previously
+    # the check ran in BOTH ``_infer_value_type`` (when value_type was
+    # None) AND the explicit BLOB arm (after inference filled in
+    # BLOB), so the inferred-BLOB path paid the cost twice — defeating
+    # the O(1)-per-cell promise of the inference helper. The hoist
+    # makes the contract grep-visible: "the check fires exactly once
+    # per encode_value call, before any path branching."
+    if isinstance(value, memoryview):
+        _reject_non_byte_format_memoryview(value)
 
     if value_type is None:
         # Parity with the explicit BLOB branch and with stdlib
@@ -780,14 +795,11 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
-        # Symmetric with the inference branch: a ``memoryview`` over a
-        # non-byte format (e.g. ``memoryview(array.array('i', ...))``)
-        # would otherwise materialise as host-endian, host-int-width
-        # bytes — the cross-platform-corruption hazard the bare
-        # ``array.array`` rejection prevents. Apply the same check on
-        # the explicit-BLOB path so both entry points stay in lockstep.
-        if isinstance(value, memoryview):
-            _reject_non_byte_format_memoryview(value)
+        # NOTE: the ``_reject_non_byte_format_memoryview`` check used
+        # to live here (symmetric with the inference branch). It is
+        # now hoisted to the top of ``encode_value`` so it fires
+        # exactly once per call regardless of inferred-vs-explicit
+        # path — see the comment at the function head.
         # Cap the size BEFORE materialising via ``bytes(value)`` —
         # symmetric with ``decode_blob``'s cap-before-allocate
         # ordering. Without this, a 100 MB ``bytearray`` is copied
