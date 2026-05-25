@@ -31,20 +31,21 @@ def test_clusterrequest_decoded_does_not_appear_in_vars() -> None:
     assert v0_decoded != v1_request
 
 
-def test_clusterrequest_dataclasses_replace_v0_routes_through_v0_gate() -> None:
-    """``dataclasses.replace`` of a V0-decoded request goes through the
-    public constructor — which means ``_decoded`` is re-initialised to
-    its default (False) since the field is ``init=False``. The V0
-    gate fires. This is documented behavior: a caller wanting to
-    round-trip V0 should call ``decode_body`` again rather than
-    relying on ``dataclasses.replace``. The declared-field design
-    fixes the ``vars()`` leak (the primary hygiene defect) but does
-    not extend the V0 escape hatch to ``replace`` — by design, since
-    the gate must remain enforced for any synthetic construction
-    path."""
+def test_clusterrequest_dataclasses_replace_v0_preserves_decoded_sentinel() -> None:
+    """``_decoded`` is now a regular dataclass field (passed via
+    constructor kwarg by the decoder), so ``dataclasses.replace`` of a
+    V0-decoded request preserves the sentinel and the V0 gate
+    short-circuits on the copy. This matches the sibling
+    ``ExecRequest._decoded_schema`` round-trip semantics — replacing
+    fields on a decoded request keeps the decode-origin marker."""
     req = ClusterRequest.decode_body(b"\x00" * 8)
+    replaced = dataclasses.replace(req)
+    assert replaced.format == 0
+    assert replaced == req
+    # A replace that explicitly clears the sentinel still triggers the
+    # construction-time V0 gate — the escape hatch is opt-in.
     with pytest.raises(EncodeError, match="V0"):
-        dataclasses.replace(req)
+        dataclasses.replace(req, _decoded=False)
 
 
 def test_clusterrequest_v0_via_public_constructor_still_rejected() -> None:

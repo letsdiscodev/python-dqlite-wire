@@ -1078,14 +1078,15 @@ class ClusterRequest(Message):
     MSG_TYPE: ClassVar[int] = RequestType.CLUSTER
 
     format: int = 1
-    # Decoded-V0 sentinel. Declared as a dataclass field (not a
-    # runtime-installed attribute) so it does not leak into
-    # ``vars(req)`` and survives ``dataclasses.replace`` cleanly.
-    # ``init=False`` keeps it out of the public constructor;
-    # ``repr=False`` / ``compare=False`` keep it out of equality and
-    # display. Mirrors the ``_decoded_schema`` field on the SQL
-    # request siblings.
-    _decoded: bool = field(default=False, init=False, repr=False, compare=False)
+    # Decoded-V0 sentinel. Declared as a regular dataclass field so it
+    # participates in the dataclass-generated ``__init__`` (the
+    # decoder passes ``_decoded=True`` as a constructor kwarg —
+    # uniformly through dataclass machinery, no low-level instance
+    # bypass). ``repr=False`` / ``compare=False`` keep it out of
+    # equality and display. Mirrors the constructor-kwarg sentinel
+    # pattern on the SQL request siblings (``_decoded_schema``,
+    # ``_decoded_empty_header``) and on ``AssignRequest._legacy_intent``.
+    _decoded: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("format", self.format)
@@ -1137,18 +1138,16 @@ class ClusterRequest(Message):
                 f"ClusterRequest format must be 0 (V0) or 1 (V1); upstream "
                 f"defines only those two values. Got {format_val}."
             )
-        # Bypass the V0 construction-time gate via the declared
-        # ``_decoded`` field; the decoder is the one consumer that
-        # legitimately needs to round-trip a decoded V0 without
-        # raising. As a declared field, ``_decoded`` participates in
-        # the dataclass machinery cleanly — it does not leak into
-        # ``vars(req)`` and is preserved across
-        # ``dataclasses.replace`` round-trips.
-        instance = cls.__new__(cls)
-        instance.format = format_val
-        instance._decoded = True
-        instance.__post_init__()
-        return instance
+        # Pass ``_decoded=True`` through the dataclass-generated
+        # ``__init__`` so the V0 construction-time gate sees the
+        # sentinel and short-circuits. Going through the public
+        # constructor keeps the decoder uniform with the sibling SQL
+        # request family (which uses the same pattern for
+        # ``_decoded_schema`` / ``_decoded_empty_header``). The
+        # previous implementation used a low-level instance-bypass
+        # path which silently broke under frozen=True / slots=True
+        # flips or new fields without explicit assignment.
+        return cls(format=format_val, _decoded=True)
 
 
 @final
