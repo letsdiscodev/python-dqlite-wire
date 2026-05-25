@@ -636,6 +636,56 @@ class TestRowsResponseAliasing:
             "msg.row_types[i] (no-aliasing invariant)"
         )
 
+    def test_decode_body_bypasses_post_init_deep_copy(self) -> None:
+        """``decode_body`` builds fresh ``rows`` / ``row_types`` lists by
+        construction and must NOT pay the constructor's per-row defensive
+        deep-copy on top — that cost scales with row count and runs on
+        the loop thread for every decoded frame.
+
+        The decoder uses a private ``_from_decoded`` bypass classmethod
+        that skips ``__post_init__``. Verify the bypass actually fires
+        for both the row-bearing path and the zero-column fast path so
+        a future refactor cannot silently re-introduce the duplicate
+        copy.
+        """
+        from unittest import mock
+
+        # Row-bearing decode path.
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=[[1, "alice"], [2, "bob"]],
+            has_more=False,
+        )
+        encoded = msg.encode()
+
+        with mock.patch.object(RowsResponse, "__post_init__", autospec=True) as post_init:
+            decoded = RowsResponse.decode_body(encoded[HEADER_SIZE:])
+
+        assert post_init.call_count == 0, (
+            "decode_body must bypass __post_init__ to skip the per-row "
+            f"defensive deep-copy; got {post_init.call_count} call(s)"
+        )
+        # Behaviour must still be correct: alias break holds, row data
+        # decoded as expected.
+        assert decoded.column_types is not decoded.row_types[0]
+        assert decoded.rows[0][0] == 1
+        assert decoded.rows[1][1] == "bob"
+
+        # Zero-column fast path also bypasses.
+        empty = RowsResponse(
+            column_names=[],
+            column_types=[],
+            rows=[],
+            has_more=False,
+        )
+        encoded_empty = empty.encode()
+        with mock.patch.object(RowsResponse, "__post_init__", autospec=True) as post_init_empty:
+            RowsResponse.decode_body(encoded_empty[HEADER_SIZE:])
+        assert post_init_empty.call_count == 0, (
+            "zero-column decode path must also bypass __post_init__"
+        )
+
 
 class TestRowsResponse:
     def test_empty_result(self) -> None:

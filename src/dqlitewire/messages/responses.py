@@ -1008,25 +1008,63 @@ class RowsResponse(Message):
     has_more: bool = False
 
     def __post_init__(self) -> None:
-        # Defensive copies. Two sources of
-        # aliasing motivate this:
+        # Defensive copies. Two sources of aliasing motivate this:
         #
-        # 1. ``decode_body`` stores ``column_types = types`` where
-        #    ``types`` is also stored as ``all_row_types[0]``, so
+        # 1. ``decode_body`` used to store ``column_types = types`` where
+        #    ``types`` was also stored as ``all_row_types[0]``, so
         #    without a copy ``self.column_types is self.row_types[0]``
-        #    and mutating one silently rewrites the other.
+        #    and mutating one silently rewrites the other. The decoder
+        #    now breaks the alias explicitly and constructs the message
+        #    via ``_from_decoded`` (which bypasses this hook), so the
+        #    decoder path no longer relies on this defence.
         #
         # 2. User code constructing ``RowsResponse`` directly with a
-        #    list they intend to keep mutating elsewhere.
+        #    list they intend to keep mutating elsewhere. Both outer
+        #    and inner list contents are copied so post-construction
+        #    mutation of the supplied containers cannot bleed in.
         #
-        # Copy all list-valued fields uniformly. ``row_types`` is a
-        # list-of-lists so it needs both outer and inner copies; the
-        # same for ``rows``. Cost is O(n) on the row dimension —
-        # dominated by the row payload itself, so negligible.
+        # ``row_types`` and ``rows`` are list-of-lists; deep-copy both
+        # the outer container and each inner list. The cost is O(N·M)
+        # on the cell count, which for the decoder hot path (max-cap
+        # frames) was the dominant per-frame post-decode cost — hence
+        # the ``_from_decoded`` bypass for that path.
         self.column_names = list(self.column_names)
         self.column_types = list(self.column_types)
         self.row_types = [list(t) for t in self.row_types]
         self.rows = [list(r) for r in self.rows]
+
+    @classmethod
+    def _from_decoded(
+        cls,
+        *,
+        column_names: list[str],
+        column_types: list[ValueType],
+        row_types: list[list[ValueType]],
+        rows: list[list[WireValue]],
+        has_more: bool,
+    ) -> "RowsResponse":
+        """Construct a :class:`RowsResponse` while skipping the
+        ``__post_init__`` defensive deep-copy.
+
+        The decoder allocates fresh inner lists for ``row_types`` and
+        ``rows`` per row and owns them by construction — no outside
+        caller can mutate them. The constructor's per-row deep-copy is
+        therefore wasted work on the decoder path and was the dominant
+        post-decode CPU cost for max-cap frames on the event loop.
+
+        The caller is responsible for breaking the legacy aliasing case
+        between ``column_types`` and ``row_types[0]`` before invoking
+        this helper (see ``decode_body``).
+
+        Private API: every call site must own its lists outright.
+        """
+        obj = object.__new__(cls)
+        obj.column_names = column_names
+        obj.column_types = column_types
+        obj.row_types = row_types
+        obj.rows = rows
+        obj.has_more = has_more
+        return obj
 
     def _get_row_types(self, row_idx: int, row: list[WireValue]) -> list[ValueType]:
         """Get types for a row: from row_types, column_types, or inferred.
@@ -1216,8 +1254,8 @@ class RowsResponse(Message):
                     f"RowsResponse zero-column body has {len(view) - end} "
                     "trailing bytes after DONE/PART marker"
                 )
-            return cls(
-                column_names=[],
+            return cls._from_decoded(
+                column_names=column_names,
                 column_types=[],
                 row_types=[],
                 rows=[],
@@ -1243,8 +1281,20 @@ class RowsResponse(Message):
                         f"after {'DONE' if result is RowMarker.DONE else 'PART'} marker "
                         f"(decoded {len(rows)} rows)"
                     )
-                return cls(
-                    column_names,
+                # Break the legacy alias between ``column_types`` and
+                # ``all_row_types[0]``: the row loop below assigns
+                # ``column_types = types`` on the first row, and that
+                # same ``types`` list is what got appended to
+                # ``all_row_types``. Without this copy, mutating
+                # ``msg.column_types`` would silently rewrite
+                # ``msg.row_types[0]`` and vice versa. The bypass
+                # constructor (``_from_decoded``) does not run the
+                # defensive ``__post_init__``, so the alias must be
+                # broken here.
+                if all_row_types and column_types is all_row_types[0]:
+                    column_types = list(column_types)
+                return cls._from_decoded(
+                    column_names=column_names,
                     column_types=column_types,
                     row_types=all_row_types,
                     rows=rows,
