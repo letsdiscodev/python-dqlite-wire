@@ -1087,7 +1087,12 @@ class RowsResponse(Message):
     @classmethod
     @override
     def decode_body(
-        cls, data: bytes, schema: int = 0, max_rows: int = DEFAULT_MAX_ROWS
+        cls,
+        data: bytes,
+        schema: int = 0,
+        max_rows: int = DEFAULT_MAX_ROWS,
+        *,
+        text_errors: str = "strict",
     ) -> "RowsResponse":
         # Wrap in memoryview so per-iteration slices are O(1) rather
         # than O(remaining). Without this, a body with many small rows
@@ -1205,7 +1210,7 @@ class RowsResponse(Message):
                 column_types = types
 
             # Read row values
-            values, consumed = decode_row_values(view[offset:], types)
+            values, consumed = decode_row_values(view[offset:], types, text_errors=text_errors)
             rows.append(values)
             offset += consumed
 

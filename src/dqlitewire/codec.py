@@ -307,6 +307,7 @@ class MessageDecoder:
         max_continuation_frames: int | None = DEFAULT_MAX_CONTINUATION_FRAMES,
         max_total_rows: int | None = DEFAULT_MAX_TOTAL_ROWS,
         unknown_role_policy: str = "reject",
+        text_errors: str = "strict",
     ) -> None:
         """Initialize decoder.
 
@@ -354,6 +355,23 @@ class MessageDecoder:
                     ``MessageDecoder`` so production cluster-info
                     consumers can opt into forward-compat tolerance
                     without bypassing the decoder.
+            text_errors: UTF-8 decode error policy for per-row
+                    TEXT and ISO8601 cells. Forwarded to
+                    ``RowsResponse.decode_body`` →
+                    ``decode_row_values`` → ``decode_value`` →
+                    ``decode_text``. The default ``"strict"`` matches
+                    the dqlite wire-spec contract; a legacy / mixed-
+                    encoding cluster's single non-UTF-8 cell otherwise
+                    fails the entire ``RowsResponse`` decode and
+                    poisons the streaming buffer. Permissive modes
+                    accepted by :func:`str.decode` (e.g.
+                    ``"replace"``, ``"backslashreplace"``,
+                    ``"surrogateescape"``) keep the stream alive and
+                    mirror Go's ``getString`` shape, but bring caveats
+                    documented on :func:`dqlitewire.types.decode_text`
+                    — surrogateescape is not round-trippable via
+                    :func:`encode_text` and the replacement codepoint
+                    bypasses ``sanitize_for_log``.
         """
         # Validate ``version`` uniformly across both request- and
         # response-side construction. Originally gated on
@@ -390,7 +408,30 @@ class MessageDecoder:
                 f"unknown_role_policy must be one of 'reject', 'warn', 'accept'; "
                 f"got {unknown_role_policy!r}"
             )
+        # Validate ``text_errors`` against the well-known stdlib error
+        # handler names so a typo (``"surrogate_escape"`` for
+        # ``"surrogateescape"``) fails fast at construction rather than
+        # on first TEXT cell deep inside ``RowsResponse.decode_body``.
+        # ValueError matches the validation discipline of
+        # ``max_rows`` / ``max_continuation_frames`` above (caller-side
+        # configuration error, not a wire-decode failure).
+        if text_errors not in (
+            "strict",
+            "replace",
+            "ignore",
+            "backslashreplace",
+            "surrogateescape",
+            "surrogatepass",
+            "xmlcharrefreplace",
+            "namereplace",
+        ):
+            raise ValueError(
+                f"text_errors must be a recognised UTF-8 decode error handler "
+                f"(strict, replace, ignore, backslashreplace, surrogateescape, "
+                f"surrogatepass, xmlcharrefreplace, namereplace); got {text_errors!r}"
+            )
         self._unknown_role_policy = unknown_role_policy
+        self._text_errors = text_errors
         self._buffer = ReadBuffer(max_message_size=max_message_size)
         # Promote ``max_message_size`` to a decoder-level attribute so the
         # stateless ``decode_bytes`` path can enforce the cap without
@@ -642,7 +683,9 @@ class MessageDecoder:
             # ``msg_type`` is ROWS here (the early type-recognition
             # check above narrowed the universe to FAILURE/EMPTY/ROWS).
 
-            result = RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
+            result = RowsResponse.decode_body(
+                body, schema=header.schema, max_rows=self._max_rows, text_errors=self._text_errors
+            )
             # Per-stream caps: bound the number of continuation frames
             # and the cumulative row count. A slow-dripping server
             # emitting many 1-row frames would otherwise pin the
@@ -952,7 +995,9 @@ class MessageDecoder:
         # role bytes outside {0,1,2}; other classes share the generic
         # (body, schema) signature.
         if msg_class is RowsResponse:
-            return RowsResponse.decode_body(body, schema=header.schema, max_rows=self._max_rows)
+            return RowsResponse.decode_body(
+                body, schema=header.schema, max_rows=self._max_rows, text_errors=self._text_errors
+            )
         if msg_class is ServersResponse:
             return ServersResponse.decode_body(
                 body,
@@ -1054,6 +1099,7 @@ def decode_message(
     max_rows: int | None = None,
     max_continuation_frames: int | None | object = _UNSET,
     max_total_rows: int | None | object = _UNSET,
+    text_errors: str = "strict",
 ) -> Message:
     """Convenience function to decode a single message.
 
@@ -1089,11 +1135,18 @@ def decode_message(
                  the helper sees the same cap surface.
         max_total_rows: Forwarded to ``MessageDecoder``. Same
                  semantics as ``max_continuation_frames``.
+        text_errors: Forwarded to ``MessageDecoder``. UTF-8 decode
+                 error handler for per-row TEXT / ISO8601 cells. The
+                 default ``"strict"`` matches the dqlite wire-spec
+                 contract; see :meth:`MessageDecoder.__init__` for
+                 the full set of accepted values and the caveats of
+                 the permissive modes.
     """
     kwargs: dict[str, object] = {
         "is_request": is_request,
         "version": version,
         "unknown_role_policy": unknown_role_policy,
+        "text_errors": text_errors,
     }
     if max_message_size is not None:
         kwargs["max_message_size"] = max_message_size

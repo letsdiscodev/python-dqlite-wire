@@ -371,17 +371,25 @@ def encode_row_values(values: Sequence[WireInput], types: Sequence[ValueType]) -
 
 
 def decode_row_values(
-    data: bytes | memoryview, types: Sequence[ValueType]
+    data: bytes | memoryview,
+    types: Sequence[ValueType],
+    *,
+    text_errors: str = "strict",
 ) -> tuple[list[WireValue], int]:
     """Decode row values according to column types.
 
     Returns (values, bytes_consumed).
+
+    ``text_errors`` is forwarded to :func:`decode_value` for TEXT /
+    ISO8601 cells. The default ``"strict"`` matches the dqlite
+    wire-spec contract; permissive modes (see :func:`decode_text`)
+    allow row-by-row tolerance of legacy non-UTF-8 stores.
     """
     values: list[WireValue] = []
     offset = 0
 
     for vtype in types:
-        value, consumed = decode_value(data[offset:], vtype)
+        value, consumed = decode_value(data[offset:], vtype, text_errors=text_errors)
         values.append(value)
         offset += consumed
 

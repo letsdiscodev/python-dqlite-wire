@@ -803,20 +803,30 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         raise EncodeError(f"Unknown value type: {value_type}")
 
 
-def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireValue, int]:
+def decode_value(
+    data: bytes | memoryview,
+    value_type: ValueType,
+    *,
+    text_errors: str = "strict",
+) -> tuple[WireValue, int]:
     """Decode a value from wire format.
 
     Returns (value, bytes_consumed).
 
-    Note: TEXT / ISO8601 cells are decoded with strict UTF-8 (the
-    ``decode_text`` default). The ``errors=`` / ``max_size=`` knobs
-    that ``decode_text`` exposes are intentionally not threaded
-    through this entry point — the wire-layer contract for TEXT
-    is "valid UTF-8 only". Cluster data that violates this (e.g.
-    rows from a legacy SQLite store with latin-1 TEXT) cannot be
-    decoded at the row level; callers needing a permissive decode
-    must consume frames via ``MessageDecoder`` and call
-    ``decode_text`` directly with their preferred error policy.
+    ``text_errors`` is forwarded to :func:`decode_text` for TEXT and
+    ISO8601 cells; the default ``"strict"`` matches the dqlite
+    wire-spec contract (UTF-8 only). Cluster data that violates the
+    contract (e.g. rows from a legacy SQLite store with latin-1
+    TEXT) can be coerced via ``text_errors="replace"`` /
+    ``"backslashreplace"`` / ``"surrogateescape"`` — same set
+    :func:`decode_text` accepts — without bypassing the row-decode
+    pipeline. The same knob is reachable at the streaming layer via
+    ``MessageDecoder(text_errors=...)`` and propagates through to
+    every TEXT / ISO8601 cell.
+
+    See :func:`decode_text`'s WARNING about ``"replace"`` /
+    ``"surrogateescape"`` bypassing :func:`sanitize_for_log` and
+    failing re-encode before adopting a non-strict mode.
     """
     if value_type == ValueType.BOOLEAN:
         # Permissive truthiness decode matching Go's
@@ -858,7 +868,7 @@ def decode_value(data: bytes | memoryview, value_type: ValueType) -> tuple[WireV
         # null-terminated diagnostics name the actual cell type
         # (``"ISO8601 not null-terminated"``) rather than the generic
         # ``"Text ..."`` default — symmetric with ``encode_value``.
-        return decode_text(data, label=value_type.name)
+        return decode_text(data, label=value_type.name, errors=text_errors)
     elif value_type == ValueType.BLOB:
         return decode_blob(data)
     elif value_type == ValueType.NULL:
