@@ -753,7 +753,15 @@ class StmtResponse(Message):
         # ``AssignRequest.__post_init__``'s int→NodeRole coercion
         # for the same reason.
         if self.schema == 1 and self.tail_offset is None:
-            self.tail_offset = 0
+            # ``object.__setattr__`` is the post-init coercion idiom.
+            # If this dataclass is ever flipped to
+            # ``@dataclass(frozen=True)`` (for hashability or
+            # thread-safety), a bare ``self.tail_offset = 0`` raises
+            # ``FrozenInstanceError`` — fold the coercion into a custom
+            # ``__init__`` that writes attributes once at the end.
+            # Sibling ``AssignRequest`` and ``NodeInfo`` carry the same
+            # comment.
+            object.__setattr__(self, "tail_offset", 0)
 
     @override
     def _get_schema(self) -> int:
