@@ -147,15 +147,24 @@ def _reject_non_byte_format_memoryview(value: memoryview) -> None:
     rejection (parity with the ``mmap.mmap`` acceptance pins in
     ``tests/test_blob_inference_mmap.py``).
 
-    A released memoryview raises ``ValueError`` from ``.format``;
-    fall through silently in that case so the downstream
-    ``bytes(value)`` materialise step surfaces the canonical
-    ``EncodeError("Cannot materialise BLOB...")``. The format check
-    is a portability guard, not the released-buffer guard.
+    A released memoryview raises ``ValueError`` from ``.format`` on
+    current CPython (per ``Objects/memoryobject.c::mbuf_check_view``);
+    a future CPython narrowing the released-buffer error class to
+    ``BufferError`` (for symmetry with ``bytes(released_mv)`` which
+    already raises ``BufferError``) is also tolerated. Catch BOTH so
+    the helper's correctness does not hinge on a CPython
+    implementation detail the package does not own — the wider catch
+    mirrors the ``except (ValueError, BufferError)`` already applied
+    at the ``bytes(value)`` materialise site in the explicit-BLOB
+    arm of ``encode_value``. In either case fall through silently so
+    the downstream ``bytes(value)`` materialise step surfaces the
+    canonical ``EncodeError("Cannot materialise BLOB...")``. The
+    format check is a portability guard, not the released-buffer
+    guard.
     """
     try:
         fmt = value.format
-    except ValueError:
+    except (ValueError, BufferError):
         return
     if fmt not in _BYTE_FORMAT_MEMORYVIEW:
         raise EncodeError(
