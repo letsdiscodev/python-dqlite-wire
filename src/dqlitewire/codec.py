@@ -128,7 +128,27 @@ _REQUEST_MAX_SCHEMA: Final[dict[int, int]] = {
     RequestType.QUERY_SQL: 1,
 }
 _RESPONSE_MAX_SCHEMA: Final[dict[int, int]] = {
+    # STMT bumped to schema=1 to accept the V1 stmt-id+tail-offset
+    # response shape; see :class:`StmtResponse`.
     ResponseType.STMT: 1,
+    # ROWS, FAILURE, EMPTY, LEADER, WELCOME, SERVERS, DB, RESULT,
+    # FILES, METADATA: schema=0 only as of dqlite upstream commit
+    # f30fc9936a2a39674f3ec665217aff9b96e3b286. When upstream bumps a
+    # response (most plausibly ROWS for a future row-encoding
+    # extension), add ``ResponseType.<NAME>: <max-schema>`` here AND
+    # extend the matching ``decode_body`` to dispatch on ``schema``.
+    # The sibling ``_REQUEST_MAX_SCHEMA`` above (which records the
+    # PREPARE/EXEC/QUERY/EXEC_SQL/QUERY_SQL bumps) is the canonical
+    # pattern; mirror it on this side when the time comes.
+    #
+    # Until then, the ``.get(..., 0)`` fallback in the dispatch sites
+    # at ``decode_continuation`` and ``decode_bytes`` rejects any
+    # non-zero ``header.schema`` with a poisoning ``DecodeError`` —
+    # the deliberate choice today is to fail fast on a forward-compat
+    # mismatch rather than silently accept unknown bytes. A future
+    # protocol revision that introduces a ROWS schema bump will
+    # require lockstep client updates; document the bump here when it
+    # happens.
 }
 
 
