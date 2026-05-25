@@ -847,6 +847,21 @@ def decode_value(
     failing re-encode before adopting a non-strict mode.
     """
     if value_type == ValueType.BOOLEAN:
+        # Returns ``bool`` (NOT raw int). Justified by the module
+        # charter at the top of this file, which enumerates ``bool``
+        # as a wire primitive — not by raw preservation. Contrast with
+        # the UNIXTIME arm below, which DOES preserve the raw int64
+        # because epoch-seconds is the primitive and ``datetime`` is
+        # the driver-layer semantic. The principled split: a type is
+        # "raw"-preserved at the wire layer iff the wire primitive is
+        # itself the canonical representation; ``bool`` is canonical
+        # for BOOLEAN, ``int`` is canonical for UNIXTIME, and the
+        # datetime conversion is deferred to the driver
+        # (``dqlitedbapi``). A peer-emitted BOOLEAN cell carrying a
+        # raw uint64 outside ``{0, 1}`` loses the original integer
+        # through this collapse — see the encode-side asymmetry note
+        # on ``encode_value``'s BOOLEAN arm.
+        #
         # Permissive truthiness decode: read the wire cell as an
         # unsigned uint64 (matching C's ``uint64__decode(d->cursor,
         # &value->boolean)`` in ``dqlite-upstream/src/tuple.c``,
@@ -875,14 +890,18 @@ def decode_value(
     elif value_type == ValueType.INTEGER:
         return decode_int64(data), 8
     elif value_type == ValueType.UNIXTIME:
-        # Return raw int64 (seconds since epoch) to preserve round-trip
-        # identity at the wire level. Higher-level clients
-        # (``dqlitedbapi``) turn this into a UTC-aware ``datetime``;
-        # Go's ``Rows.Next()`` does the conversion at the
-        # ``database/sql`` driver layer with ``time.Unix(...)``.
-        # Bare wire-layer consumers must convert themselves; the wire
-        # layer's parity bar is "raw bytes → primitive", not "raw
-        # bytes → semantic".
+        # Returns raw int64 (NOT datetime). Contrast with the BOOLEAN
+        # arm above, which DOES collapse to ``bool`` because ``bool``
+        # is a wire primitive per the module charter. UNIXTIME's
+        # primitive is the epoch-seconds int; the ``datetime``
+        # semantic is driver-layer (see ``dqlitedbapi``).
+        #
+        # Higher-level clients (``dqlitedbapi``) turn this into a
+        # UTC-aware ``datetime``; Go's ``Rows.Next()`` does the
+        # conversion at the ``database/sql`` driver layer with
+        # ``time.Unix(...)``. Bare wire-layer consumers must convert
+        # themselves; the wire layer's parity bar is "raw bytes →
+        # primitive", not "raw bytes → semantic".
         return decode_int64(data), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data), 8
