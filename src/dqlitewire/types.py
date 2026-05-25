@@ -10,6 +10,7 @@ driver/DBAPI layer, matching the split used by the C reference client and
 by Go's ``database/sql`` driver.
 """
 
+import datetime
 import mmap
 import struct
 from typing import Final, cast
@@ -843,6 +844,34 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
+        if value_type == ValueType.ISO8601:
+            # Probe-and-discard: ISO8601 cells must be parseable on
+            # the consumer side (``dqlitedbapi`` calls
+            # ``datetime.datetime.fromisoformat`` or
+            # ``datetime.time.fromisoformat`` per the column type).
+            # The C reference is permissive (binds the bytes via
+            # ``sqlite3_bind_text`` without parsing), but the Python
+            # ecosystem's consumer fails far from the bind site if the
+            # string is not ISO 8601 — surface the failure at the
+            # encode site instead. The probe ladder mirrors the
+            # consumer's parser pair so bare-time strings
+            # (``"12:30:45"``) that the consumer's time arm accepts
+            # still pass here. Deliberate divergence from C parity,
+            # justified by the same caller-bug-surfacing rationale as
+            # the BOOLEAN strictness above.
+            try:
+                datetime.datetime.fromisoformat(value)
+            except ValueError:
+                try:
+                    datetime.time.fromisoformat(value)
+                except ValueError as e:
+                    raise EncodeError(
+                        f"ISO8601 cell rejects non-ISO string "
+                        f"{_bounded_repr_any(value)}: {e}. Use "
+                        f"ValueType.TEXT if the column is plain text, "
+                        f"or format the datetime via .isoformat() "
+                        f"before binding."
+                    ) from e
         # Cap the row-cell text length symmetric with the BLOB branch
         # below and with ``decode_text``'s ``_MAX_TEXT_VALUE_SIZE`` cap
         # — without ``max_size=`` here, a >16 MiB string encodes

@@ -583,7 +583,12 @@ class TestValue:
 
     def test_encode_decode_iso8601_roundtrips_as_text(self) -> None:
         """ISO8601 is stored as text at the wire level — datetime conversion
-        lives in the driver/DBAPI layer, matching C and Go's split.
+        lives in the driver/DBAPI layer, matching C and Go's split. The
+        encode arm now validates the string via
+        ``datetime.fromisoformat`` / ``time.fromisoformat`` before
+        emitting bytes so a non-ISO string fails at the bind site (see
+        ``tests/test_iso8601_encode_format_validation.py``); the
+        legitimate ISO 8601 variants below all parse.
         """
         for iso in (
             "2024-01-15 10:30:45+00:00",
@@ -591,7 +596,6 @@ class TestValue:
             "2024-01-15 10:30:45.123456+00:00",
             "2024-01-15 10:30:45",
             "2024-01-15",
-            "",
         ):
             encoded, vtype = encode_value(iso, ValueType.ISO8601)
             assert vtype == ValueType.ISO8601
