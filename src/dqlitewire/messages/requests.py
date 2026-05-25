@@ -850,15 +850,50 @@ class AssignRequest(Message):
     C-style permissiveness can pre-decode the raw uint64 and
     construct ``AssignRequest`` with ``role=NodeRole.VOTER``
     explicitly.
+
+    **Construction rejects bare ``role=None``.** ``AssignRequest(node_id=N)``
+    without a role would be silently admitted by the dataclass and
+    fail only at ``encode_body()`` — possibly far from the
+    construction site. The ``__post_init__`` rejects the bare-typo
+    case at construction time. Callers that genuinely need to emit
+    the legacy 1-word PROMOTE shape (relays to old servers,
+    round-trip-identity tests) opt in with
+    ``AssignRequest(node_id=N, role=None, _legacy_intent=True)`` and
+    call :meth:`encode_body_legacy`. The sentinel mirrors the
+    ``_decoded_schema`` / ``_decoded_empty_header`` pattern on
+    ``ExecRequest`` so the wire layer keeps a uniform vocabulary.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.ASSIGN
 
     node_id: int
     role: NodeRole | int | None = None
+    # Round-trip / legacy-emit sentinel. ``True`` opts a caller into
+    # the legacy 1-word PROMOTE encode path (``encode_body_legacy``)
+    # with ``role=None``. ``False`` (the default) makes the bare
+    # ``AssignRequest(node_id=N)`` typo fail at construction rather
+    # than at encode time. Excluded from ``repr`` and equality so two
+    # logically-equal requests compare equal regardless of how they
+    # were built. Mirrors ``ExecRequest._decoded_schema`` and
+    # ``ClusterRequest._decoded``.
+    _legacy_intent: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("node_id", self.node_id)
+        if self.role is None and not self._legacy_intent:
+            # Reject bare ``AssignRequest(node_id=N)`` at the
+            # construction site rather than at ``encode_body()``. The
+            # encoder-side message is preserved as defense-in-depth for
+            # callers that mutate ``role`` to ``None`` after
+            # construction.
+            raise EncodeError(
+                "AssignRequest requires role=NodeRole.VOTER/STANDBY/SPARE for the "
+                "modern ASSIGN body. Bare AssignRequest(node_id=N) is rejected at "
+                "construction so the typo doesn't silently surface as a cryptic "
+                "encode-time error. Callers that genuinely need the legacy 1-word "
+                "PROMOTE shape must pass _legacy_intent=True and call "
+                "encode_body_legacy() explicitly."
+            )
         if self.role is not None:
             # Coerce bare ints to the NodeRole enum and reject unknown
             # values. Mirrors the response-side narrowing on

@@ -43,6 +43,6 @@ def test_assignrequest_legacy_silently_drops_role_behaviour() -> None:
     from dqlitewire.constants import NodeRole
 
     req_with_role = AssignRequest(node_id=42, role=NodeRole.SPARE)
-    req_no_role = AssignRequest(node_id=42, role=None)
+    req_no_role = AssignRequest(node_id=42, role=None, _legacy_intent=True)
     assert req_with_role.encode_body_legacy() == req_no_role.encode_body_legacy()
     assert len(req_with_role.encode_body_legacy()) == 8

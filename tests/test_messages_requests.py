@@ -566,22 +566,23 @@ class TestAssignRequest:
         assert decoded.role == NodeRole.VOTER
 
     def test_encode_without_role_raises_encode_error(self) -> None:
-        """Encoding AssignRequest with role=None via the modern
-        encode_body now raises EncodeError so an accidental omission
+        """Constructing AssignRequest with bare role=None now raises
+        EncodeError at construction time so an accidental omission
         (typo: forgetting the role= kwarg) doesn't silently downgrade
-        to the legacy 1-word PROMOTE shape."""
+        to the legacy 1-word PROMOTE shape and surface only at
+        encode."""
         from dqlitewire.exceptions import EncodeError
 
-        msg = AssignRequest(node_id=1)
-        with pytest.raises(EncodeError, match="(?i)role=None"):
-            msg.encode()
+        with pytest.raises(EncodeError, match="(?i)role"):
+            AssignRequest(node_id=1)
 
     def test_encode_body_legacy_explicit_opt_in(self) -> None:
         """encode_body_legacy() is the explicit opt-in for the
-        1-word PROMOTE wire shape; it does not warn or raise."""
+        1-word PROMOTE wire shape; callers asking for the legacy
+        encode flag _legacy_intent=True at construction."""
         from dqlitewire.types import encode_uint64
 
-        msg = AssignRequest(node_id=42)
+        msg = AssignRequest(node_id=42, role=None, _legacy_intent=True)
         body = msg.encode_body_legacy()
         assert body == encode_uint64(42)
 
