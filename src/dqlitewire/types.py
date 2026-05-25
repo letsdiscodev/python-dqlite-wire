@@ -847,19 +847,28 @@ def decode_value(
     failing re-encode before adopting a non-strict mode.
     """
     if value_type == ValueType.BOOLEAN:
-        # Permissive truthiness decode matching Go's
-        # ``r.message.getInt64() != 0`` (``internal/protocol/message.go:566``)
-        # and C's ``tuple.c:155`` (decode reads raw uint64 and the consumer
-        # interprets truthiness). The dqlite C server emits a
-        # ``DQLITE_BOOLEAN`` cell whenever the column's decltype is
-        # ``BOOLEAN`` and the value comes from
-        # ``sqlite3_column_int64`` (``encodeColumn`` in
+        # Permissive truthiness decode: read the wire cell as an
+        # unsigned uint64 (matching C's ``uint64__decode(d->cursor,
+        # &value->boolean)`` in ``dqlite-upstream/src/tuple.c``,
+        # ``DQLITE_BOOLEAN`` case in ``tuple_decoder__next``) and
+        # coerce to ``bool``. Go's reference decoder uses signed
+        # ``getInt64() != 0`` instead
+        # (``internal/protocol/message.go:566``), which agrees on
+        # truthiness for every bit pattern but diverges on the raw
+        # int for the upper half of the range
+        # (``[2**63, 2**64 - 1]``); Python tracks the C side so a
+        # hypothetical future "keep_raw=True" debug knob would yield
+        # C-shaped values, not Go-shaped.
+        #
+        # The dqlite C server emits a ``DQLITE_BOOLEAN`` cell whenever
+        # the column's decltype is ``BOOLEAN`` and the value comes
+        # from ``sqlite3_column_int64`` (``encodeColumn`` in
         # ``dqlite-upstream/src/query.c``, ``DQLITE_BOOLEAN`` case) —
-        # i.e. any int the
-        # column actually contains. SQLite typing is dynamic, so a row
-        # inserted as ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives
-        # with raw=5 on the wire. Strict-rejection would deterministically
-        # poison the decoder for legitimate cluster data while Go and C
+        # i.e. any int the column actually contains. SQLite typing is
+        # dynamic, so a row inserted as
+        # ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives with raw=5
+        # on the wire. Strict-rejection would deterministically poison
+        # the decoder for legitimate cluster data while Go and C
         # clients work fine.
         raw = decode_uint64(data)
         return bool(raw), 8

@@ -24,9 +24,7 @@ def test_stmt_response_post_init_uses_object_setattr() -> None:
     # The bare assignment must not appear as an actual statement; the
     # forward-compat comment is allowed to mention it as a string in
     # double-backticks.
-    code_lines = [
-        line for line in src.splitlines() if not line.lstrip().startswith("#")
-    ]
+    code_lines = [line for line in src.splitlines() if not line.lstrip().startswith("#")]
     code = "\n".join(code_lines)
     assert "self.tail_offset = 0" not in code
 
