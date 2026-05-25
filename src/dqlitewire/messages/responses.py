@@ -1151,23 +1151,31 @@ class RowsResponse(Message):
                     f"row_types[{i}] has {len(self.row_types[i])} types, expected {col_count}"
                 )
 
-        result = encode_uint64(col_count)
+        # Accumulate into a ``bytearray`` and materialise to ``bytes``
+        # at the end. ``bytes += bytes`` allocates a fresh buffer and
+        # memcopies the running result on every iteration — Θ(N²) on
+        # the row count for an N-row body. ``bytearray.extend`` mutates
+        # in place at amortised O(1) per append. Mirrors the pattern
+        # already established in ``tuples.encode_params_tuple`` and
+        # ``tuples.encode_row_header``.
+        result = bytearray()
+        result.extend(encode_uint64(col_count))
 
         # Column names
         for name in self.column_names:
-            result += encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="column name")
+            result.extend(encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="column name"))
 
         # Rows - each row gets its own type header
         for i, row in enumerate(self.rows):
             types = self._get_row_types(i, row)
-            result += encode_row_header(types)
-            result += encode_row_values(row, types)
+            result.extend(encode_row_header(types))
+            result.extend(encode_row_values(row, types))
 
         # End marker: full uint64 marker word (matching Go)
         marker = ROW_PART_MARKER if self.has_more else ROW_DONE_MARKER
-        result += encode_uint64(marker)
+        result.extend(encode_uint64(marker))
 
-        return result
+        return bytes(result)
 
     @classmethod
     @override
@@ -1389,7 +1397,12 @@ class FilesResponse(Message):
                 f"FilesResponse count {len(self.files)} exceeds maximum ({_MAX_FILE_COUNT})"
             )
         # Per-filename byte cap is enforced inside encode_text below.
-        result = encode_uint64(len(self.files))
+        # Accumulate into a ``bytearray`` to avoid the O(N²) memcopy
+        # tax of repeated ``bytes += bytes`` — per-file ``content`` can
+        # reach ``_MAX_FILE_CONTENT_SIZE`` (~64 MiB), so each append
+        # would copy the entire running result on the prior shape.
+        result = bytearray()
+        result.extend(encode_uint64(len(self.files)))
         for name, content in self.files.items():
             # The upstream C server (gateway.c::dumpFile) asserts
             # ``len % 8 == 0`` for every file's content, because per-file
@@ -1414,10 +1427,10 @@ class FilesResponse(Message):
                     f"FilesResponse content for {name!r} length {len(content)} "
                     f"exceeds maximum ({_MAX_FILE_CONTENT_SIZE})"
                 )
-            result += encode_text(name, max_size=_MAX_FILENAME_SIZE, label="filename")
-            result += encode_uint64(len(content))
-            result += content
-        return result
+            result.extend(encode_text(name, max_size=_MAX_FILENAME_SIZE, label="filename"))
+            result.extend(encode_uint64(len(content)))
+            result.extend(content)
+        return bytes(result)
 
     @classmethod
     @override
@@ -1592,12 +1605,21 @@ class ServersResponse(Message):
             raise EncodeError(
                 f"ServersResponse node count {len(self.nodes)} exceeds maximum ({_MAX_NODE_COUNT})"
             )
-        result = encode_uint64(len(self.nodes))
+        # Bytearray accumulation: same O(N²) avoidance as the sibling
+        # encoders. Node count is bounded by ``_MAX_NODE_COUNT`` (10k),
+        # but uniformity with ``RowsResponse`` / ``FilesResponse``
+        # matters more than the per-encoder cost — leaving even one
+        # encoder on the regressed shape invites future copy-paste
+        # regressions.
+        result = bytearray()
+        result.extend(encode_uint64(len(self.nodes)))
         for node in self.nodes:
-            result += encode_uint64(node.node_id)
-            result += encode_text(node.address, max_size=_MAX_ADDRESS_SIZE, label="server address")
-            result += encode_uint64(node.role)
-        return result
+            result.extend(encode_uint64(node.node_id))
+            result.extend(
+                encode_text(node.address, max_size=_MAX_ADDRESS_SIZE, label="server address")
+            )
+            result.extend(encode_uint64(node.role))
+        return bytes(result)
 
     @classmethod
     @override

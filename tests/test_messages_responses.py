@@ -2385,6 +2385,77 @@ class TestResponsePostInitValidation:
         MetadataResponse(failure_domain=0, weight=0)
 
 
+class TestEncodeBodyLinearTime:
+    """Perf-floor pins: encoders accumulate into ``bytearray`` so the
+    body grows in amortised O(1) per append. The prior ``bytes += bytes``
+    shape paid Θ(N²) memcopy on the running result, which on a max-cap
+    payload turned a sub-millisecond encode into a multi-second loop
+    stall. The ceilings are deliberately generous (CI runners with
+    variable load) but tight enough that the regressed shape breaches
+    them at the chosen sizes — the only point is to fail if a refactor
+    reintroduces the quadratic shape.
+    """
+
+    def test_rows_response_encode_body_linear_on_row_count(self) -> None:
+        import time
+
+        # 20k rows × small payload: under the regressed ``bytes += bytes``
+        # shape this measures ~5+ s on commodity hardware; under the
+        # linear shape it is well under 100 ms. 1.5 s is the slack
+        # budget — anything near the regression cost signals the
+        # quadratic shape has returned.
+        rows: list[list[WireValue]] = [[i, f"row-{i:08d}"] for i in range(20000)]
+        msg = RowsResponse(
+            column_names=["id", "name"],
+            column_types=[ValueType.INTEGER, ValueType.TEXT],
+            rows=rows,
+            has_more=False,
+        )
+        start = time.monotonic()
+        msg.encode_body()
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.5, (
+            f"RowsResponse.encode_body for 20000 rows took {elapsed:.3f}s; "
+            "expected linear-time behaviour (regressed shape takes 5+ s)"
+        )
+
+    def test_files_response_encode_body_linear_on_file_count(self) -> None:
+        import time
+
+        # ``_MAX_FILE_COUNT`` is 100 by design, so the file-count axis
+        # is small; the regression sensitivity here comes from per-file
+        # ``content`` size. Use a per-file payload large enough that
+        # repeated ``bytes += bytes`` would copy the running result
+        # tens of times.
+        files = {f"file-{i:05d}": b"\x00" * 65536 for i in range(99)}
+        msg = FilesResponse(files=files)
+        start = time.monotonic()
+        msg.encode_body()
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.5, (
+            f"FilesResponse.encode_body for {len(files)} files took {elapsed:.3f}s; "
+            "expected linear-time behaviour"
+        )
+
+    def test_servers_response_encode_body_linear_on_node_count(self) -> None:
+        import time
+
+        # Up to ``_MAX_NODE_COUNT`` (10k) nodes; 8000 makes the
+        # regression detectable while staying under the cap.
+        nodes = [
+            NodeInfo(node_id=i + 1, address=f"node-{i}.example:8080", role=NodeRole.VOTER)
+            for i in range(8000)
+        ]
+        msg = ServersResponse(nodes=nodes)
+        start = time.monotonic()
+        msg.encode_body()
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, (
+            f"ServersResponse.encode_body for {len(nodes)} nodes took {elapsed:.3f}s; "
+            "expected linear-time behaviour"
+        )
+
+
 class TestScalarResponseClassesFrozenSlotted:
     """Pin: scalar response classes are frozen + slotted, matching
     the NodeInfo precedent. Wire-decoded values are handed off for
