@@ -571,7 +571,7 @@ class MessageDecoder:
     def _finalize_continuation_state(self) -> None:
         """Reset all per-stream continuation counters and flags.
 
-        Called from every termination arm of ``decode_continuation`` —
+        Called from every *termination* arm of ``decode_continuation`` —
         clean (FAILURE, EMPTY, wrong-type, has_more=False) and dirty
         (oversized read_message, broad-BaseException catch) — and from
         ``reset()``. Centralising the discipline keeps the asymmetry
@@ -579,11 +579,23 @@ class MessageDecoder:
         partial clears, and makes the pattern grep-able for any future
         sixth termination path.
 
+        Not called from the *guard* arms in ``skip_message`` /
+        ``decode`` that reject the requested operation mid-continuation
+        with ``ContinuationError``: those raise to tell the caller
+        "the continuation is still in progress, drain via
+        ``decode_continuation`` or abandon via ``reset()``" — they do
+        NOT terminate the continuation themselves, so clearing the
+        ``_continuation_expected`` flag would silently lose the
+        invariant the guard exists to enforce. The counters remain
+        readable to a future telemetry accessor but only while the
+        flag is still True, which truthfully reflects the stream
+        state.
+
         Counter staleness is functionally inaccessible behind the
         buffer's poison flag (``_check_poisoned`` short-circuits every
         post-poison decoder call), but a future telemetry accessor or a
         partial reset would surface the stale data; the helper closes
-        that hazard now.
+        that hazard now for the termination arms.
         """
         self._continuation_expected = False
         self._continuation_frame_count = 0
