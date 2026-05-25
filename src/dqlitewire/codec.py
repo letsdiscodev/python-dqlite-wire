@@ -592,16 +592,22 @@ class MessageDecoder:
                 # (8 bytes from a conforming peer) is treated as a
                 # clean terminator, mirroring go-dqlite's
                 # ``Protocol.Interrupt`` drain loop, and the buffer is
-                # NOT poisoned. A malformed EmptyResponse body (wrong
-                # length only) still poisons the buffer via the
-                # standard DecodeError path raised from
-                # ``EmptyResponse.decode_body`` — see
-                # ``test_decode_continuation_malformed_empty_still_poisons``.
-                # The reserved uint64 inside the body is permissively
-                # read-and-discarded to match Go's ``response.getUint64()``;
-                # a non-zero reserved value does NOT poison.
+                # NOT poisoned. The reserved uint64 inside the body is
+                # permissively read-and-discarded to match Go's
+                # ``response.getUint64()``; a non-zero reserved value
+                # does NOT poison.
+                #
+                # Decode body FIRST and finalise AFTER so the order
+                # mirrors the FAILURE arm above. A malformed body
+                # (wrong length) raises DecodeError which is caught
+                # below and re-raised WITHOUT poison — ``read_message``
+                # already advanced past the offending frame so the
+                # buffer offset is wire-coherent, matching the
+                # ``StreamError`` precedent for coherent-offset
+                # anomalies.
+                empty_result = EmptyResponse.decode_body(body, schema=header.schema)
                 self._finalize_continuation_state()
-                return EmptyResponse.decode_body(body, schema=header.schema)
+                return empty_result
             # ``msg_type`` is ROWS here (the early type-recognition
             # check above narrowed the universe to FAILURE/EMPTY/ROWS).
 
@@ -690,6 +696,16 @@ class MessageDecoder:
             # invalidate or resync (e.g. issue the next request) —
             # Go's ``Protocol.Recv`` has the same non-poisoning
             # behaviour for unexpected types.
+            raise
+        except DecodeError:
+            # Coherent-offset frame whose body decode failed (e.g. a
+            # malformed EMPTY body of the wrong length).
+            # ``read_message`` already advanced past the offending
+            # frame so the buffer offset is wire-coherent; mirror the
+            # ``StreamError`` precedent and re-raise WITHOUT poison
+            # after finalising continuation state. The caller can
+            # resync without dropping the connection.
+            self._finalize_continuation_state()
             raise
         except BaseException as e:
             # Counter-finalise BEFORE poisoning so the discipline is

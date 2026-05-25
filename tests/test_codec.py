@@ -1433,12 +1433,16 @@ class TestDecoderContinuation:
         assert msg.node_id == 1
         assert msg.address == "127.0.0.1:9001"
 
-    def test_decode_continuation_malformed_failure_body_still_poisons(self) -> None:
-        """The clean-failure path (above) is opt-in to well-formed
-        FailureResponse bodies only. A malformed body (e.g., missing
-        null terminator on the message text) routes through the broad
-        ``except`` and poisons the buffer — same discipline as the
-        malformed-empty case."""
+    def test_decode_continuation_malformed_failure_body_does_not_poison(self) -> None:
+        """A malformed FAILURE body (e.g. missing null terminator on
+        the message text) raises DecodeError but does NOT poison the
+        buffer: ``read_message`` already advanced past the offending
+        frame, so the connection is wire-coherent. Mirrors the
+        ``StreamError`` precedent for coherent-offset anomalies — the
+        clean-failure path returns via ``ServerFailure`` without
+        poison, and the malformed-body path now follows the same
+        non-poisoning discipline via the dedicated ``DecodeError`` arm.
+        """
         import struct as _struct
 
         from dqlitewire.exceptions import DecodeError
@@ -1456,7 +1460,7 @@ class TestDecoderContinuation:
 
         with pytest.raises(DecodeError):
             decoder.decode_continuation()
-        assert decoder.is_poisoned is True
+        assert decoder.is_poisoned is False
 
     def test_decode_continuation_empty_with_non_zero_reserved_does_not_poison(self) -> None:
         """Negative-pin behaviour pair: EmptyResponse.decode_body
@@ -1483,12 +1487,16 @@ class TestDecoderContinuation:
         assert isinstance(msg, EmptyResponse)
         assert decoder.is_poisoned is False
 
-    def test_decode_continuation_malformed_empty_size_poisons(self) -> None:
+    def test_decode_continuation_malformed_empty_size_does_not_poison(self) -> None:
         """A malformed EmptyResponse (wrong body length, e.g. 16 bytes
-        instead of 8) must surface the underlying DecodeError and
-        poison the buffer. The reserved field itself is now permissive
-        on decode (matching Go), so we use a length mismatch to
-        trigger the malformed path."""
+        instead of 8) surfaces the underlying DecodeError but does NOT
+        poison the buffer: ``read_message`` already advanced past the
+        offending frame so the buffer offset is wire-coherent, and the
+        DecodeError arm in ``decode_continuation`` mirrors the
+        ``StreamError`` / ``ServerFailure`` precedents for
+        coherent-offset anomalies. The reserved field itself is
+        permissive on decode (matching Go), so we use a length
+        mismatch to trigger the malformed path."""
         import struct
 
         from dqlitewire.exceptions import DecodeError
@@ -1506,7 +1514,7 @@ class TestDecoderContinuation:
 
         with pytest.raises(DecodeError, match="EmptyResponse body must be exactly 8 bytes"):
             decoder.decode_continuation()
-        assert decoder.is_poisoned is True
+        assert decoder.is_poisoned is False
 
 
 class TestDecoderContinuationExpected:
