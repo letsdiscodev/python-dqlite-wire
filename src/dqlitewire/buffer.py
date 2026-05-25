@@ -233,23 +233,26 @@ class ReadBuffer:
         narrower than the read-side oversize path.** The rejected ``data``
         argument is silently dropped (never appended).
 
-        - If the rejection fires on an **empty / header-only buffer**
-          with no skip in flight, no body bytes have been lost: the
-          chunk that overflowed was never appended. ``reset()`` /
-          ``clear()`` is safe — there is no in-flight message body to
-          drain. This is the only case where the documented
-          safe-reset recovery actually holds.
-        - If the rejection fires while an **in-flight body** is
+        - If the rejection fires on an **empty buffer** with no skip
+          in flight, no in-flight wire state has been lost: the chunk
+          that overflowed was never appended and there are no
+          buffered bytes to clobber. ``reset()`` / ``clear()`` is
+          safe — there is no in-flight message body to drain. This is
+          the only case where the documented safe-reset recovery
+          actually holds.
+        - If the rejection fires while ANY in-flight wire state is
           present — either ``_skip_remaining > 0`` (mid-skip of an
-          oversized message) or the buffer already holds ≥ HEADER_SIZE
-          unconsumed bytes (waiting on a frame's body) — the buffer
-          self-poisons. The rejected chunk contained body bytes for
-          the in-flight message that are now lost on the wire and
-          the next peer bytes are continuation of that body; the
-          buffer has no way to identify where that body ends. The
-          caller's next feed / decode raises ``PoisonedError`` so
-          ``reset()`` cannot be misapplied — the only correct
-          recovery is to drop the connection.
+          oversized message) or the buffer already holds ANY
+          unconsumed bytes (waiting on the rest of a header or on a
+          frame's body) — the buffer self-poisons. The buffered
+          prefix includes wire bytes the caller cannot safely
+          discard: the next peer bytes are the continuation, and
+          ``reset()`` would clobber the prefix and silently desync
+          the next ``feed()``. The widened predicate covers both
+          the partial-header (1-7 stray bytes) and full
+          header+body cases. The caller's next feed / decode raises
+          ``PoisonedError`` so ``reset()`` cannot be misapplied —
+          the only correct recovery is to drop the connection.
         - This applies symmetrically to BOTH the entry-side
           oversize reject (``len(data) > 2 * max_message_size``)
           and the projection-side reject
@@ -287,22 +290,24 @@ class ReadBuffer:
                 f"feed data ({len(data)}) exceeds 2x max_message_size "
                 f"({self._max_message_size}); split into smaller chunks"
             )
-            # Self-poison when an in-flight body is present so the
-            # documented "safe reset" case cannot be misapplied. Two
-            # sub-cases trip this:
+            # Self-poison when ANY in-flight wire state is present so
+            # the documented "safe reset" case cannot be misapplied.
+            # Two sub-cases trip this:
             # - ``_skip_remaining > 0``: an oversized message is mid-
             #   skip and the rejected chunk contained body bytes that
             #   were not discarded. The wire offset is unrecoverable.
-            # - The buffer already holds at least one header's worth
-            #   of unconsumed bytes (an in-progress frame waiting on
-            #   its body). The caller's ``reset()`` would clobber the
-            #   in-flight body's tail still on the wire and leave the
-            #   next feed silently desynchronised — exactly the
-            #   recovery-contract gap the buffer is supposed to
-            #   prevent. Mirrors the projection-side discipline
-            #   below.
-            inflight_body = (len(self._data) - self._pos) >= HEADER_SIZE
-            if self._skip_remaining > 0 or inflight_body:
+            # - The buffer already holds ANY unconsumed bytes — a
+            #   partial header (1-7 stray bytes) or a header+body
+            #   in flight. A peer that chunked a header across two
+            #   sends and tripped the cap on the second leaves
+            #   1-7 stray header bytes; ``reset()`` would clobber
+            #   them and the next feed would mis-frame from a wrong
+            #   offset with no further diagnostic. The widened
+            #   predicate (``available() > 0``) matches
+            #   ``_skip_remaining``'s strictness. Mirrors the
+            #   projection-side discipline below.
+            inflight_state = (len(self._data) - self._pos) > 0
+            if self._skip_remaining > 0 or inflight_state:
                 if self._skip_remaining > 0:
                     self._skip_remaining = 0
                     self._poison_after_skip = None
@@ -321,19 +326,23 @@ class ReadBuffer:
         projected = len(self._data) - self._pos + effective_len
         if projected > self._max_message_size:
             err = DecodeError(f"Buffer size {projected} exceeds maximum {self._max_message_size}")
-            # Self-poison when an in-flight body is present so the
-            # caller's documented ``reset()`` recovery cannot be
-            # misapplied. Two sub-cases trip this — symmetric with
-            # the entry-side oversize reject above:
+            # Self-poison when ANY in-flight wire state is present so
+            # the caller's documented ``reset()`` recovery cannot be
+            # misapplied. Two sub-cases trip this — symmetric with the
+            # entry-side oversize reject above:
             # - ``_skip_remaining > 0``: an oversized message is mid-
             #   skip and the rejected chunk contained body bytes
             #   that were not discarded; offset unrecoverable.
-            # - The buffer already holds ≥ HEADER_SIZE unconsumed
-            #   bytes (an in-progress frame waiting on its body);
-            #   ``reset()`` would clobber the in-flight body's tail
-            #   still on the wire and silently desynchronise.
-            inflight_body = (len(self._data) - self._pos) >= HEADER_SIZE
-            if self._skip_remaining > 0 or inflight_body:
+            # - The buffer already holds ANY unconsumed bytes —
+            #   partial header (1-7 stray) or full header+body in
+            #   flight. ``reset()`` would clobber the buffered prefix
+            #   and the next feed would mis-frame from a wrong offset
+            #   silently. Widened from ``>= HEADER_SIZE`` to
+            #   ``available() > 0`` so a peer chunking the header
+            #   across two sends cannot trip the cap and then desync
+            #   the caller via the documented safe-reset path.
+            inflight_state = (len(self._data) - self._pos) > 0
+            if self._skip_remaining > 0 or inflight_state:
                 if self._skip_remaining > 0:
                     # Clear the skip-tracking fields so any post-poison
                     # introspection (or a future recover() helper) sees
