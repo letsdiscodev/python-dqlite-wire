@@ -89,6 +89,18 @@ _MAX_TEXT_VALUE_SIZE: Final[int] = 64 * 1024 * 1024 - 64  # 64 MiB minus framing
 # on the decode side.
 _MAX_VALUE_REPR: Final[int] = 64
 
+# NULL cell width on the wire. Anchored to four upstream TODO sites in
+# ``dqlite-upstream/src/tuple.c`` (lines 71-73, 146, 262, 298: ``/* TODO:
+# allow null to be encoded with 0 bytes */``). Today every NULL is 8
+# bytes — a uint64 read into a union member that is never inspected.
+# If upstream lands the 0-byte NULL change, this constant flips and
+# both encode_value and decode_value NULL branches pick it up in
+# lockstep; the row-decoder's per-cell offset arithmetic continues to
+# work because the consumed-bytes return path also reads the constant.
+# Centralising the literal makes "how wide is NULL on the wire?"
+# answerable in one place rather than three.
+NULL_CELL_WIDTH: Final[int] = 8
+
 
 def _bounded_repr(value: int) -> str:
     s = str(value)
@@ -736,7 +748,7 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
                 f"Cannot encode None with explicit type {value_type.name}. "
                 f"Pass value_type=ValueType.NULL or omit value_type."
             )
-        return b"\x00" * 8, ValueType.NULL
+        return b"\x00" * NULL_CELL_WIDTH, ValueType.NULL
 
     # Hoist the memoryview format check to fire exactly once, before
     # any branching (inferred-vs-explicit, BLOB-vs-other). Previously
@@ -1098,6 +1110,6 @@ def decode_value(
         # :meth:`EmptyResponse.decode_body`, which document the same
         # round-trip lossiness for their reserved fields.
         decode_uint64(data, label="NULL cell")
-        return None, 8
+        return None, NULL_CELL_WIDTH
     else:
         raise DecodeError(f"Unknown value type: {value_type}")
