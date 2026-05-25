@@ -793,16 +793,31 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         # ordering. Without this, a 100 MB ``bytearray`` is copied
         # to ``bytes`` first, then rejected by ``encode_blob``'s
         # length check; the materialise allocation is wasted.
+        #
+        # For ``memoryview`` the probe must use ``.nbytes`` — NOT
+        # ``len(mv)`` — because ``len(memoryview(array.array('Q',
+        # [...])))`` is the ELEMENT count, not the byte count. The
+        # earlier ``_reject_non_byte_format_memoryview`` only admits
+        # single-byte formats where ``len == nbytes`` by coincidence,
+        # so a ``len()`` probe is correct today only because of that
+        # ordering. ``.nbytes`` makes the cap correctness robust by
+        # construction: a future refactor that moves or removes the
+        # format check cannot silently re-open a cap bypass through a
+        # multi-byte memoryview where ``8 * len(mv)`` bytes would
+        # materialise. For ``bytes`` / ``bytearray`` / ``mmap.mmap``
+        # the byte count is ``len(value)`` by type.
+        #
         # ``len()`` works on every supported open container without
         # materialising. A closed ``mmap.mmap`` raises
         # ``ValueError("mmap closed or invalid")`` from ``len()``;
-        # a released ``memoryview`` raises ``ValueError`` likewise.
-        # Fall through to the materialise step in that case so the
-        # original ``EncodeError`` shape (with the same message
-        # prefix) surfaces — preserving backwards compatibility for
-        # callers catching on the existing message text.
+        # a released ``memoryview`` raises ``ValueError`` likewise
+        # from ``.nbytes`` / ``len()``. Fall through to the materialise
+        # step in that case so the original ``EncodeError`` shape (with
+        # the same message prefix) surfaces — preserving backwards
+        # compatibility for callers catching on the existing message
+        # text.
         try:
-            length: int | None = len(value)
+            length: int | None = value.nbytes if isinstance(value, memoryview) else len(value)
         except (ValueError, BufferError, TypeError):
             length = None
         if length is not None and length > _MAX_BLOB_SIZE:
