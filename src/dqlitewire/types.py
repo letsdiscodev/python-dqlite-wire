@@ -690,7 +690,15 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
     need ``True`` back must either coerce at read time
     (``bool(row[0])``) or pass ``column_types=[...BOOLEAN...]`` on the
     response side so the driver's typed decode materialises bool.
-    Inference matches the Go / C clients' DQLITE_BOOLEAN handling.
+
+    Inference matches the Go client's ``appendValue`` ``case bool:``
+    arm (``internal/protocol/message.go``). The C client has no
+    inference layer — ``dqlite-upstream/src/bind.c::bind_one``
+    switches on a pre-set ``value->type`` field, with the column-
+    decltype-to-tag mapping happening on the server side at
+    ``query.c``'s ``value_type`` helper. The Python layer adds
+    inference for bind-site ergonomics; the wire-format contract is
+    identical across all three clients.
     """
     if value is None:
         if value_type is not None and value_type != ValueType.NULL:
