@@ -896,6 +896,18 @@ def decode_value(
         # tuple_decoder semantics. Strict-rejection provided no
         # defensive value (the field is documented as unused) and
         # was an interop hazard.
+        #
+        # Round-trip identity caveat: ``encode_value(None)`` writes 8
+        # zero bytes regardless of what the decoder consumed, so a
+        # mock-server / proxy / fuzzer that captured a non-zero NULL
+        # payload cannot recover byte-identity through the public
+        # encode path. The public encoder is uniformly zero-emitting;
+        # callers needing byte-identity must emit the captured 8 bytes
+        # plus the NULL type tag directly. The asymmetry mirrors the
+        # sibling permissive-read patterns at
+        # :meth:`DbResponse.decode_body` and
+        # :meth:`EmptyResponse.decode_body`, which document the same
+        # round-trip lossiness for their reserved fields.
         return None, 8
     else:
         raise DecodeError(f"Unknown value type: {value_type}")
