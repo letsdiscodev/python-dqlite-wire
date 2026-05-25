@@ -581,10 +581,21 @@ class MessageDecoder:
                 ResponseType.EMPTY,
                 ResponseType.ROWS,
             ):
+                # Snapshot the per-stream counters BEFORE finalising so
+                # the caller's "retry the query" recovery has access to
+                # how many continuation frames and rows were observed
+                # before the wrong-type frame arrived. The buffer is
+                # NOT poisoned on this arm (precedent set by the prior
+                # coherent-offset fix), so these counters are the only
+                # surviving record of partial-stream progress.
+                snap_frames = self._continuation_frame_count
+                snap_rows = self._continuation_total_rows
                 self._finalize_continuation_state()
                 raise StreamError(
                     f"Expected ROWS continuation (type {ResponseType.ROWS}), "
-                    f"got type {header.msg_type}"
+                    f"got type {header.msg_type}",
+                    frame_count=snap_frames,
+                    total_rows=snap_rows,
                 )
 
             max_schema = self._max_schema.get(header.msg_type, 0)

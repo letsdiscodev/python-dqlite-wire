@@ -46,7 +46,34 @@ class StreamError(ProtocolError):
     Callers catching this should close and re-establish the underlying
     socket. The decoder and buffer are not recoverable — any remaining
     buffered bytes are at an unknown protocol offset.
+
+    When the error is raised from ``decode_continuation`` because the
+    next mid-stream frame was an unexpected message type (the
+    coherent-offset variant added in a prior fix), the buffer is NOT
+    poisoned; the caller can resync without dropping the connection
+    and the in-flight stream's partial accumulation is surfaced via
+    ``frame_count`` / ``total_rows``. A caller writing a "retry the
+    query" recovery can use these to decide whether to re-fetch or
+    deduplicate already-observed rows.
+
+    Attributes:
+        frame_count: Number of continuation frames consumed before
+            the wrong-type frame (the initial ROWS frame returned by
+            ``decode()`` counts as frame 1). Zero when the exception
+            originates outside the continuation drain.
+        total_rows: Cumulative row count across all consumed
+            continuation frames before the wrong-type frame. Zero
+            when the exception originates outside the continuation
+            drain.
     """
+
+    frame_count: int
+    total_rows: int
+
+    def __init__(self, msg: str, *, frame_count: int = 0, total_rows: int = 0) -> None:
+        super().__init__(msg)
+        self.frame_count = frame_count
+        self.total_rows = total_rows
 
 
 class PoisonedError(StreamError):
