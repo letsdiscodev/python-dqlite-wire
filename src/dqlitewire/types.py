@@ -12,7 +12,7 @@ by Go's ``database/sql`` driver.
 
 import mmap
 import struct
-from typing import Final
+from typing import Final, cast
 
 from dqlitewire.constants import WORD_SIZE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
@@ -829,9 +829,17 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
                 "Implicit coercion would silently lose precision for ints "
                 "with absolute value >= 2**53."
             )
-        if not isinstance(value, float):
-            raise EncodeError(f"Expected float for FLOAT, got {type(value).__name__}")
-        return encode_double(value), value_type
+        # The residual non-float case (numeric proxies like
+        # ``numpy.float64``, ``Decimal``, ``Fraction``) is rejected by
+        # ``encode_double``'s float-subclass check with the canonical
+        # "encode_double requires float ... cast with float(x)
+        # explicitly" wording. A redundant ``if not isinstance(value,
+        # float)`` guard here would fire first with strictly poorer
+        # diagnostics — let the richer message win. The cast is a
+        # static-typing concession: ``encode_double`` is annotated
+        # ``float``-only and surfaces the rejection at runtime for
+        # anything else.
+        return encode_double(cast(float, value)), value_type
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")

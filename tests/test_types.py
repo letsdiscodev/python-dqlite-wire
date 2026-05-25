@@ -818,7 +818,11 @@ class TestValue:
             encode_value(42, 99)  # type: ignore[arg-type]
 
     def test_encode_value_float_rejects_string(self) -> None:
-        with pytest.raises(EncodeError, match="FLOAT"):
+        # Non-bool, non-int, non-float inputs fall through to
+        # ``encode_double``'s float-subclass check (the FLOAT arm's
+        # redundant third guard was removed so the canonical
+        # "encode_double requires float" wording reaches the caller).
+        with pytest.raises(EncodeError, match=r"encode_double requires float"):
             encode_value("hello", ValueType.FLOAT)
 
     def test_encode_value_float_rejects_bool(self) -> None:
