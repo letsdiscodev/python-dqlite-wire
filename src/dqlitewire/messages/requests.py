@@ -198,26 +198,34 @@ class _HeartbeatRequest(Message):
 
     .. warning::
 
-        The ``uint64 timestamp`` body shape is **speculative**. Upstream
-        (``protocol.h``) reserves the type code ``DQLITE_REQUEST_HEARTBEAT
-        = 2`` but defines no schema — ``REQUEST__TYPES`` in
-        ``request.h`` omits ``heartbeat``, and ``gateway.c``'s
-        dispatcher falls through to ``DQLITE_PARSE`` for this type. The
-        Go client's heartbeat code is also commented out.
+        The ``uint64 timestamp`` body shape is **Go-canonical** —
+        ``go-dqlite/internal/protocol/schema.go`` declares
+        ``Heartbeat timestamp:uint64`` and the generated
+        ``EncodeHeartbeat`` / ``DecodeHeartbeat`` helpers serialise
+        that single field. The layout is therefore anchored to the
+        same spec source every other request class in this package
+        cites.
 
-        Because no upstream peer accepts a heartbeat frame, this class
-        is private: it is omitted from the ``REQUEST_TYPES`` registry in
-        ``codec.py`` and from ``messages/__init__.py``'s ``__all__``.
-        It remains in the source tree only for test-mock / golden-byte
-        harnesses that synthesize a type-2 frame for negative-path
-        coverage; callers import it via the private symbol
+        Upstream C (``protocol.h``) reserves the type code
+        ``DQLITE_REQUEST_HEARTBEAT = 2`` but defines no schema —
+        ``REQUEST__TYPES`` in ``request.h`` omits ``heartbeat``, and
+        ``gateway.c``'s dispatcher falls through to ``DQLITE_PARSE``
+        for this type. The Go client's heartbeat code is also
+        commented out. Because no upstream peer accepts a heartbeat
+        frame, this class is private: it is omitted from the
+        ``REQUEST_TYPES`` registry in ``codec.py`` and from
+        ``messages/__init__.py``'s ``__all__``. It remains in the
+        source tree only for test-mock / golden-byte harnesses that
+        synthesise a type-2 frame for negative-path coverage; callers
+        import it via the private symbol
         ``dqlitewire.messages.requests._HeartbeatRequest``.
 
-        This dataclass preserves the historical ``uint64 timestamp``
-        layout for that compatibility purpose; if upstream ever defines
-        a real schema, this body shape will need to change.
+        If upstream evolves the heartbeat handshake (either side), the
+        Go ``schema.go`` directive is the authoritative reference to
+        re-sync against.
 
-    Body: uint64 timestamp (speculative — not part of any upstream spec)
+    Body: uint64 timestamp (Go-canonical per ``schema.go``; not
+    accepted by the C server).
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.HEARTBEAT
