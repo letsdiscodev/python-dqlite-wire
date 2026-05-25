@@ -738,6 +738,18 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         # which round-trips as the bool True and loses the caller's
         # original value.
         #
+        # Deliberate asymmetry with C bind (``dqlite-upstream/src/
+        # bind.c::DQLITE_BOOLEAN``: ``sqlite3_bind_int64(stmt, n,
+        # value->boolean == 0 ? 0 : 1)``, which accepts any uint64
+        # and collapses non-zero to 1). A peer-emitted BOOLEAN cell
+        # with raw=5 decodes to ``True`` here (see :func:`decode_value`
+        # BOOLEAN arm), but attempting to re-encode that ``True``
+        # writes raw=1 — so a decode -> re-encode round-trip of an
+        # out-of-{0, 1} raw BOOLEAN cell is lossy by design. The
+        # Python strictness exists to surface caller bugs
+        # (``encode_value(5, ValueType.BOOLEAN)``) which the C path
+        # silently rewrites to 1.
+        #
         # The ``isinstance(value, int)`` guard intentionally admits
         # int SUBCLASSES (e.g. ``enum.IntEnum`` members) but not
         # numeric proxies like ``numpy.int64`` / ``numpy.bool_`` /
