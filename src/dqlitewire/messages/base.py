@@ -105,7 +105,17 @@ class Header:
 
     @property
     def body_size(self) -> int:
-        """Size of message body in bytes."""
+        """Size of the message body in bytes.
+
+        Canonical accessor for the words-to-bytes conversion.
+        Production decoders (``MessageDecoder.decode_bytes``,
+        ``MessageDecoder.decode_continuation``) and any future code
+        path needing the body size in bytes should consult this
+        property rather than inline ``size_words * WORD_SIZE`` — the
+        SSOT discipline keeps the word size centralised in
+        :data:`dqlitewire.constants.WORD_SIZE` (currently 8,
+        hypothetically revisable by a future protocol revision).
+        """
         return self.size_words * WORD_SIZE
 
 
