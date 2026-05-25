@@ -337,6 +337,17 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
     so a caller passing ``label="leader address"`` gets ``"leader
     address length N exceeds maximum (M)"`` rather than the generic
     ``"Text length..."``.
+
+    One-way pair with permissive decode: this encoder uses strict
+    UTF-8 with no symmetric ``errors=`` kwarg. A str obtained from
+    :func:`decode_text` with ``errors="surrogateescape"`` (which
+    deliberately smuggles raw bytes as ``U+DC80``-``U+DCFF``
+    surrogates for round-trip recovery in stdlib idiom) CANNOT be
+    re-encoded here — the strict UTF-8 encoder rejects the
+    surrogates and surfaces ``EncodeError`` with the "lone surrogate
+    or surrogate-escape character" diagnostic. dqlite's wire spec is
+    UTF-8 by design; the asymmetry is deliberate. Callers needing
+    round-trip-safe carriage of opaque bytes must use BLOB.
     """
     if not isinstance(value, str):
         raise EncodeError(f"encode_text expected str, got {type(value).__name__}")
