@@ -912,6 +912,17 @@ def decode_value(
         # ``time.Unix(...)``. Bare wire-layer consumers must convert
         # themselves; the wire layer's parity bar is "raw bytes →
         # primitive", not "raw bytes → semantic".
+        #
+        # NOTE: This arm is intentionally context-blind. UNIXTIME is
+        # legitimate in row cells (the C row-encode side at
+        # ``dqlite-upstream/src/query.c`` does emit it) but malformed
+        # in params (``dqlite-upstream/src/tuple.c::tuple_decoder__next``
+        # has no DQLITE_UNIXTIME case in the params switch; the
+        # default returns DQLITE_PARSE). The params-vs-row rejection
+        # lives at the caller's type-code switch in
+        # ``tuples.py::decode_params_tuple``, NOT here — a refactor
+        # that moved the rejection into this arm would also break the
+        # row decoder, which legitimately needs to accept UNIXTIME.
         return decode_int64(data, label="UNIXTIME cell"), 8
     elif value_type == ValueType.FLOAT:
         return decode_double(data, label="FLOAT cell"), 8
