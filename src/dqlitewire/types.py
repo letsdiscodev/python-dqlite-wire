@@ -232,13 +232,18 @@ def encode_int64(value: int) -> bytes:
     return struct.pack("<q", value)
 
 
-def decode_int64(data: bytes | memoryview) -> int:
+def decode_int64(data: bytes | memoryview, *, label: str = "int64") -> int:
     """Decode a signed 64-bit integer (little-endian).
 
     Accepts ``bytes`` or ``memoryview``.
+
+    ``label`` is interpolated into the truncation diagnostic so a
+    caller decoding a specific field (e.g. ``"UNIXTIME cell"``) can
+    surface a per-field error message — symmetric with the
+    :func:`decode_text` / :func:`decode_uint64` label discipline.
     """
     if len(data) < 8:
-        raise DecodeError(f"Need 8 bytes for int64, got {len(data)}")
+        raise DecodeError(f"Need 8 bytes for {label}, got {len(data)}")
     result: int = struct.unpack("<q", data[:8])[0]
     return result
 
@@ -300,15 +305,20 @@ def encode_double(value: float) -> bytes:
     return struct.pack("<d", value)
 
 
-def decode_double(data: bytes | memoryview) -> float:
+def decode_double(data: bytes | memoryview, *, label: str = "double") -> float:
     """Decode a 64-bit floating point number (little-endian).
 
     All IEEE 754 values are accepted, including NaN and infinity,
     matching the Go reference implementation behavior. Accepts
     ``bytes`` or ``memoryview``.
+
+    ``label`` is interpolated into the truncation diagnostic so a
+    caller decoding a specific field can surface a per-field error
+    message — symmetric with the :func:`decode_text` /
+    :func:`decode_uint64` / :func:`decode_int64` label discipline.
     """
     if len(data) < 8:
-        raise DecodeError(f"Need 8 bytes for double, got {len(data)}")
+        raise DecodeError(f"Need 8 bytes for {label}, got {len(data)}")
     result: float = struct.unpack("<d", data[:8])[0]
     return result
 
@@ -885,10 +895,10 @@ def decode_value(
         # on the wire. Strict-rejection would deterministically poison
         # the decoder for legitimate cluster data while Go and C
         # clients work fine.
-        raw = decode_uint64(data)
+        raw = decode_uint64(data, label="BOOLEAN cell")
         return bool(raw), 8
     elif value_type == ValueType.INTEGER:
-        return decode_int64(data), 8
+        return decode_int64(data, label="INTEGER cell"), 8
     elif value_type == ValueType.UNIXTIME:
         # Returns raw int64 (NOT datetime). Contrast with the BOOLEAN
         # arm above, which DOES collapse to ``bool`` because ``bool``
@@ -902,9 +912,9 @@ def decode_value(
         # ``time.Unix(...)``. Bare wire-layer consumers must convert
         # themselves; the wire layer's parity bar is "raw bytes →
         # primitive", not "raw bytes → semantic".
-        return decode_int64(data), 8
+        return decode_int64(data, label="UNIXTIME cell"), 8
     elif value_type == ValueType.FLOAT:
-        return decode_double(data), 8
+        return decode_double(data, label="FLOAT cell"), 8
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
         # ISO8601 is treated as text at the wire level — the C reference
         # uses text__encode / text__decode for DQLITE_ISO8601 (see dqlite
@@ -918,14 +928,18 @@ def decode_value(
     elif value_type == ValueType.BLOB:
         return decode_blob(data)
     elif value_type == ValueType.NULL:
-        if len(data) < 8:
-            raise DecodeError(f"Need 8 bytes for NULL value, got {len(data)}")
         # Permissive decode matching Go's
         # ``r.message.getUint64()`` discard
         # (``internal/protocol/message.go:539``) and C's
         # ``uint64__decode(... &value->null)`` (``tuple.c:147``) where
         # the value is read into a union member that is never
-        # inspected. Our encoder still writes 8 zero bytes
+        # inspected. Delegating to ``decode_uint64`` (instead of
+        # rolling an inline length check) gives the same wording
+        # discipline as the sibling INTEGER / UNIXTIME / FLOAT /
+        # BOOLEAN arms — operators grepping logs for "wire decode
+        # short-read" see a uniform ``"Need 8 bytes for <type> cell"``
+        # phrasing across every short-read case. Our encoder still
+        # writes 8 zero bytes
         # (``encode_null``), but a peer / future server / mock that
         # emits non-zero NULL bytes is wire-conformant per upstream's
         # tuple_decoder semantics. Strict-rejection provided no
@@ -943,6 +957,7 @@ def decode_value(
         # :meth:`DbResponse.decode_body` and
         # :meth:`EmptyResponse.decode_body`, which document the same
         # round-trip lossiness for their reserved fields.
+        decode_uint64(data, label="NULL cell")
         return None, 8
     else:
         raise DecodeError(f"Unknown value type: {value_type}")
