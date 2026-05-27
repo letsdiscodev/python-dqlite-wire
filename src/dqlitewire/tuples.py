@@ -176,8 +176,16 @@ def encode_params_tuple(
     padding = pad_to_word(absolute_offset)
     header.extend(b"\x00" * padding)
 
-    # Concatenate header and values
-    return bytes(header) + b"".join(values)
+    # Extend the header bytearray with each value in turn, then
+    # materialise once. Replaces the prior three-allocation chain
+    # (``bytes(header) + b"".join(values)`` is one full-size header
+    # copy, one full-size join allocation, and one final concat) with
+    # a single growing buffer + one final ``bytes()`` materialisation.
+    # Matches the bytearray pattern adopted by the response-side
+    # body encoders.
+    for value_bytes in values:
+        header.extend(value_bytes)
+    return bytes(header)
 
 
 def decode_params_tuple(
