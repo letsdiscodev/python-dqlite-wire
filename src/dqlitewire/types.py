@@ -13,6 +13,7 @@ by Go's ``database/sql`` driver.
 import datetime
 import mmap
 import struct
+from collections.abc import Callable
 from typing import Final, cast
 
 from dqlitewire.constants import WORD_SIZE, ValueType
@@ -1004,6 +1005,159 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
         raise EncodeError(f"Unknown value type: {value_type}")
 
 
+def _decode_value_integer(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
+    return decode_int64(data, label="INTEGER cell"), 8
+
+
+def _decode_value_float(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
+    return decode_double(data, label="FLOAT cell"), 8
+
+
+def _decode_value_text(data: bytes | memoryview, text_errors: str) -> tuple[WireValue, int]:
+    return decode_text(data, label="TEXT", errors=text_errors)
+
+
+def _decode_value_iso8601(data: bytes | memoryview, text_errors: str) -> tuple[WireValue, int]:
+    # ISO8601 is treated as text at the wire level — the C reference
+    # uses text__encode / text__decode for DQLITE_ISO8601 (see dqlite
+    # src/tuple.c) and Go returns the raw string from the codec.
+    # Parsing to datetime belongs in the driver/DBAPI layer.
+    # The ``"ISO8601"`` label is forwarded so truncation / not-null-
+    # terminated diagnostics name the actual cell type rather than
+    # the generic ``"Text ..."`` default — symmetric with
+    # ``encode_value``.
+    return decode_text(data, label="ISO8601", errors=text_errors)
+
+
+def _decode_value_blob(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
+    return decode_blob(data)
+
+
+def _decode_value_null(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
+    # Permissive decode matching Go's
+    # ``r.message.getUint64()`` discard
+    # (``internal/protocol/message.go:539``) and C's
+    # ``uint64__decode(... &value->null)`` (``tuple.c:147``) where
+    # the value is read into a union member that is never inspected.
+    # Delegating to ``decode_uint64`` (instead of rolling an inline
+    # length check) gives the same wording discipline as the
+    # sibling INTEGER / UNIXTIME / FLOAT / BOOLEAN arms — operators
+    # grepping logs for "wire decode short-read" see a uniform
+    # ``"Need 8 bytes for <type> cell"`` phrasing across every
+    # short-read case. Our encoder still writes 8 zero bytes
+    # (``encode_null``), but a peer / future server / mock that
+    # emits non-zero NULL bytes is wire-conformant per upstream's
+    # tuple_decoder semantics. Strict-rejection provided no
+    # defensive value (the field is documented as unused) and was
+    # an interop hazard.
+    #
+    # Round-trip identity caveat: ``encode_value(None)`` writes 8
+    # zero bytes regardless of what the decoder consumed, so a
+    # mock-server / proxy / fuzzer that captured a non-zero NULL
+    # payload cannot recover byte-identity through the public
+    # encode path. The public encoder is uniformly zero-emitting;
+    # callers needing byte-identity must emit the captured 8 bytes
+    # plus the NULL type tag directly. The asymmetry mirrors the
+    # sibling permissive-read patterns at
+    # :meth:`DbResponse.decode_body` and
+    # :meth:`EmptyResponse.decode_body`, which document the same
+    # round-trip lossiness for their reserved fields.
+    decode_uint64(data, label="NULL cell")
+    return None, NULL_CELL_WIDTH
+
+
+def _decode_value_unixtime(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
+    # Returns raw int64 (NOT datetime). Contrast with the BOOLEAN
+    # arm, which DOES collapse to ``bool`` because ``bool`` is a
+    # wire primitive per the module charter. UNIXTIME's primitive is
+    # the epoch-seconds int; the ``datetime`` semantic is driver-
+    # layer (see ``dqlitedbapi``).
+    #
+    # Higher-level clients (``dqlitedbapi``) turn this into a
+    # UTC-aware ``datetime``; Go's ``Rows.Next()`` does the
+    # conversion at the ``database/sql`` driver layer with
+    # ``time.Unix(...)``. Bare wire-layer consumers must convert
+    # themselves; the wire layer's parity bar is "raw bytes →
+    # primitive", not "raw bytes → semantic".
+    #
+    # NOTE: This arm is intentionally context-blind. UNIXTIME is
+    # legitimate in row cells (the C row-encode side at
+    # ``dqlite-upstream/src/query.c`` does emit it) but malformed
+    # in params (``dqlite-upstream/src/tuple.c::tuple_decoder__next``
+    # has no DQLITE_UNIXTIME case in the params switch; the default
+    # returns DQLITE_PARSE). The params-vs-row rejection lives at
+    # the caller's type-code switch in
+    # ``tuples.py::decode_params_tuple``, NOT here — a refactor that
+    # moved the rejection into this arm would also break the row
+    # decoder, which legitimately needs to accept UNIXTIME.
+    return decode_int64(data, label="UNIXTIME cell"), 8
+
+
+def _decode_value_boolean(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
+    # Returns ``bool`` (NOT raw int). Justified by the module
+    # charter at the top of this file, which enumerates ``bool`` as
+    # a wire primitive — not by raw preservation. Contrast with the
+    # UNIXTIME arm, which DOES preserve the raw int64 because
+    # epoch-seconds is the primitive and ``datetime`` is the
+    # driver-layer semantic. The principled split: a type is
+    # "raw"-preserved at the wire layer iff the wire primitive is
+    # itself the canonical representation; ``bool`` is canonical for
+    # BOOLEAN, ``int`` is canonical for UNIXTIME, and the datetime
+    # conversion is deferred to the driver (``dqlitedbapi``). A
+    # peer-emitted BOOLEAN cell carrying a raw uint64 outside
+    # ``{0, 1}`` loses the original integer through this collapse —
+    # see the encode-side asymmetry note on ``encode_value``'s
+    # BOOLEAN arm.
+    #
+    # Permissive truthiness decode: read the wire cell as an
+    # unsigned uint64 (matching C's ``uint64__decode(d->cursor,
+    # &value->boolean)`` in ``dqlite-upstream/src/tuple.c``,
+    # ``DQLITE_BOOLEAN`` case in ``tuple_decoder__next``) and coerce
+    # to ``bool``. Go's reference decoder uses signed
+    # ``getInt64() != 0`` instead
+    # (``internal/protocol/message.go:566``), which agrees on
+    # truthiness for every bit pattern but diverges on the raw int
+    # for the upper half of the range (``[2**63, 2**64 - 1]``);
+    # Python tracks the C side so a hypothetical future
+    # "keep_raw=True" debug knob would yield C-shaped values, not
+    # Go-shaped.
+    #
+    # The dqlite C server emits a ``DQLITE_BOOLEAN`` cell whenever
+    # the column's decltype is ``BOOLEAN`` and the value comes from
+    # ``sqlite3_column_int64`` (``encodeColumn`` in
+    # ``dqlite-upstream/src/query.c``, ``DQLITE_BOOLEAN`` case) —
+    # i.e. any int the column actually contains. SQLite typing is
+    # dynamic, so a row inserted as
+    # ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives with raw=5 on
+    # the wire. Strict-rejection would deterministically poison the
+    # decoder for legitimate cluster data while Go and C clients
+    # work fine.
+    raw = decode_uint64(data, label="BOOLEAN cell")
+    return bool(raw), 8
+
+
+# Dispatch table indexed by the integer value-type code. Replaces
+# the prior 6-arm ``if value_type == ValueType.X`` chain (~500 ns
+# per cell on CPython) with one C-level dict lookup plus one
+# function call (~100 ns per cell). Mirrors the precomputed-table
+# precedent at ``tuples.py``'s ``_NIBBLE_TO_VALUETYPE`` — same
+# pattern, one layer up the call stack. For a 100k-row × 16-col
+# fetch (1.6M cells) the saving is several hundred ms of
+# loop-thread CPU.
+_VALUE_TYPE_DECODERS: Final[
+    dict[int, Callable[[bytes | memoryview, str], tuple[WireValue, int]]]
+] = {
+    int(ValueType.INTEGER): _decode_value_integer,
+    int(ValueType.FLOAT): _decode_value_float,
+    int(ValueType.TEXT): _decode_value_text,
+    int(ValueType.BLOB): _decode_value_blob,
+    int(ValueType.NULL): _decode_value_null,
+    int(ValueType.UNIXTIME): _decode_value_unixtime,
+    int(ValueType.ISO8601): _decode_value_iso8601,
+    int(ValueType.BOOLEAN): _decode_value_boolean,
+}
+
+
 def decode_value(
     data: bytes | memoryview,
     value_type: ValueType,
@@ -1028,120 +1182,13 @@ def decode_value(
     See :func:`decode_text`'s WARNING about ``"replace"`` /
     ``"surrogateescape"`` bypassing :func:`sanitize_for_log` and
     failing re-encode before adopting a non-strict mode.
+
+    Per-value-type dispatch goes through ``_VALUE_TYPE_DECODERS``
+    (defined above) — see each ``_decode_value_*`` helper for
+    arm-specific context (BOOLEAN truthiness rationale, UNIXTIME
+    raw-vs-datetime split, NULL permissive-decode parity, etc.).
     """
-    if value_type == ValueType.BOOLEAN:
-        # Returns ``bool`` (NOT raw int). Justified by the module
-        # charter at the top of this file, which enumerates ``bool``
-        # as a wire primitive — not by raw preservation. Contrast with
-        # the UNIXTIME arm below, which DOES preserve the raw int64
-        # because epoch-seconds is the primitive and ``datetime`` is
-        # the driver-layer semantic. The principled split: a type is
-        # "raw"-preserved at the wire layer iff the wire primitive is
-        # itself the canonical representation; ``bool`` is canonical
-        # for BOOLEAN, ``int`` is canonical for UNIXTIME, and the
-        # datetime conversion is deferred to the driver
-        # (``dqlitedbapi``). A peer-emitted BOOLEAN cell carrying a
-        # raw uint64 outside ``{0, 1}`` loses the original integer
-        # through this collapse — see the encode-side asymmetry note
-        # on ``encode_value``'s BOOLEAN arm.
-        #
-        # Permissive truthiness decode: read the wire cell as an
-        # unsigned uint64 (matching C's ``uint64__decode(d->cursor,
-        # &value->boolean)`` in ``dqlite-upstream/src/tuple.c``,
-        # ``DQLITE_BOOLEAN`` case in ``tuple_decoder__next``) and
-        # coerce to ``bool``. Go's reference decoder uses signed
-        # ``getInt64() != 0`` instead
-        # (``internal/protocol/message.go:566``), which agrees on
-        # truthiness for every bit pattern but diverges on the raw
-        # int for the upper half of the range
-        # (``[2**63, 2**64 - 1]``); Python tracks the C side so a
-        # hypothetical future "keep_raw=True" debug knob would yield
-        # C-shaped values, not Go-shaped.
-        #
-        # The dqlite C server emits a ``DQLITE_BOOLEAN`` cell whenever
-        # the column's decltype is ``BOOLEAN`` and the value comes
-        # from ``sqlite3_column_int64`` (``encodeColumn`` in
-        # ``dqlite-upstream/src/query.c``, ``DQLITE_BOOLEAN`` case) —
-        # i.e. any int the column actually contains. SQLite typing is
-        # dynamic, so a row inserted as
-        # ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives with raw=5
-        # on the wire. Strict-rejection would deterministically poison
-        # the decoder for legitimate cluster data while Go and C
-        # clients work fine.
-        raw = decode_uint64(data, label="BOOLEAN cell")
-        return bool(raw), 8
-    elif value_type == ValueType.INTEGER:
-        return decode_int64(data, label="INTEGER cell"), 8
-    elif value_type == ValueType.UNIXTIME:
-        # Returns raw int64 (NOT datetime). Contrast with the BOOLEAN
-        # arm above, which DOES collapse to ``bool`` because ``bool``
-        # is a wire primitive per the module charter. UNIXTIME's
-        # primitive is the epoch-seconds int; the ``datetime``
-        # semantic is driver-layer (see ``dqlitedbapi``).
-        #
-        # Higher-level clients (``dqlitedbapi``) turn this into a
-        # UTC-aware ``datetime``; Go's ``Rows.Next()`` does the
-        # conversion at the ``database/sql`` driver layer with
-        # ``time.Unix(...)``. Bare wire-layer consumers must convert
-        # themselves; the wire layer's parity bar is "raw bytes →
-        # primitive", not "raw bytes → semantic".
-        #
-        # NOTE: This arm is intentionally context-blind. UNIXTIME is
-        # legitimate in row cells (the C row-encode side at
-        # ``dqlite-upstream/src/query.c`` does emit it) but malformed
-        # in params (``dqlite-upstream/src/tuple.c::tuple_decoder__next``
-        # has no DQLITE_UNIXTIME case in the params switch; the
-        # default returns DQLITE_PARSE). The params-vs-row rejection
-        # lives at the caller's type-code switch in
-        # ``tuples.py::decode_params_tuple``, NOT here — a refactor
-        # that moved the rejection into this arm would also break the
-        # row decoder, which legitimately needs to accept UNIXTIME.
-        return decode_int64(data, label="UNIXTIME cell"), 8
-    elif value_type == ValueType.FLOAT:
-        return decode_double(data, label="FLOAT cell"), 8
-    elif value_type in (ValueType.TEXT, ValueType.ISO8601):
-        # ISO8601 is treated as text at the wire level — the C reference
-        # uses text__encode / text__decode for DQLITE_ISO8601 (see dqlite
-        # src/tuple.c) and Go returns the raw string from the codec.
-        # Parsing to datetime belongs in the driver/DBAPI layer.
-        # Forward ``value_type.name`` as the label so truncation / not-
-        # null-terminated diagnostics name the actual cell type
-        # (``"ISO8601 not null-terminated"``) rather than the generic
-        # ``"Text ..."`` default — symmetric with ``encode_value``.
-        return decode_text(data, label=value_type.name, errors=text_errors)
-    elif value_type == ValueType.BLOB:
-        return decode_blob(data)
-    elif value_type == ValueType.NULL:
-        # Permissive decode matching Go's
-        # ``r.message.getUint64()`` discard
-        # (``internal/protocol/message.go:539``) and C's
-        # ``uint64__decode(... &value->null)`` (``tuple.c:147``) where
-        # the value is read into a union member that is never
-        # inspected. Delegating to ``decode_uint64`` (instead of
-        # rolling an inline length check) gives the same wording
-        # discipline as the sibling INTEGER / UNIXTIME / FLOAT /
-        # BOOLEAN arms — operators grepping logs for "wire decode
-        # short-read" see a uniform ``"Need 8 bytes for <type> cell"``
-        # phrasing across every short-read case. Our encoder still
-        # writes 8 zero bytes
-        # (``encode_null``), but a peer / future server / mock that
-        # emits non-zero NULL bytes is wire-conformant per upstream's
-        # tuple_decoder semantics. Strict-rejection provided no
-        # defensive value (the field is documented as unused) and
-        # was an interop hazard.
-        #
-        # Round-trip identity caveat: ``encode_value(None)`` writes 8
-        # zero bytes regardless of what the decoder consumed, so a
-        # mock-server / proxy / fuzzer that captured a non-zero NULL
-        # payload cannot recover byte-identity through the public
-        # encode path. The public encoder is uniformly zero-emitting;
-        # callers needing byte-identity must emit the captured 8 bytes
-        # plus the NULL type tag directly. The asymmetry mirrors the
-        # sibling permissive-read patterns at
-        # :meth:`DbResponse.decode_body` and
-        # :meth:`EmptyResponse.decode_body`, which document the same
-        # round-trip lossiness for their reserved fields.
-        decode_uint64(data, label="NULL cell")
-        return None, NULL_CELL_WIDTH
-    else:
+    decoder = _VALUE_TYPE_DECODERS.get(int(value_type))
+    if decoder is None:
         raise DecodeError(f"Unknown value type: {value_type}")
+    return decoder(data, text_errors)
