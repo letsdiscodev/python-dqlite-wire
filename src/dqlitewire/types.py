@@ -424,9 +424,16 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
             f"Text value contains embedded null byte at byte offset "
             f"{nul_byte_offset}; null-terminated encoding would lose data"
         )
-    encoded = utf8 + b"\x00"
-    padding = pad_to_word(len(encoded))
-    return encoded + (b"\x00" * padding)
+    # Single bytearray allocation + one final ``bytes()`` materialisation
+    # replaces the prior 3-allocation chain (utf8 + NUL, then + padding
+    # literal). ``bytearray(N)`` zero-fills, so the NUL terminator slot
+    # and the trailing padding are already zero — only the utf8 prefix
+    # needs writing.
+    payload_len = len(utf8)
+    padding = pad_to_word(payload_len + 1)
+    buf = bytearray(payload_len + 1 + padding)
+    buf[:payload_len] = utf8
+    return bytes(buf)
 
 
 # Threshold below which we materialize a memoryview to bytes in one
@@ -608,7 +615,8 @@ def encode_blob(
     Format: uint64 length + data + padding
 
     Accepts any bytes-like input (``bytes``, ``bytearray``, ``memoryview``);
-    the wire payload is materialised once before concatenation.
+    the wire payload is written directly into the output bytearray via
+    the buffer protocol — no intermediate materialisation.
 
     ``max_blob_size`` is the per-blob cap. Defaults to
     ``_MAX_BLOB_SIZE`` (``64 MiB - 64 B`` = 67_108_800 bytes — sits
@@ -627,9 +635,18 @@ def encode_blob(
     length = len(value)
     if length > max_blob_size:
         raise EncodeError(f"Blob length {length} exceeds maximum ({max_blob_size})")
-    payload = bytes(value)
+    # Single bytearray allocation + one final ``bytes()`` materialisation
+    # replaces the prior 3-allocation chain (uint64 header + payload
+    # copy + padding literal). ``bytearray(N)`` zero-fills, so the
+    # padding region is already zero. Bytearray slice assignment
+    # accepts any buffer-protocol object, so ``value`` (bytes |
+    # bytearray | memoryview) is written in-place without an
+    # intermediate ``bytes(value)`` materialisation.
     padding = pad_to_word(length)
-    return encode_uint64(length) + payload + (b"\x00" * padding)
+    buf = bytearray(8 + length + padding)
+    buf[:8] = encode_uint64(length)
+    buf[8 : 8 + length] = value
+    return bytes(buf)
 
 
 def decode_blob(
