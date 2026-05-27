@@ -505,55 +505,61 @@ def decode_text(
     """
     if isinstance(data, memoryview):
         data_len = len(data)
-        if data_len <= _TEXT_ONE_SHOT_MAX:
-            # One-shot path: single materialization + C-level find.
-            # Bound the materialization to ``max_size + 1`` bytes so a
-            # caller-supplied small cap (e.g. 4 KiB column-name) does
-            # not allocate a 16 MiB scratch buffer just to scan a few
-            # bytes for the NUL. Keeps the cap-before-allocate
-            # invariant symmetric with ``decode_blob`` (which checks
-            # the length prefix BEFORE materialising the payload).
-            scan_window = min(data_len, max_size + 1)
-            materialized = bytes(data[:scan_window])
-            null_pos = materialized.find(b"\x00")
-            if null_pos < 0:
-                if scan_window < data_len:
-                    # The remaining bytes (past the cap) cannot legally
-                    # contain the terminator since `null_pos > max_size`
-                    # would fail the cap check below anyway. Surface
-                    # the cap-exceeded error directly.
-                    raise DecodeError(f"{label} length exceeds maximum ({max_size})")
-                raise DecodeError(f"{label} not null-terminated")
+        # One-shot probe of the first ``_TEXT_ONE_SHOT_MAX`` bytes
+        # (or the cap-bounded / buffer-bounded window, whichever is
+        # smaller). Typical TEXT cells are far smaller than the
+        # probe window; NUL is found on the first scan and the
+        # chunked path never runs. The chunked path is reserved
+        # for cells that genuinely exceed the probe window.
+        #
+        # The prior gate read ``if data_len <= _TEXT_ONE_SHOT_MAX:``
+        # — i.e. fired only when the REMAINING BUFFER was at most
+        # 64 KiB. In a multi-MiB ROWS body with many short TEXT
+        # cells, every cell hit the chunked path even though each
+        # cell trivially fit in 64 KiB. The probe-then-escalate
+        # shape preserves the bounded-peak-memory invariant
+        # (≤ 64 KiB transient) and removes the chunked-path
+        # allocator churn for the common short-cell case.
+        probe_window = min(data_len, max_size + 1, _TEXT_ONE_SHOT_MAX)
+        materialized = bytes(data[:probe_window])
+        null_pos = materialized.find(b"\x00")
+        if null_pos >= 0:
             try:
                 text = materialized[:null_pos].decode("utf-8", errors=errors)
             except UnicodeDecodeError as e:
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
+        elif probe_window >= max_size + 1:
+            # The cap-bounded probe exhausted without NUL — cell
+            # exceeds max_size.
+            raise DecodeError(f"{label} length exceeds maximum ({max_size})")
+        elif probe_window >= data_len:
+            # Whole remaining buffer scanned without NUL.
+            raise DecodeError(f"{label} not null-terminated")
         else:
-            # Chunked fallback for pathologically long text payloads.
-            # Bound the total scan window to ``max_size + 1`` bytes so
-            # a small caller-supplied cap (e.g. 4 KiB column-name) on
-            # a 16 MiB memoryview does not allocate megabytes of
-            # chunks before the cap-after-scan check fires. Symmetric
-            # with the one-shot path's ``min(data_len, max_size+1)``
-            # window.
+            # NUL not in probe AND cell continues past probe AND
+            # cap headroom remains — escalate to chunked scan
+            # starting from where the probe ended. Reuse the
+            # already-allocated probe as the first chunk to avoid
+            # re-materialising those bytes.
             scan_limit = min(data_len, max_size + 1)
-            chunks: list[bytes] = []
-            scanned = 0
-            null_pos = -1
+            chunks: list[bytes] = [materialized]
+            scanned = probe_window
+            chunked_null = -1
             while scanned < scan_limit:
                 chunk_end = min(scanned + _TEXT_SCAN_CHUNK, scan_limit)
                 chunk = bytes(data[scanned:chunk_end])
                 local = chunk.find(b"\x00")
                 if local >= 0:
                     chunks.append(chunk[:local])
-                    null_pos = scanned + local
+                    chunked_null = scanned + local
                     break
                 chunks.append(chunk)
                 scanned = chunk_end
-            if null_pos < 0:
+            if chunked_null < 0:
                 if scan_limit < data_len:
                     raise DecodeError(f"{label} length exceeds maximum ({max_size})")
                 raise DecodeError(f"{label} not null-terminated")
+            null_pos = chunked_null
             try:
                 text = b"".join(chunks).decode("utf-8", errors=errors)
             except UnicodeDecodeError as e:
