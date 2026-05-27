@@ -27,6 +27,19 @@ __all__ = [
 # Valid ValueType codes as integers, for fast membership testing in hot paths.
 _VALID_TYPE_CODES: Final[frozenset[int]] = frozenset(int(v) for v in ValueType)
 
+# Precomputed nibble → ValueType (or None) lookup table for the
+# decode_row_header hot loop. Each ``ValueType(nibble)`` constructor
+# call goes through ``IntEnum.__call__`` → ``__new__`` →
+# ``_value2member_map_`` dict lookup (~200 ns per call); a C-level
+# tuple index against this table is ~30 ns. Per-row of N columns the
+# saving is ~170 ns × N; over a 100k-row × 16-col result this is
+# ~270 ms of pure-Python loop CPU avoided on the loop thread.
+# Mirrors the precedent of ``_VALID_TYPE_CODES`` above for
+# encode-side validation; the decode side just missed it.
+_NIBBLE_TO_VALUETYPE: Final[tuple[ValueType | None, ...]] = tuple(
+    ValueType(i) if i in _VALID_TYPE_CODES else None for i in range(16)
+)
+
 # Full 8-byte sentinels matching DQLITE_RESPONSE_ROWS_DONE/PART. Used to
 # reject torn/corrupt row markers instead of accepting any 8 bytes that
 # happen to start with 0xff/0xee. NOTE: these are ``bytes`` (not int) —
@@ -349,10 +362,25 @@ def decode_row_header(
     for i in range(column_count):
         byte_idx = i // 2
         nibble = data[byte_idx] & 0x0F if i % 2 == 0 else (data[byte_idx] >> 4) & 0x0F
-        try:
-            types.append(ValueType(nibble))
-        except ValueError as e:
-            raise DecodeError(f"Invalid value type code {nibble} at column index {i}") from e
+        # Precomputed table replaces the per-cell ``ValueType(nibble)``
+        # constructor (~200 ns) with a single C-level tuple index
+        # (~30 ns). Unknown-nibble path replays the constructor call
+        # to surface the ValueError as ``__cause__`` of the
+        # DecodeError — preserves the chained-exception contract
+        # pinned by ``test_tuples.py::TestRowHeader``.
+        vt = _NIBBLE_TO_VALUETYPE[nibble]
+        if vt is None:
+            try:
+                ValueType(nibble)
+            except ValueError as e:
+                raise DecodeError(f"Invalid value type code {nibble} at column index {i}") from e
+            # Defensive fallback — should never reach here because
+            # nibble values in [0, 15] not in _VALID_TYPE_CODES are
+            # exactly the values ValueType() rejects. Surface a
+            # plain DecodeError without a cause if the constructor
+            # somehow accepted it.
+            raise DecodeError(f"Invalid value type code {nibble} at column index {i}")
+        types.append(vt)
 
     return types, header_size
 
