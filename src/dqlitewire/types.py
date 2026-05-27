@@ -445,6 +445,14 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
 # pathologically long texts.
 _TEXT_ONE_SHOT_MAX: Final[int] = 65_536
 _TEXT_SCAN_CHUNK: Final[int] = 4096
+# Adaptive short-probe window. Peeks the first few hundred bytes of
+# the memoryview before the 64 KiB one-shot materialise — covers the
+# common short-cell case (typical TEXT columns: names, addresses,
+# ids, ISO8601 timestamps) without paying the full 64 KiB allocation.
+# Sized so the materialise + scan stays well under one allocator
+# bucket and well below the page boundary, while still covering the
+# ~99th-percentile cell length in normalised relational data.
+_TEXT_SHORT_PROBE: Final[int] = 256
 
 
 def decode_text(
@@ -513,6 +521,39 @@ def decode_text(
     """
     if isinstance(data, memoryview):
         data_len = len(data)
+        # Adaptive short-probe before the 64 KiB one-shot
+        # materialise. Typical TEXT cells are short (column names,
+        # ids, ISO8601 timestamps, fixed-format strings) and the
+        # NUL terminator lives within the first few hundred bytes.
+        # The 64 KiB one-shot ceiling caps worst-case waste at
+        # 64 KiB per cell — but on a multi-MiB body of 100k short
+        # cells, that is still ~6 GiB of allocator churn purely to
+        # support a ``bytes.find`` that terminates in tens of
+        # bytes. The short probe handles the common case in ~256
+        # bytes of materialise; cells that genuinely exceed the
+        # short window escalate to the existing 64 KiB / chunked
+        # path below.
+        short_window = min(data_len, max_size + 1, _TEXT_SHORT_PROBE)
+        short_materialized = bytes(data[:short_window])
+        short_null = short_materialized.find(b"\x00")
+        if short_null >= 0:
+            try:
+                text = short_materialized[:short_null].decode("utf-8", errors=errors)
+            except UnicodeDecodeError as e:
+                raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
+            total_size = short_null + 1 + pad_to_word(short_null + 1)
+            if data_len < total_size:
+                raise DecodeError(
+                    f"Not enough data for text padding: need {total_size}, got {data_len}"
+                )
+            return text, total_size
+        if short_window >= max_size + 1:
+            raise DecodeError(f"{label} length exceeds maximum ({max_size})")
+        if short_window >= data_len:
+            raise DecodeError(f"{label} not null-terminated")
+        # Short probe missed and the cell continues past it. Fall
+        # through to the existing one-shot 64 KiB probe, reusing the
+        # bytes already materialised in ``short_materialized``.
         # One-shot probe of the first ``_TEXT_ONE_SHOT_MAX`` bytes
         # (or the cap-bounded / buffer-bounded window, whichever is
         # smaller). Typical TEXT cells are far smaller than the
