@@ -1003,9 +1003,32 @@ class RowsResponse(Message):
 
     column_names: list[str] = field(default_factory=list)
     column_types: list[ValueType] = field(default_factory=list)
-    row_types: list[list[ValueType]] = field(default_factory=list)
-    rows: list[list[WireValue]] = field(default_factory=list)
+    row_types: list[list[ValueType]] = field(default_factory=list, repr=False)
+    rows: list[list[WireValue]] = field(default_factory=list, repr=False)
     has_more: bool = False
+
+    def __repr__(self) -> str:
+        # Custom repr that summarises unbounded ``rows`` and
+        # ``row_types`` rather than enumerating them. Pre-fix the
+        # dataclass-generated ``__repr__`` walked every cell of
+        # every row; a 1M-row response (within ``_DEFAULT_MAX_ROWS``)
+        # produced a multi-megabyte string. No in-tree caller used
+        # ``%r`` on this type today, but the implicit hazard is real:
+        # asyncio task names, SA echo_pool, Sentry breadcrumbs,
+        # pytest pretty-assert and operator-supplied observability
+        # all reach for ``repr`` and a future log site would be
+        # latent loop monopolisation. Mirrors the bounded-``__repr__``
+        # discipline already established on ``DqliteConnection`` /
+        # ``DqliteCursor`` / ``ConnectionPool`` / ``DqliteError``.
+        return (
+            f"{type(self).__name__}("
+            f"column_names={self.column_names!r}, "
+            f"column_types={self.column_types!r}, "
+            f"row_types=<{len(self.row_types)} items>, "
+            f"rows=<{len(self.rows)} items>, "
+            f"has_more={self.has_more}"
+            f")"
+        )
 
     def __post_init__(self) -> None:
         # Defensive copies. Two sources of aliasing motivate this:
@@ -1388,7 +1411,20 @@ class FilesResponse(Message):
 
     MSG_TYPE: ClassVar[int] = ResponseType.FILES
 
-    files: dict[str, bytes] = field(default_factory=dict)
+    files: dict[str, bytes] = field(default_factory=dict, repr=False)
+
+    def __repr__(self) -> str:
+        # Summary repr — see ``RowsResponse.__repr__`` for the
+        # rationale. ``files`` can hold up to ``_MAX_FILE_COUNT``
+        # entries with per-entry content up to ``_MAX_FILE_CONTENT_SIZE``
+        # (~64 MiB) — a ``%r`` formatting hazard latent in any
+        # operator-supplied observability path. Truncate the
+        # per-file byte string lengths to a small head sample.
+        head = list(self.files.items())[:3]
+        more = len(self.files) - len(head)
+        sample = ", ".join(f"{name!r}: <{len(content)} bytes>" for name, content in head)
+        tail = f", +{more} more" if more > 0 else ""
+        return f"{type(self).__name__}(files={{{sample}{tail}}})"
 
     @override
     def encode_body(self) -> bytes:
@@ -1597,7 +1633,18 @@ class ServersResponse(Message):
 
     MSG_TYPE: ClassVar[int] = ResponseType.SERVERS
 
-    nodes: list[NodeInfo] = field(default_factory=list)
+    nodes: list[NodeInfo] = field(default_factory=list, repr=False)
+
+    def __repr__(self) -> str:
+        # Summary repr — see ``RowsResponse.__repr__`` for the
+        # rationale. ``nodes`` is bounded by ``_MAX_NODE_COUNT``
+        # (10_000); the auto-generated dataclass repr would
+        # enumerate every entry. Show the first three plus a
+        # count of the rest.
+        head_repr = ", ".join(repr(n) for n in self.nodes[:3])
+        more = len(self.nodes) - 3
+        tail = f", +{more} more" if more > 0 else ""
+        return f"{type(self).__name__}(nodes=[{head_repr}{tail}])"
 
     @override
     def encode_body(self) -> bytes:
