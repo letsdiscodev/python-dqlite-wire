@@ -1267,14 +1267,21 @@ class RowsResponse(Message):
                 raise DecodeError(
                     "RowsResponse body exhausted without end marker (zero-column result)"
                 )
-            marker = bytes(view[offset : offset + WORD_SIZE])
-            if marker == _ROW_DONE_MARKER:
+            # Compare the prefix directly against the pre-built
+            # marker constants — ``memoryview`` supports buffer-protocol
+            # equality against bytes-like objects, so the prior
+            # ``bytes(view[...])`` materialise was unnecessary copy work
+            # on the frame-decode hot path. Only materialise to ``bytes``
+            # in the error arm so the diagnostic hex dump is well-formed.
+            marker_view = view[offset : offset + WORD_SIZE]
+            if marker_view == _ROW_DONE_MARKER:
                 has_more = False
-            elif marker == _ROW_PART_MARKER:
+            elif marker_view == _ROW_PART_MARKER:
                 has_more = True
             else:
+                got_hex = bytes(marker_view).hex()
                 raise DecodeError(
-                    f"Expected DONE or PART marker for zero-column result, got 0x{marker.hex()}"
+                    f"Expected DONE or PART marker for zero-column result, got 0x{got_hex}"
                 )
             # The zero-column fast path is Python-specific (upstream C never
             # emits zero-column result sets); enforce buffer exhaustion to

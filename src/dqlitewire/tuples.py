@@ -358,10 +358,20 @@ def decode_row_header(
     # truncating the result stream. This is strictly tighter
     # than the Go behavior.
     if len(data) >= 8:
-        marker = bytes(data[:8]) if isinstance(data, memoryview) else data[:8]
-        if marker == _ROW_DONE_MARKER:
+        # Compare the prefix directly against the pre-built ``bytes``
+        # marker constants. ``memoryview`` implements ``__eq__`` against
+        # bytes-like objects via the buffer protocol — no copy needed.
+        # The prior shape materialised ``bytes(data[:8])`` once per row
+        # for the sole purpose of satisfying a ``bytes == bytes``
+        # comparison; that ~64 B per-row allocation dominated the
+        # decode loop's allocator pressure on multi-thousand-row
+        # results. Upstream C compares the 8-byte sentinel as a
+        # ``uint64_t`` with zero heap allocation; this is the Python
+        # equivalent that preserves the property.
+        prefix = data[:8]
+        if prefix == _ROW_DONE_MARKER:
             return RowMarker.DONE, 8
-        if marker == _ROW_PART_MARKER:
+        if prefix == _ROW_PART_MARKER:
             return RowMarker.PART, 8
 
     # Calculate bytes needed: 2 types per byte, rounded up
