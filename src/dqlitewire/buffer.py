@@ -701,6 +701,18 @@ class ReadBuffer:
         """
         if self._pos <= _COMPACT_THRESHOLD:
             return
+        # Half-fill amortisation: only compact when at least half
+        # the buffer has been consumed. The prior gate fired
+        # whenever ``_pos > _COMPACT_THRESHOLD`` (4096 bytes), which
+        # allowed a single compact to memcpy a multi-MiB tail when
+        # the buffer was near-full and only ~4 KiB had been
+        # consumed — worst-case ~64 MiB synchronous loop CPU on
+        # a max-cap buffer. The half-fill gate caps the worst-case
+        # single-compact at half the buffer size; each byte is
+        # copied at most twice over its lifetime, so total
+        # work-per-byte is bounded at 2×.
+        if self._pos < len(self._data) // 2:
+            return
         try:
             new_data = self._data[self._pos :]
             self._data = new_data
