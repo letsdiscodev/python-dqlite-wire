@@ -306,10 +306,15 @@ def encode_row_header(types: Sequence[ValueType]) -> bytes:
         return b""
 
     for i, t in enumerate(types):
-        if int(t) > 15:
+        # Coerce once. The prior shape called ``int(t)`` twice per
+        # column (once for the nibble-range check, once for the
+        # membership probe); on multi-thousand-column headers the
+        # doubled coercion adds measurable Python-level overhead.
+        code = int(t)
+        if code > 15:
             raise EncodeError(f"Value type {t} at index {i} exceeds 4-bit nibble range (max 15)")
-        if int(t) not in _VALID_TYPE_CODES:
-            raise EncodeError(f"Invalid type code {int(t)} at index {i}: not a valid ValueType")
+        if code not in _VALID_TYPE_CODES:
+            raise EncodeError(f"Invalid type code {code} at index {i}: not a valid ValueType")
 
     header = bytearray()
     for i in range(0, len(types), 2):
