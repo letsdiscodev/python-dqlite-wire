@@ -87,12 +87,15 @@ network contexts and are all opt-out-able.
   response is 24 bytes).
 
 **Asymmetric encode/decode** (decoded for proxy / recorded-traffic
-round-trip; encoder rejects):
+round-trip; fresh construction rejected):
 
 - `ClusterRequest` `format=0` — V0 response shape (id + address only).
-  Decoded by `ClusterRequest.decode_body` for proxy / replay use;
-  encoder rejects with `EncodeError` because production senders
-  always emit V1 (id + address + role).
+  Decoded by `ClusterRequest.decode_body` for proxy / replay use. A
+  *decoded* V0 frame carries the `_decoded` sentinel and re-encodes
+  byte-identically, so capture-replay tooling can round-trip it through
+  the dataclass. *Fresh* construction with `format=0` is rejected with
+  `EncodeError`, because production senders always emit V1 (id + address
+  + role) and this client only decodes the V1 `ServersResponse`.
 
 ## Development
 
