@@ -51,12 +51,14 @@ class TestDecodeBytesCap:
         # 4 KiB body — well under the cap.
         wire = _build_oversize_frame(4096)
         dec = MessageDecoder(max_message_size=cap)
-        # The frame is well-formed at the envelope level; per-class
-        # decode may still reject (msg_type=0 with garbage body),
-        # but the failure must NOT be the cap exceedance.
-        with pytest.raises(DecodeError) as exc:
+        # The frame is well-formed at the envelope level, so the cap
+        # must not fire. Per-class decode may then succeed or raise for
+        # an unrelated reason, but the failure must NOT be the cap
+        # exceedance.
+        try:
             dec.decode_bytes(wire)
-        assert "exceeds maximum" not in str(exc.value)
+        except DecodeError as exc:
+            assert "exceeds maximum" not in str(exc)
 
 
 class TestDecodeBytesShortHeaderStillTakesShortPath:
@@ -95,11 +97,13 @@ class TestDecodeMessageHelperForwardsCap:
         # interesting case via a small cap.
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decode_message(wire, max_message_size=1024 * 1024)
-        # Raise the cap above the frame: per-class dispatch may still
-        # raise but NOT for the cap reason.
-        with pytest.raises(DecodeError) as exc:
+        # Raise the cap above the frame: the cap check must not fire.
+        # Per-class dispatch may still raise for an unrelated reason,
+        # but never for the cap.
+        try:
             decode_message(wire, max_message_size=4 * 1024 * 1024)
-        assert "exceeds maximum" not in str(exc.value)
+        except DecodeError as exc:
+            assert "exceeds maximum" not in str(exc)
 
     def test_decode_message_max_rows_kwarg_forwarded(self) -> None:
         """``max_rows`` reaches the inner ``MessageDecoder``. A frame

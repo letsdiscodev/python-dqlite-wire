@@ -343,12 +343,80 @@ class FailureResponse(Message):
         )
         offset = 8 + consumed
         if offset != len(data):
-            # Strict-decode parity with sibling decoders: conforming
-            # Go/C servers never emit trailing padding on this body.
-            raise DecodeError(
-                f"FailureResponse has {len(data) - offset} trailing bytes after message"
-            )
+            # The server appended this failure record after an un-rewound
+            # partial rows-response header. ``query__batch`` writes the
+            # rows header (column count + column names) into the send
+            # buffer before stepping; when a row-returning statement
+            # raises *during* stepping (e.g. integer overflow), the
+            # gateway appends the genuine ``(code, message)`` failure
+            # record without rewinding and frames the whole buffer as one
+            # failure body:
+            #     [col_count][col_name_1 .. col_name_N][code][message]
+            # So ``code``/``message`` decoded above are actually the
+            # column count and the first column name, not the failure.
+            # The genuine diagnostic is the trailing record — recover it.
+            #
+            # Frames are length-delimited (the caller hands us exactly
+            # this body), so trailing bytes are benign content, not a
+            # stream desync: the next frame is read from after this body
+            # regardless. The previous blanket rejection of trailing
+            # bytes therefore masked the real error (e.g. "integer
+            # overflow") behind a misleading "trailing bytes" diagnostic.
+            # The reference Go client reads one record and ignores the
+            # rest; we go one better and surface the real reason, falling
+            # back to that first record if the body does not match this
+            # shape.
+            recovered = cls._recover_trailing_failure_record(data, code)
+            if recovered is not None:
+                code, message = recovered
         return cls(code, _sanitize_server_text(message))
+
+    @staticmethod
+    def _recover_trailing_failure_record(data: bytes, column_count: int) -> tuple[int, str] | None:
+        """Recover the genuine ``(code, message)`` failure record the
+        server appended after an un-rewound partial rows header.
+
+        ``column_count`` is the leading uint64 (the rows header's column
+        count). Skip that many column-name text fields, then decode the
+        trailing ``(code, text)`` record. Returns ``None`` if the body
+        does not match this shape — an implausible column count, a read
+        that would overrun, or a trailing region that does not tile
+        cleanly to the end (e.g. rows were already encoded before a later
+        step raised) — so the caller falls back to the first record,
+        matching the reference Go client.
+        """
+        if column_count < 0 or column_count > _MAX_COLUMN_COUNT:
+            return None
+        try:
+            offset = 8  # past the leading column-count uint64
+            for _ in range(column_count):
+                # Skip each column name using the same per-name cap the
+                # genuine rows decoder enforces, so this recovery scan is
+                # no more permissive than the real header it mirrors.
+                _name, consumed = decode_text(
+                    data[offset:],
+                    max_size=_MAX_COLUMN_NAME_SIZE,
+                    label="column name",
+                )
+                offset += consumed
+            # Same minimum as the top-level body (8 code + >=1 for the
+            # text terminator); too few trailing bytes is not a record.
+            if len(data) - offset < 9:
+                return None
+            code = decode_uint64(data[offset : offset + 8])
+            message, consumed = decode_text(
+                data[offset + 8 :],
+                max_size=_MAX_FAILURE_MESSAGE_SIZE,
+                label="Failure message",
+            )
+            offset += 8 + consumed
+        except DecodeError:
+            return None
+        if offset != len(data):
+            return None
+        # Return the raw message; the caller applies ``_sanitize_server_text``
+        # once on the value it surfaces.
+        return code, message
 
 
 @final

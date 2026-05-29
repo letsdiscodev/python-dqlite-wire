@@ -240,8 +240,14 @@ class TestServersResponseStrictLength:
 
 
 class TestFailureResponseStrictLength:
-    """Body: uint64 code + padded text message. Trailing bytes after
-    the padded message had been silently accepted."""
+    """Body: uint64 code + padded text message. Unlike the fixed-length
+    decoders above, the failure body is NOT strictly fixed-length:
+    the server may append the genuine failure record after an
+    un-rewound partial rows header (column count + names), so trailing
+    bytes are tolerated. When the trailing region does not parse as a
+    recoverable failure record, the decoder falls back to the first
+    record — matching the reference Go client, which reads one record
+    and ignores the rest — rather than raising on benign trailing data."""
 
     @staticmethod
     def _body(code: int = 5, message: str = "database is locked") -> bytes:
@@ -256,19 +262,22 @@ class TestFailureResponseStrictLength:
         assert msg.code == 5
         assert msg.message == "database is locked"
 
-    def test_trailing_byte_rejected(self) -> None:
+    def test_trailing_garbage_byte_falls_back_to_first_record(self) -> None:
+        # A single stray trailing byte does not parse as the column-name
+        # sequence + trailing failure record the recovery path expects,
+        # so the decoder surfaces the first record rather than raising.
         from dqlitewire.messages.responses import FailureResponse
 
-        body = self._body() + b"\x01"
-        with pytest.raises(DecodeError, match=r"FailureResponse has 1 trailing byte"):
-            FailureResponse.decode_body(body)
+        msg = FailureResponse.decode_body(self._body() + b"\x01")
+        assert msg.code == 5
+        assert msg.message == "database is locked"
 
-    def test_trailing_word_rejected(self) -> None:
+    def test_trailing_word_falls_back_to_first_record(self) -> None:
         from dqlitewire.messages.responses import FailureResponse
 
-        body = self._body() + b"\x00" * 8
-        with pytest.raises(DecodeError, match=r"FailureResponse has 8 trailing byte"):
-            FailureResponse.decode_body(body)
+        msg = FailureResponse.decode_body(self._body() + b"\x00" * 8)
+        assert msg.code == 5
+        assert msg.message == "database is locked"
 
 
 class TestLeaderResponseStrictLength:
