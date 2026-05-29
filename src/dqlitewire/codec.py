@@ -200,7 +200,7 @@ class MessageEncoder:
                      this cap raises ``EncodeError``. Per-field caps
                      (``_MAX_BLOB_SIZE``, ``_MAX_TEXT_VALUE_SIZE``,
                      ``_MAX_FILE_CONTENT_SIZE``, ``_MAX_FILE_COUNT``,
-                     ``_MAX_NODE_COUNT``, column count <= 255)
+                     ``_MAX_NODE_COUNT``, column count <= 2000)
                      partially bound the envelope, but a composite
                      frame (e.g. a ``FilesResponse`` with many files
                      near the per-file content cap) can still overflow

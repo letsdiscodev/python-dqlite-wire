@@ -67,8 +67,8 @@ network contexts and are all opt-out-able.
   default 64 MiB) — envelope cap on a single frame. Class-scoped, not
   exported at module level.
 - `_MAX_PARAM_COUNT` (32,766 — matches SQLite's
-  `SQLITE_MAX_VARIABLE_NUMBER`), `_MAX_COLUMN_COUNT` (255 — matches
-  the C server's `STMT__MAX_COLUMNS`), `_MAX_FILE_COUNT` (100),
+  `SQLITE_MAX_VARIABLE_NUMBER`), `_MAX_COLUMN_COUNT` (2000 — SQLite's
+  documented `SQLITE_MAX_COLUMN` compile-time default), `_MAX_FILE_COUNT` (100),
   `_MAX_NODE_COUNT` (10,000) — internal sanity bounds on decoded
   tuple / response sizes.
 

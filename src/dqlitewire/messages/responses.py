@@ -87,8 +87,9 @@ _MAX_FILE_COUNT: Final[int] = 100
 # because Raft consensus latency precludes realistic deployments
 # materially above ~100 nodes; anything beyond that range from a real
 # cluster is hostile or buggy. Tracked distinctly from
-# ``_MAX_COLUMN_COUNT`` (anchored to the C ``STMT__MAX_COLUMNS``
-# constant) — this constant has no equivalent C/Go anchor.
+# ``_MAX_COLUMN_COUNT`` (which mirrors SQLite's documented
+# ``SQLITE_MAX_COLUMN`` compile-time default) — neither constant has a
+# C/Go wire-protocol anchor; both are defensive bounds.
 _MAX_NODE_COUNT: Final[int] = 10_000
 
 # Upper bound on ``StmtResponse.tail_offset``. The field is a byte
