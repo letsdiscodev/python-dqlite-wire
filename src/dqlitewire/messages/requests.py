@@ -1159,9 +1159,10 @@ class ClusterRequest(Message):
             raise DecodeError(f"ClusterRequest unsupported schema version {schema}")
         # Decode-side accepts V0 so a relaying proxy / mock server /
         # captured-traffic replay tool can round-trip a V0 frame
-        # without losing the original byte shape. Re-encoding a
-        # decoded V0 still raises (encode_body refuses) — only the
-        # decode → introspect → drop flow is supported.
+        # without losing the original byte shape. A decoded V0 frame
+        # carries the ``_decoded=True`` sentinel and re-encodes
+        # byte-identically (see ``encode_body``); only *fresh*
+        # ``format=0`` construction is rejected.
         if len(data) != 8:
             raise DecodeError(f"ClusterRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
