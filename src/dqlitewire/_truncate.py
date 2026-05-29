@@ -1,11 +1,5 @@
-"""Back-compat shim — the helper has been promoted to the public
-:mod:`dqlitewire.truncate` module. The public names
-:data:`dqlitewire.DEFAULT_MAX_RAW_MESSAGE` and
-:func:`dqlitewire.cap_raw_message` are the canonical surface.
-
-This shim re-exports the underscore-prefixed pre-promotion names for
-one release cycle so downstream consumers can migrate without
-lockstep. New code should import from :mod:`dqlitewire` directly.
+"""Back-compat shim re-exporting the pre-promotion underscore names for one
+release cycle. New code should import from :mod:`dqlitewire` directly.
 """
 
 from dqlitewire.truncate import (

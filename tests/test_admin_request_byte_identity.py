@@ -1,17 +1,5 @@
-"""Pin: admin-request encoders are byte-identity round-trippable.
-
-The existing ``test_messages_requests.py`` admin round-trip tests stop
-one step short — they pin field equality after a single decode, not
-byte equality after re-encode. A subtle encode-side regression (e.g.
-spurious padding, flipped byte order) could be invisible if the
-decoder is symmetrically wrong.
-
-This file extends the byte-identity discipline that
-``test_legacy_decode_encode_byte_identical`` already pins for the
-AssignRequest legacy shape, across the other admin requests and
-their boundary inputs (empty text, exact-word vs forced-pad text
-lengths, uint range edges, all NodeRole values).
-"""
+"""Admin-request encoders are byte-identity round-trippable; field-equality
+round-trips miss encoder/decoder asymmetries (e.g. spurious padding)."""
 
 from __future__ import annotations
 
@@ -34,9 +22,8 @@ from dqlitewire.messages.requests import (
     WeightRequest,
 )
 
-# Lambdas wrap constructors so pytest's parametrise IDs stay stable
-# across pytest versions (otherwise dataclass __repr__ changes leak
-# into the ID and obscure the matrix).
+# Lambdas wrap constructors so parametrise IDs stay stable across pytest
+# versions (dataclass __repr__ changes would otherwise leak into the ID).
 _CASES: list[tuple[str, Callable[[], Message]]] = [
     ("FinalizeRequest-min", lambda: FinalizeRequest(db_id=0, stmt_id=0)),
     ("FinalizeRequest-max", lambda: FinalizeRequest(db_id=0xFFFFFFFF, stmt_id=0xFFFFFFFF)),
@@ -76,13 +63,7 @@ _CASES: list[tuple[str, Callable[[], Message]]] = [
 def test_admin_request_encode_decode_reencode_byte_identical(
     label: str, constructor: Callable[[], Message]
 ) -> None:
-    """Encode → decode → re-encode must produce identical bytes.
-
-    The single-decode field-equality round-trip in the existing
-    ``test_roundtrip`` cases does not catch encoder/decoder asymmetries
-    where the decoder consumes spurious padding the encoder emits.
-    The byte-identity invariant catches those.
-    """
+    """Encode → decode → re-encode must produce identical bytes."""
     msg = constructor()
     encoded_1 = msg.encode()
     cls = type(msg)
@@ -95,12 +76,7 @@ def test_admin_request_encode_decode_reencode_byte_identical(
 
 
 def test_assign_request_legacy_shape_byte_identical_via_encode_body_legacy() -> None:
-    """The legacy 8-byte PROMOTE round-trip is already pinned by
-    ``test_legacy_decode_encode_byte_identical`` in
-    ``test_messages_requests.py`` — re-asserted here so the byte-
-    identity matrix covers both AssignRequest shapes (modern via the
-    parametrised case above; legacy via this case)."""
-    # Captured legacy PROMOTE body: 8 bytes of node_id.
+    """Byte-identity for the legacy 8-byte PROMOTE AssignRequest shape."""
     legacy_body = (42).to_bytes(8, "little")
     decoded = AssignRequest.decode_body(legacy_body)
     reencoded = decoded.encode_body_legacy()

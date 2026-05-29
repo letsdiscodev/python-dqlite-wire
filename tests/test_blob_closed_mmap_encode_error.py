@@ -1,14 +1,6 @@
-"""Pin: a closed ``mmap.mmap`` (or released ``memoryview``) on the BLOB
-encode path must surface as ``EncodeError``, not raw ``ValueError``
-or ``BufferError``.
-
-The wire-layer convention: every encode failure raises
-``EncodeError``. ``bytes(closed_mmap)`` raises
-``ValueError("mmap closed or invalid")`` from CPython's
-``mmap_buffer_getbuf``; ``bytes(released_memoryview)`` raises
-``BufferError``. Both must be wrapped at the wire boundary so callers
-using ``except EncodeError`` don't silently miss the failure.
-"""
+"""A closed mmap or released memoryview on the BLOB encode path must surface as
+EncodeError, not the raw ValueError/BufferError that bytes() raises, so callers
+catching EncodeError don't miss the failure."""
 
 from __future__ import annotations
 
@@ -40,8 +32,7 @@ def test_encode_value_inferred_blob_closed_mmap_raises_encode_error() -> None:
 
 
 def test_encode_value_explicit_blob_released_memoryview_raises_encode_error() -> None:
-    """A ``memoryview`` released via ``.release()`` raises
-    ``BufferError`` from ``bytes(view)`` — same convention."""
+    """A released memoryview raises BufferError from bytes(view) — same wrap."""
     buf = bytearray(b"hello")
     view = memoryview(buf)
     view.release()
@@ -50,8 +41,7 @@ def test_encode_value_explicit_blob_released_memoryview_raises_encode_error() ->
 
 
 def test_encode_value_explicit_blob_preserves_original_exception_via_cause() -> None:
-    """The wrap should preserve the underlying error via ``__cause__``
-    so debugging from the EncodeError still reaches the original."""
+    """The wrap must preserve the underlying error via __cause__."""
     payload = b"hello"
     mm = mmap.mmap(-1, len(payload))
     mm.write(payload)

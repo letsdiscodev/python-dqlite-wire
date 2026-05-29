@@ -1,10 +1,5 @@
-"""Pin: the top-level package logger has a ``logging.NullHandler``
-attached, per the Python logging HOWTO convention for libraries.
-
-The handler is added at package import time; this test runs the same
-operation a user's downstream code would: ``getLogger("dqlitewire")``
-and inspect handlers.
-"""
+"""The top-level package logger has a logging.NullHandler attached at import,
+per the Python logging HOWTO convention for libraries."""
 
 from __future__ import annotations
 

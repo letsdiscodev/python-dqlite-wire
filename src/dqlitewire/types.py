@@ -1,13 +1,7 @@
 """Primitive type encoding/decoding for dqlite wire protocol.
 
-All multi-byte integers are little-endian.
-Text is null-terminated UTF-8, padded to 8-byte boundary.
-
-The codec deals only in wire primitives (int, float, str, bool, bytes, None).
-Higher-level conversions — like ``DQLITE_ISO8601`` → ``datetime.datetime`` or
-``DQLITE_UNIXTIME`` → epoch-based ``datetime.datetime`` — belong in the
-driver/DBAPI layer, matching the split used by the C reference client and
-by Go's ``database/sql`` driver.
+Integers are little-endian; text is NUL-terminated UTF-8, padded to 8 bytes.
+Deals only in wire primitives; datetime conversions belong in the driver layer.
 """
 
 import datetime
@@ -39,67 +33,24 @@ __all__ = [
     "pad_to_word",
 ]
 
-# Exact set of Python types ``encode_value`` accepts. Callers see a
-# type-checker error if they pass something else, instead of a runtime
-# EncodeError at the first wire round-trip. ``bytes``-like siblings
-# (``bytearray``, ``memoryview``, ``mmap.mmap``) are accepted because
-# the BLOB encoder normalises them through ``bytes(value)``; the
-# inference path maps them to ValueType.BLOB for the same reason
-# stdlib ``sqlite3`` does.
 type WireInput = bool | int | float | str | bytes | bytearray | memoryview | mmap.mmap | None
 
-# Exact set of Python types ``decode_value`` may return (first element
-# of the ``(value, consumed)`` tuple). Narrower than ``Any`` — wire
-# values are always one of these primitives, and the driver layer
-# widens to ``Any`` only at the PEP 249 row-tuple boundary.
 type WireValue = bool | int | float | str | bytes | None
 
-# Per-BLOB byte cap. Sits 64 bytes below ``DEFAULT_MAX_MESSAGE_SIZE``
-# (64 MiB) so a blob at the documented cap round-trips through the
-# default decoder. The previous "raise to 64 MiB exact" fix narrowed
-# the legacy 48 MiB asymmetry but left a residual: ``encode_blob`` of
-# a 64 MiB payload returns ``8 (length prefix) + 64 MiB = 64 MiB + 8``
-# bytes, and a single-row ``RowsResponse`` carrying that blob produces
-# ~64 MiB + 48 bytes (8 message header + 8 col_count + 8 col_name +
-# 8 row_header + 8 length prefix + 8 row marker). The same-default
-# decoder then rejected the bytes its own encoder produced.
-#
-# Worst-case in-row framing breakdown:
-#   8 message header + 8 col_count + 8 col_name + 8 row_header +
-#   8 length prefix + 8 row marker = 48 bytes; round up to 64 for
-#   schema/alignment slop and breathing room.
-#
-# Per-call ``max_blob_size=`` on ``encode_blob`` / ``decode_blob``
-# still allows callers to override this default at the boundary.
+# Sits 64 bytes below DEFAULT_MAX_MESSAGE_SIZE so a blob at the cap round-trips
+# through the default decoder, leaving room for the length prefix + row framing.
 _MAX_BLOB_SIZE: Final[int] = 64 * 1024 * 1024 - 64  # 64 MiB minus framing overhead
 
-# Per-TEXT cell byte cap. Symmetric with ``_MAX_BLOB_SIZE`` — a TEXT
-# row cell (TEXT or ISO8601 wire type) is NUL-terminated UTF-8 and
-# otherwise unbounded within the frame envelope. Matches the BLOB
-# ceiling: real applications never send multi-megabyte string columns
-# over the wire, and this defensive cap keeps ``decode_text`` from
-# scanning or allocating attacker-controlled lengths that would land
-# the encoded message outside the default frame envelope.
+# Symmetric with _MAX_BLOB_SIZE; keeps decode_text from allocating
+# attacker-controlled lengths that exceed the default frame envelope.
 _MAX_TEXT_VALUE_SIZE: Final[int] = 64 * 1024 * 1024 - 64  # 64 MiB minus framing overhead
 
-# Cap on the stringified representation of an out-of-range integer in
-# EncodeError messages. A hostile or buggy caller passing ``10 ** 500``
-# would otherwise bake a kilobyte of digits into the error text (and
-# every log line / traceback that quotes it). Parity with
-# ``_truncate_error`` in the client layer and ``_MAX_FAILURE_MESSAGE_SIZE``
-# on the decode side.
+# Cap on stringified ints in EncodeError messages so 10**500 doesn't bake a
+# kilobyte of digits into the error text (and every log line that quotes it).
 _MAX_VALUE_REPR: Final[int] = 64
 
-# NULL cell width on the wire. Anchored to four upstream TODO sites in
-# ``dqlite-upstream/src/tuple.c`` (lines 71-73, 146, 262, 298: ``/* TODO:
-# allow null to be encoded with 0 bytes */``). Today every NULL is 8
-# bytes — a uint64 read into a union member that is never inspected.
-# If upstream lands the 0-byte NULL change, this constant flips and
-# both encode_value and decode_value NULL branches pick it up in
-# lockstep; the row-decoder's per-cell offset arithmetic continues to
-# work because the consumed-bytes return path also reads the constant.
-# Centralising the literal makes "how wide is NULL on the wire?"
-# answerable in one place rather than three.
+# NULL is 8 bytes on the wire (a uint64 read into a never-inspected union member);
+# upstream has a TODO to allow 0-byte NULLs. Centralised so encode/decode flip in lockstep.
 NULL_CELL_WIDTH: Final[int] = 8
 
 
@@ -111,60 +62,24 @@ def _bounded_repr(value: int) -> str:
 
 
 def _bounded_repr_any(value: object) -> str:
-    """``repr(value)`` capped at ``_MAX_VALUE_REPR`` chars.
-
-    Sibling of :func:`_bounded_repr` (which is int-specific and emits
-    raw digits without quotes). Apply at every encode-error site that
-    quotes caller-controlled data via ``{value!r}`` so the documented
-    discipline (``_MAX_VALUE_REPR`` rationale above) holds uniformly
-    across all rejection branches — not just the int-validator
-    helpers.
-    """
+    """``repr(value)`` capped at ``_MAX_VALUE_REPR`` chars (for arbitrary objects)."""
     s = repr(value)
     if len(s) <= _MAX_VALUE_REPR:
         return s
     return f"{s[:_MAX_VALUE_REPR]}... [{len(s)} chars]"
 
 
-# Single-byte buffer-protocol formats. ``memoryview`` accepts these as
-# documented zero-copy BLOB binding shapes (``memoryview(b'...')`` is
-# 'B', ``memoryview(bytearray(...))`` is 'B', and ``array.array('b'/
-# 'B'/'c', ...)`` matches the typed-but-still-byte-wide case). Any
-# other format is a typed numeric memoryview whose bytes representation
-# is host-endian and host-int-width, which is exactly the cross-
-# platform-corruption hazard the bare ``array.array`` rejection
-# prevents — silently accepting it via ``memoryview(array.array('i',
-# ...))`` would re-open that hole through the buffer-protocol back
-# door.
+# Single-byte buffer-protocol formats accepted as zero-copy BLOB binds. Other
+# formats are typed numeric memoryviews carrying host-endian, non-portable bytes.
 _BYTE_FORMAT_MEMORYVIEW: Final[frozenset[str]] = frozenset({"B", "b", "c"})
 
 
 def _reject_non_byte_format_memoryview(value: memoryview) -> None:
-    """Reject ``memoryview`` whose buffer-protocol ``format`` is not a
-    single-byte type. See ``_BYTE_FORMAT_MEMORYVIEW``.
-
-    Shared by the inference and explicit-BLOB branches of
-    :func:`encode_value` so both entry points apply the same
-    rejection (parity with the ``mmap.mmap`` acceptance pins in
-    ``tests/test_blob_inference_mmap.py``).
-
-    A released memoryview raises ``ValueError`` from ``.format`` on
-    current CPython (per ``Objects/memoryobject.c::mbuf_check_view``);
-    a future CPython narrowing the released-buffer error class to
-    ``BufferError`` (for symmetry with ``bytes(released_mv)`` which
-    already raises ``BufferError``) is also tolerated. Catch BOTH so
-    the helper's correctness does not hinge on a CPython
-    implementation detail the package does not own — the wider catch
-    mirrors the ``except (ValueError, BufferError)`` already applied
-    at the ``bytes(value)`` materialise site in the explicit-BLOB
-    arm of ``encode_value``. In either case fall through silently so
-    the downstream ``bytes(value)`` materialise step surfaces the
-    canonical ``EncodeError("Cannot materialise BLOB...")``. The
-    format check is a portability guard, not the released-buffer
-    guard.
-    """
+    """Reject a memoryview whose buffer-protocol format is not single-byte."""
     try:
         fmt = value.format
+    # Released memoryview raises ValueError (or BufferError on future CPython);
+    # fall through so bytes(value) surfaces the canonical EncodeError.
     except (ValueError, BufferError):
         return
     if fmt not in _BYTE_FORMAT_MEMORYVIEW:
@@ -181,20 +96,7 @@ def _reject_non_byte_format_memoryview(value: memoryview) -> None:
 
 
 def _validate_uint64(name: str, value: int) -> None:
-    """Validate ``value`` is an int (not bool) in the uint64 range.
-
-    Shared by ``encode_uint64`` and message dataclass ``__post_init__``
-    sites so construction-time and encode-time checks raise the same
-    exception class (``EncodeError``) and both reject ``bool`` (which
-    ``isinstance(True, int)`` otherwise silently admits).
-
-    The predicate orders ``isinstance(value, bool)`` first so the three
-    sibling validators (``_validate_uint32`` / ``_validate_int64``) and
-    the package's other type-narrowing guards (``Header.__post_init__``,
-    every dataclass ``__post_init__``) all read the same shape. The two
-    clauses commute on every input, but a single canonical form keeps a
-    future maintainer's grep across the family productive.
-    """
+    """Validate ``value`` is an int (not bool) in the uint64 range."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not 0 <= value < 2**64:
@@ -204,11 +106,7 @@ def _validate_uint64(name: str, value: int) -> None:
 
 
 def _validate_uint32(name: str, value: int) -> None:
-    """Validate ``value`` is an int (not bool) in the uint32 range.
-
-    Symmetric with :func:`_validate_uint64` — see that helper for the
-    rationale on the bool-first predicate order.
-    """
+    """Validate ``value`` is an int (not bool) in the uint32 range."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not 0 <= value < 2**32:
@@ -218,14 +116,7 @@ def _validate_uint32(name: str, value: int) -> None:
 
 
 def _validate_int64(name: str, value: int) -> None:
-    """Validate ``value`` is an int (not bool) in the signed int64 range.
-
-    Symmetric with :func:`_validate_uint64` / :func:`_validate_uint32`.
-    The existing exception wording (``"Value <repr> out of range for
-    int64"``) is preserved so callers and test pins that match that
-    text continue to pass — this helper is a refactor of the inline
-    check inside :func:`encode_int64`, not a wording change.
-    """
+    """Validate ``value`` is an int (not bool) in the signed int64 range."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not -(2**63) <= value < 2**63:
@@ -239,18 +130,7 @@ def encode_uint64(value: int) -> bytes:
 
 
 def decode_uint64(data: bytes | memoryview, *, label: str = "uint64") -> int:
-    """Decode an unsigned 64-bit integer (little-endian).
-
-    Accepts ``bytes`` or ``memoryview`` so hot-path body decoders
-    can pass memoryview slices without copying.
-
-    ``label`` is interpolated into the truncation diagnostic so a
-    caller decoding a specific field (e.g. ``OpenRequest.flags``)
-    can surface a per-field error message — symmetric with
-    :func:`decode_text`'s ``label=`` discipline. The default
-    ``"uint64"`` preserves the historical message wording for callers
-    that omit the kwarg.
-    """
+    """Decode an unsigned 64-bit integer (little-endian); ``label`` names the field in errors."""
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for {label}, got {len(data)}")
     result: int = struct.unpack("<Q", data[:8])[0]
@@ -258,29 +138,13 @@ def decode_uint64(data: bytes | memoryview, *, label: str = "uint64") -> int:
 
 
 def encode_int64(value: int) -> bytes:
-    """Encode a signed 64-bit integer (little-endian).
-
-    Rejects ``bool`` explicitly (``isinstance(True, int)`` is True
-    and would silently encode as ``1``); symmetric with the
-    ``encode_uint32`` / ``encode_uint64`` validators that reject
-    bool too. A caller-side typo like ``encode_int64(True)`` is more
-    likely a bug than a deliberate ``True → 1`` coercion; the
-    rejection surfaces it.
-    """
+    """Encode a signed 64-bit integer (little-endian); rejects bool to surface caller typos."""
     _validate_int64("value", value)
     return struct.pack("<q", value)
 
 
 def decode_int64(data: bytes | memoryview, *, label: str = "int64") -> int:
-    """Decode a signed 64-bit integer (little-endian).
-
-    Accepts ``bytes`` or ``memoryview``.
-
-    ``label`` is interpolated into the truncation diagnostic so a
-    caller decoding a specific field (e.g. ``"UNIXTIME cell"``) can
-    surface a per-field error message — symmetric with the
-    :func:`decode_text` / :func:`decode_uint64` label discipline.
-    """
+    """Decode a signed 64-bit integer (little-endian); ``label`` names the field in errors."""
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for {label}, got {len(data)}")
     result: int = struct.unpack("<q", data[:8])[0]
@@ -294,10 +158,7 @@ def encode_uint32(value: int) -> bytes:
 
 
 def decode_uint32(data: bytes | memoryview) -> int:
-    """Decode an unsigned 32-bit integer (little-endian).
-
-    Accepts ``bytes`` or ``memoryview``.
-    """
+    """Decode an unsigned 32-bit integer (little-endian)."""
     if len(data) < 4:
         raise DecodeError(f"Need 4 bytes for uint32, got {len(data)}")
     result: int = struct.unpack("<I", data[:4])[0]
@@ -305,33 +166,10 @@ def decode_uint32(data: bytes | memoryview) -> int:
 
 
 def encode_double(value: float) -> bytes:
-    """Encode a 64-bit floating point number (little-endian).
+    """Encode a 64-bit float (little-endian); accepts all IEEE 754 incl. NaN/inf.
 
-    All IEEE 754 ``float`` values are accepted, including NaN and
-    infinity, matching the Go reference implementation behavior.
-
-    Non-``float`` inputs are rejected:
-
-    - ``bool`` is rejected explicitly because ``isinstance(True, int)``
-      is True and ``float(True) == 1.0`` — without the guard a caller
-      passing ``True`` would silently encode ``1.0`` onto the wire.
-    - Plain ``int`` is rejected: ``struct.pack("<d", 42)`` succeeds via
-      C-level coercion but the same coercion silently loses bits for
-      ``|x| >= 2**53`` and raises ``OverflowError`` (outside the
-      ``EncodeError`` family) for ``|x| >= 2**1024``. Callers that
-      genuinely want int → FLOAT should call ``float(x)`` themselves
-      and accept the precision boundary explicitly.
-    - Third-party bool/numeric proxies (``numpy.bool_``,
-      ``numpy.float64``, ``Decimal``, ``Fraction``) are all rejected
-      via the float-subclass check. ``numpy.bool_`` in particular is
-      not a Python ``bool`` subclass, so the bool guard alone leaves
-      it slip through to ``struct.pack``'s ``__float__`` coercion —
-      the exact silent-coerce footgun this function exists to prevent.
-      Callers passing third-party numerics must coerce explicitly
-      (``float(np_value)``).
-
-    Mirrors the discipline already applied at ``_validate_uint64``,
-    ``encode_int64``, and the ``encode_value`` FLOAT arm.
+    Rejects int/bool/numeric proxies: their implicit coercion silently loses bits
+    (|x| >= 2**53) or overflows. Callers wanting these must float(x) explicitly.
     """
     if isinstance(value, bool):
         raise EncodeError(f"encode_double rejects bool, got {value!r}")
@@ -345,17 +183,7 @@ def encode_double(value: float) -> bytes:
 
 
 def decode_double(data: bytes | memoryview, *, label: str = "double") -> float:
-    """Decode a 64-bit floating point number (little-endian).
-
-    All IEEE 754 values are accepted, including NaN and infinity,
-    matching the Go reference implementation behavior. Accepts
-    ``bytes`` or ``memoryview``.
-
-    ``label`` is interpolated into the truncation diagnostic so a
-    caller decoding a specific field can surface a per-field error
-    message — symmetric with the :func:`decode_text` /
-    :func:`decode_uint64` / :func:`decode_int64` label discipline.
-    """
+    """Decode a 64-bit float (little-endian); ``label`` names the field in errors."""
     if len(data) < 8:
         raise DecodeError(f"Need 8 bytes for {label}, got {len(data)}")
     result: float = struct.unpack("<d", data[:8])[0]
@@ -371,39 +199,12 @@ def pad_to_word(size: int) -> int:
 
 
 def encode_text(value: str, *, max_size: int | None = None, label: str = "Text") -> bytes:
-    """Encode text as null-terminated UTF-8, padded to 8-byte boundary.
+    """Encode text as NUL-terminated UTF-8, padded to 8-byte boundary.
 
-    Wire-protocol limitation: TEXT is NUL-terminated, so the encoder
-    rejects values with embedded NULs — they cannot round-trip through
-    the wire. Callers that need to transmit arbitrary bytes (including
-    NULs) must use the BLOB type instead. SQLite itself allows TEXT
-    columns to contain embedded NULs on disk, but such values cannot be
-    reliably read back through the dqlite wire protocol (``decode_text``
-    stops at the first NUL). This matches Go / C client behaviour;
-    it is a protocol-level asymmetry, not a Python-side design choice.
-
-    ``max_size`` (UTF-8 byte cap, NOT codepoints) caps the encoded
-    payload. The decoder caps on bytes too (``decode_text`` uses
-    ``max_size`` against ``null_pos`` which is a byte offset), so
-    matching units here means encode → decode round-trip is symmetric:
-    a string the encoder accepts, the decoder also accepts. Caller-side
-    inline ``len(s)`` (codepoints) checks would admit non-ASCII payloads
-    near the boundary that the decoder then rejects, breaking the
-    round-trip. ``label`` is forwarded into the ``EncodeError`` message
-    so a caller passing ``label="leader address"`` gets ``"leader
-    address length N exceeds maximum (M)"`` rather than the generic
-    ``"Text length..."``.
-
-    One-way pair with permissive decode: this encoder uses strict
-    UTF-8 with no symmetric ``errors=`` kwarg. A str obtained from
-    :func:`decode_text` with ``errors="surrogateescape"`` (which
-    deliberately smuggles raw bytes as ``U+DC80``-``U+DCFF``
-    surrogates for round-trip recovery in stdlib idiom) CANNOT be
-    re-encoded here — the strict UTF-8 encoder rejects the
-    surrogates and surfaces ``EncodeError`` with the "lone surrogate
-    or surrogate-escape character" diagnostic. dqlite's wire spec is
-    UTF-8 by design; the asymmetry is deliberate. Callers needing
-    round-trip-safe carriage of opaque bytes must use BLOB.
+    Rejects embedded NULs (decode_text stops at the first NUL); use BLOB for
+    arbitrary bytes. Strict UTF-8 only, so a surrogateescape decode result
+    cannot round-trip back through here. ``max_size`` caps UTF-8 bytes (not
+    codepoints) to stay symmetric with the decoder's byte-offset cap.
     """
     if not isinstance(value, str):
         raise EncodeError(f"encode_text expected str, got {type(value).__name__}")
@@ -418,18 +219,11 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
         raise EncodeError(f"{label} length {len(utf8)} exceeds maximum ({max_size})")
     nul_byte_offset = utf8.find(b"\x00")
     if nul_byte_offset != -1:
-        # Report the byte offset of the embedded NUL rather than the
-        # Python-string character index — the encoder produces bytes so
-        # operators debugging a wire capture expect byte offsets.
         raise EncodeError(
             f"Text value contains embedded null byte at byte offset "
             f"{nul_byte_offset}; null-terminated encoding would lose data"
         )
-    # Single bytearray allocation + one final ``bytes()`` materialisation
-    # replaces the prior 3-allocation chain (utf8 + NUL, then + padding
-    # literal). ``bytearray(N)`` zero-fills, so the NUL terminator slot
-    # and the trailing padding are already zero — only the utf8 prefix
-    # needs writing.
+    # bytearray(N) zero-fills, so the NUL terminator and padding are already set.
     payload_len = len(utf8)
     padding = pad_to_word(payload_len + 1)
     buf = bytearray(payload_len + 1 + padding)
@@ -437,21 +231,12 @@ def encode_text(value: str, *, max_size: int | None = None, label: str = "Text")
     return bytes(buf)
 
 
-# Threshold below which we materialize a memoryview to bytes in one
-# shot (one allocation + one ``bytes.find``) instead of the chunked
-# scan. Row text payloads are almost always well under 64 KiB, so the
-# one-shot path dominates the common case. Above the
-# threshold we fall back to chunked scanning to bound peak memory for
-# pathologically long texts.
+# Below this, materialise a memoryview to bytes in one shot; above it, fall back
+# to chunked scanning to bound peak memory for pathologically long texts.
 _TEXT_ONE_SHOT_MAX: Final[int] = 65_536
 _TEXT_SCAN_CHUNK: Final[int] = 4096
-# Adaptive short-probe window. Peeks the first few hundred bytes of
-# the memoryview before the 64 KiB one-shot materialise — covers the
-# common short-cell case (typical TEXT columns: names, addresses,
-# ids, ISO8601 timestamps) without paying the full 64 KiB allocation.
-# Sized so the materialise + scan stays well under one allocator
-# bucket and well below the page boundary, while still covering the
-# ~99th-percentile cell length in normalised relational data.
+# Short-probe window: peek the first few hundred bytes before the 64 KiB one-shot
+# to handle typical short cells (names, ids, timestamps) without a full allocation.
 _TEXT_SHORT_PROBE: Final[int] = 256
 
 
@@ -462,77 +247,17 @@ def decode_text(
     label: str = "Text",
     errors: str = "strict",
 ) -> tuple[str, int]:
-    """Decode null-terminated UTF-8 text.
+    """Decode NUL-terminated UTF-8 text; return (text, bytes_consumed).
 
-    Accepts either ``bytes`` or ``memoryview``. Returns the decoded
-    string and the number of bytes consumed (including padding).
-
-    ``max_size`` caps the decoded length (excluding the terminator) —
-    defaults to ``_MAX_TEXT_VALUE_SIZE``. Callers that enforce a
-    smaller cap (e.g. ``decode_column_name`` at 4 KiB) pass their own
-    ceiling; callers that legitimately need the full row-cell cap use
-    the default. ``label`` is used in the ``DecodeError`` message when
-    ``max_size`` is exceeded, so a caller passing
-    ``label="leader address"`` gets ``"leader address length N exceeds
-    maximum (M)"`` rather than the generic ``"Text length..."``.
-
-    ``errors`` controls UTF-8 decode error handling — passes through
-    to ``bytes.decode``. The default ``"strict"`` matches the dqlite
-    contract (UTF-8 by spec). Legacy / non-UTF-8 data (e.g. a SQLite
-    database from a pre-3.x install storing TEXT in latin-1) can use
-    ``"replace"`` or ``"backslashreplace"`` to coerce. C / Go clients
-    pass non-UTF-8 bytes through without validation; the strict
-    default is a Python-side defensive narrowing, not a wire-spec
-    requirement.
-
-    WARNING: ``errors="replace"`` produces ``U+FFFD`` (REPLACEMENT
-    CHARACTER) and ``errors="surrogateescape"`` produces the
-    ``U+DC80``-``U+DCFF`` surrogate range; neither is covered by the
-    ``_CONTROL_CHARS_RE`` character class consulted by
-    :func:`dqlitewire.messages.responses.sanitize_for_log` /
-    :func:`dqlitewire.messages.responses.sanitize_server_text`, so a
-    log-side scrub does NOT replace them. ``surrogateescape`` is also
-    not round-trippable via :func:`encode_text` (the surrogates fail
-    re-encode) and breaks naive ``json.dumps``. Callers using a
-    non-strict mode AND forwarding the result to a log sink should
-    apply their own additional sanitisation (e.g.
-    ``s.encode("ascii", errors="replace").decode("ascii")``) or route
-    the value through a structured-log encoder that handles the
-    residual codepoints explicitly.
-
-    Wire-protocol limitation: TEXT is NUL-terminated, so a value with
-    embedded NULs on the server side (e.g. written by a non-dqlite
-    SQLite client that accepts TEXT with NULs) reads back **truncated
-    at the first NUL**. No diagnostic is raised — the protocol provides
-    no length prefix, so the decoder cannot tell an embedded NUL apart
-    from the terminator. The encoder refuses such values outright;
-    callers who need round-trip-safe binary data should use BLOB.
-
-    The decoder's hot body loops (RowsResponse, FilesResponse,
-    ServersResponse) wrap the body in a ``memoryview`` so
-    per-iteration slices are O(1) rather than O(remaining).
-    ``bytes`` inputs use zero-copy ``.index(b"\\x00")``.
-
-    ``memoryview`` inputs use a single ``bytes(mv).find(b"\\x00")``
-    when the remaining buffer is small (< 64 KiB). This is one
-    allocation and one C-level scan, matching the hot-path cost of the
-    ``bytes`` branch. For larger buffers we fall back to a chunked
-    scan so peak memory stays bounded.
+    ``max_size`` caps decoded length; ``label`` names the field in errors.
+    ``errors="replace"``/``"surrogateescape"`` yield codepoints the log
+    sanitiser misses and that break encode_text round-trip. Embedded NULs in
+    server data read back truncated at the first NUL (no length prefix).
     """
     if isinstance(data, memoryview):
         data_len = len(data)
-        # Adaptive short-probe before the 64 KiB one-shot
-        # materialise. Typical TEXT cells are short (column names,
-        # ids, ISO8601 timestamps, fixed-format strings) and the
-        # NUL terminator lives within the first few hundred bytes.
-        # The 64 KiB one-shot ceiling caps worst-case waste at
-        # 64 KiB per cell — but on a multi-MiB body of 100k short
-        # cells, that is still ~6 GiB of allocator churn purely to
-        # support a ``bytes.find`` that terminates in tens of
-        # bytes. The short probe handles the common case in ~256
-        # bytes of materialise; cells that genuinely exceed the
-        # short window escalate to the existing 64 KiB / chunked
-        # path below.
+        # Short probe first: handles the common short-cell case in ~256 bytes
+        # of materialise, avoiding allocator churn from the 64 KiB one-shot.
         short_window = min(data_len, max_size + 1, _TEXT_SHORT_PROBE)
         short_materialized = bytes(data[:short_window])
         short_null = short_materialized.find(b"\x00")
@@ -551,24 +276,9 @@ def decode_text(
             raise DecodeError(f"{label} length exceeds maximum ({max_size})")
         if short_window >= data_len:
             raise DecodeError(f"{label} not null-terminated")
-        # Short probe missed and the cell continues past it. Fall
-        # through to the existing one-shot 64 KiB probe, reusing the
-        # bytes already materialised in ``short_materialized``.
-        # One-shot probe of the first ``_TEXT_ONE_SHOT_MAX`` bytes
-        # (or the cap-bounded / buffer-bounded window, whichever is
-        # smaller). Typical TEXT cells are far smaller than the
-        # probe window; NUL is found on the first scan and the
-        # chunked path never runs. The chunked path is reserved
-        # for cells that genuinely exceed the probe window.
-        #
-        # The prior gate read ``if data_len <= _TEXT_ONE_SHOT_MAX:``
-        # — i.e. fired only when the REMAINING BUFFER was at most
-        # 64 KiB. In a multi-MiB ROWS body with many short TEXT
-        # cells, every cell hit the chunked path even though each
-        # cell trivially fit in 64 KiB. The probe-then-escalate
-        # shape preserves the bounded-peak-memory invariant
-        # (≤ 64 KiB transient) and removes the chunked-path
-        # allocator churn for the common short-cell case.
+        # Short probe missed; escalate to the 64 KiB one-shot probe. The
+        # chunked path runs only for cells exceeding this window, keeping
+        # transient memory bounded at <= 64 KiB.
         probe_window = min(data_len, max_size + 1, _TEXT_ONE_SHOT_MAX)
         materialized = bytes(data[:probe_window])
         null_pos = materialized.find(b"\x00")
@@ -578,18 +288,12 @@ def decode_text(
             except UnicodeDecodeError as e:
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
         elif probe_window >= max_size + 1:
-            # The cap-bounded probe exhausted without NUL — cell
-            # exceeds max_size.
             raise DecodeError(f"{label} length exceeds maximum ({max_size})")
         elif probe_window >= data_len:
-            # Whole remaining buffer scanned without NUL.
             raise DecodeError(f"{label} not null-terminated")
         else:
-            # NUL not in probe AND cell continues past probe AND
-            # cap headroom remains — escalate to chunked scan
-            # starting from where the probe ended. Reuse the
-            # already-allocated probe as the first chunk to avoid
-            # re-materialising those bytes.
+            # Chunked scan from where the probe ended, reusing the probe
+            # bytes as the first chunk.
             scan_limit = min(data_len, max_size + 1)
             chunks: list[bytes] = [materialized]
             scanned = probe_window
@@ -614,35 +318,21 @@ def decode_text(
             except UnicodeDecodeError as e:
                 raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
     else:
-        # Bound the NUL scan at ``max_size + 1`` bytes — a hostile peer
-        # supplying a 100 MiB payload with the terminator (or no
-        # terminator at all) past the cap previously caused
-        # ``data.index`` to ``memchr``-scan the full buffer before
-        # the cap check fired. ``bytes.find`` is bounded; if the NUL
-        # is not within the window, ``find`` returns -1. Symmetric
-        # with the memoryview branch's
-        # ``scan_window = min(data_len, max_size+1)`` cap-before-scan.
+        # Bound the NUL scan at max_size+1 so a hostile unterminated payload
+        # can't force a full-buffer memchr before the cap check fires.
         scan_end = min(len(data), max_size + 1)
         null_pos = data.find(b"\x00", 0, scan_end)
         if null_pos < 0:
             if scan_end < len(data):
                 raise DecodeError(f"{label} length exceeds maximum ({max_size})")
             raise DecodeError(f"{label} not null-terminated")
-        # ``bytes.find(needle, 0, scan_end)`` returns ``-1`` or a
-        # value strictly less than ``scan_end = min(len(data),
-        # max_size + 1)``, so ``null_pos <= max_size`` by
-        # construction. The cap is enforced by the ``scan_end``
-        # bound; no post-find check is needed.
         try:
             text = data[:null_pos].decode("utf-8", errors=errors)
         except UnicodeDecodeError as e:
             raise DecodeError(f"Invalid UTF-8 in {label}: {e}") from e
 
-    # Each branch above is solely responsible for cap-exceeded rejection
-    # (lines 317, 347, 366, 372). Every branch caps the scan window to
-    # ``min(data_len, max_size + 1)`` before the find, so by construction
-    # ``null_pos <= max_size`` at this convergence point — a tail check
-    # here would be unreachable.
+    # Every branch caps its scan at max_size+1 before the find, so
+    # null_pos <= max_size here by construction; no tail check needed.
     total_size = null_pos + 1 + pad_to_word(null_pos + 1)
     if len(data) < total_size:
         raise DecodeError(f"Not enough data for text padding: need {total_size}, got {len(data)}")
@@ -652,23 +342,9 @@ def decode_text(
 def encode_blob(
     value: bytes | bytearray | memoryview, *, max_blob_size: int = _MAX_BLOB_SIZE
 ) -> bytes:
-    """Encode a blob (length-prefixed binary data, padded to 8-byte boundary).
+    """Encode a blob (uint64 length + data + padding to 8-byte boundary).
 
-    Format: uint64 length + data + padding
-
-    Accepts any bytes-like input (``bytes``, ``bytearray``, ``memoryview``);
-    the wire payload is written directly into the output bytearray via
-    the buffer protocol — no intermediate materialisation.
-
-    ``max_blob_size`` is the per-blob cap. Defaults to
-    ``_MAX_BLOB_SIZE`` (``64 MiB - 64 B`` = 67_108_800 bytes — sits
-    64 bytes below ``DEFAULT_MAX_MESSAGE_SIZE`` to leave room for the
-    length prefix plus row framing so a blob at the documented cap
-    fits inside the default 64 MiB message envelope; see the
-    ``_MAX_BLOB_SIZE`` definition for the full per-row arithmetic).
-    Callers handling larger BLOBs (per their deployment's actual
-    ``raft.log.entry_size_max``) can raise this explicitly. The outer
-    ``max_message_size`` cap on the codec always wins regardless.
+    Accepts any bytes-like input. ``max_blob_size`` is the per-blob cap.
     """
     if not isinstance(value, (bytes, bytearray, memoryview)):
         raise EncodeError(
@@ -677,13 +353,8 @@ def encode_blob(
     length = len(value)
     if length > max_blob_size:
         raise EncodeError(f"Blob length {length} exceeds maximum ({max_blob_size})")
-    # Single bytearray allocation + one final ``bytes()`` materialisation
-    # replaces the prior 3-allocation chain (uint64 header + payload
-    # copy + padding literal). ``bytearray(N)`` zero-fills, so the
-    # padding region is already zero. Bytearray slice assignment
-    # accepts any buffer-protocol object, so ``value`` (bytes |
-    # bytearray | memoryview) is written in-place without an
-    # intermediate ``bytes(value)`` materialisation.
+    # bytearray(N) zero-fills the padding; slice assignment accepts any
+    # buffer-protocol object, so value is written in-place without materialising.
     padding = pad_to_word(length)
     buf = bytearray(8 + length + padding)
     buf[:8] = encode_uint64(length)
@@ -694,26 +365,10 @@ def encode_blob(
 def decode_blob(
     data: bytes | memoryview, *, max_blob_size: int = _MAX_BLOB_SIZE
 ) -> tuple[bytes, int]:
-    """Decode a blob.
+    """Decode a blob; return (data, bytes_consumed).
 
-    Accepts either ``bytes`` or ``memoryview``. Returns the blob data
-    (always as ``bytes``) and the number of bytes consumed.
-
-    **Round-trip type asymmetry.** Callers that bind a ``memoryview``
-    or ``bytearray`` on the encode side see ``bytes`` on the decode
-    side — ``decode_blob`` always materialises an owned ``bytes``
-    copy regardless of the input shape that was originally encoded.
-    This matches stdlib ``sqlite3`` semantics (``sqlite3.Binary =
-    memoryview`` on bind; ``bytes`` on fetch) and is the right owned-
-    copy shape across the deserialisation boundary. Callers needing
-    a ``memoryview`` view of the result must wrap explicitly:
-    ``memoryview(decoded)``.
-
-    ``max_blob_size`` mirrors the ``encode_blob`` parameter — defaults
-    to ``_MAX_BLOB_SIZE`` (``64 MiB - 64 B`` = 67_108_800 bytes; the
-    64-byte shortfall reserves room for length prefix + row framing
-    under the default 64 MiB message envelope). See ``encode_blob``
-    for the rationale.
+    Result is always an owned ``bytes`` copy regardless of encode-side input
+    shape, matching stdlib sqlite3 (memoryview on bind, bytes on fetch).
     """
     if len(data) < 8:
         raise DecodeError("Not enough data for blob length")
@@ -730,27 +385,10 @@ def decode_blob(
 
 
 def _infer_value_type(value: WireInput) -> ValueType:
-    """Infer the wire ``ValueType`` from a Python value without running
-    the encoder.
+    """Infer the wire ``ValueType`` from a Python value (tag only, no encode).
 
-    Mirrors ``encode_value``'s leading isinstance ladder, returning the
-    tag only — no length-cap check, no BLOB materialisation, no UTF-8
-    encode. The helper lets the row-header build path in
-    ``RowsResponse._get_row_types`` get a per-row type tuple at O(1)
-    per cell instead of running the full ``encode_value`` pipeline and
-    discarding the bytes (a 2x encode cost on the inference fallback
-    path, observed as ``2 * N * M`` ``encode_value`` calls for an
-    ``N`` row by ``M`` column inference frame).
-
-    The ``memoryview`` over a non-byte format is rejected here too so
-    the inference path stays consistent with the explicit-BLOB branch:
-    callers passing ``memoryview(array.array('i', ...))`` see the same
-    rejection regardless of whether the inference ladder or the BLOB
-    arm fires first. Oversize BLOB / TEXT values are NOT rejected by
-    this helper — that cap discipline still lives inside
-    ``encode_value`` and fires on the subsequent emission pass. The
-    behaviour is "fail at SOME point" not "fail at the inference pass";
-    the diagnostic now names the emission cap, not the inference.
+    Lets the row-header build path get a per-row type tuple at O(1) per cell
+    instead of running the full encoder and discarding the bytes.
     """
     if value is None:
         return ValueType.NULL
@@ -763,12 +401,6 @@ def _infer_value_type(value: WireInput) -> ValueType:
     if isinstance(value, str):
         return ValueType.TEXT
     if isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
-        # The format-reject check used to live here, but is now hoisted
-        # to the top of ``encode_value`` so it fires exactly once per
-        # call regardless of inferred-vs-explicit path. Inferred BLOB
-        # callers used to pay the cost twice (here + in the explicit
-        # BLOB arm); the hoist restores O(1)-per-cell on the row-encode
-        # fallback path the helper docstring promises.
         return ValueType.BLOB
     raise EncodeError(
         f"Cannot infer wire type for value of type {type(value).__name__!r}. "
@@ -792,29 +424,11 @@ def _infer_value_type(value: WireInput) -> ValueType:
 
 
 def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple[bytes, ValueType]:
-    """Encode a Python value to wire format.
+    """Encode a Python value to wire format; return (encoded_data, value_type).
 
-    If value_type is not provided, it's inferred from the Python type.
-    Returns (encoded_data, value_type).
-
-    Inference: Python ``bool`` infers to ``ValueType.BOOLEAN``, NOT
-    ``ValueType.INTEGER``. On the wire both encode as ``uint64(0)`` or
-    ``uint64(1)``; the difference is only in the type tag. SQLite
-    stores both as an integer column value regardless of that tag, so
-    a round-trip through a column declared INTEGER returns a Python
-    ``int`` (``1`` or ``0``), never a Python ``bool``. Callers who
-    need ``True`` back must either coerce at read time
-    (``bool(row[0])``) or pass ``column_types=[...BOOLEAN...]`` on the
-    response side so the driver's typed decode materialises bool.
-
-    Inference matches the Go client's ``appendValue`` ``case bool:``
-    arm (``internal/protocol/message.go``). The C client has no
-    inference layer — ``dqlite-upstream/src/bind.c::bind_one``
-    switches on a pre-set ``value->type`` field, with the column-
-    decltype-to-tag mapping happening on the server side at
-    ``query.c``'s ``value_type`` helper. The Python layer adds
-    inference for bind-site ergonomics; the wire-format contract is
-    identical across all three clients.
+    If value_type is omitted it's inferred. bool infers to BOOLEAN (not INTEGER),
+    but both encode identically on the wire and SQLite stores them as integers, so
+    a round-trip through an INTEGER column returns int, never bool.
     """
     if value is None:
         if value_type is not None and value_type != ValueType.NULL:
@@ -824,59 +438,18 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             )
         return b"\x00" * NULL_CELL_WIDTH, ValueType.NULL
 
-    # Hoist the memoryview format check to fire exactly once, before
-    # any branching (inferred-vs-explicit, BLOB-vs-other). Previously
-    # the check ran in BOTH ``_infer_value_type`` (when value_type was
-    # None) AND the explicit BLOB arm (after inference filled in
-    # BLOB), so the inferred-BLOB path paid the cost twice — defeating
-    # the O(1)-per-cell promise of the inference helper. The hoist
-    # makes the contract grep-visible: "the check fires exactly once
-    # per encode_value call, before any path branching."
+    # Hoisted so the format check fires exactly once per call, before any
+    # inferred-vs-explicit / BLOB-vs-other branching.
     if isinstance(value, memoryview):
         _reject_non_byte_format_memoryview(value)
 
     if value_type is None:
-        # Parity with the explicit BLOB branch and with stdlib
-        # ``sqlite3``: bytes-like types (incl. memoryview and memory-
-        # mapped regions) infer to BLOB. ``array.array`` is intentionally
-        # NOT accepted by the inference helper: typed numeric arrays
-        # have platform-dependent bytes representation, so silent
-        # acceptance would yield non-portable BLOBs. ``memoryview`` over
-        # a non-byte format is rejected via ``_reject_non_byte_format_
-        # memoryview`` inside the helper.
         value_type = _infer_value_type(value)
 
     if value_type == ValueType.BOOLEAN:
-        # Accept bool directly; allow the exact ints 0 and 1 as a
-        # pragmatic escape for callers working with raw column values.
-        # Reject arbitrary ints — the previous ``1 if value else 0``
-        # coercion silently mapped values like ``5`` or ``-1`` to True,
-        # which round-trips as the bool True and loses the caller's
-        # original value.
-        #
-        # Deliberate asymmetry with C bind (``dqlite-upstream/src/
-        # bind.c::DQLITE_BOOLEAN``: ``sqlite3_bind_int64(stmt, n,
-        # value->boolean == 0 ? 0 : 1)``, which accepts any uint64
-        # and collapses non-zero to 1). A peer-emitted BOOLEAN cell
-        # with raw=5 decodes to ``True`` here (see :func:`decode_value`
-        # BOOLEAN arm), but attempting to re-encode that ``True``
-        # writes raw=1 — so a decode -> re-encode round-trip of an
-        # out-of-{0, 1} raw BOOLEAN cell is lossy by design. The
-        # Python strictness exists to surface caller bugs
-        # (``encode_value(5, ValueType.BOOLEAN)``) which the C path
-        # silently rewrites to 1.
-        #
-        # The ``isinstance(value, int)`` guard intentionally admits
-        # int SUBCLASSES (e.g. ``enum.IntEnum`` members) but not
-        # numeric proxies like ``numpy.int64`` / ``numpy.bool_`` /
-        # ``decimal.Decimal`` / ``fractions.Fraction`` — they expose
-        # ``__int__`` / ``__index__`` but do NOT subclass ``int``.
-        # Silently accepting them would round-trip ``numpy.int64(5)``
-        # through ``True`` and lose the caller's original value (same
-        # footgun as the strictness above). Mirrors the documented
-        # rejection rationale at ``encode_double``: callers passing
-        # numeric proxies must coerce explicitly (``int(x)`` /
-        # ``bool(x)``) at the bind site.
+        # bool or exactly 0/1 only; reject arbitrary ints (5 -> True would lose
+        # the value). C bind collapses any non-zero to 1, so re-encoding a
+        # peer's out-of-{0,1} BOOLEAN is lossy by design.
         if isinstance(value, bool):
             return encode_uint64(1 if value else 0), value_type
         if isinstance(value, int) and value in (0, 1):
@@ -889,20 +462,9 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             f"coerced via int(x) or bool(x) at the bind site."
         )
     elif value_type in (ValueType.INTEGER, ValueType.UNIXTIME):
-        # Note: UNIXTIME is a server-to-client-only type (the C server's
-        # tuple_decoder has no inbound case for DQLITE_UNIXTIME). Explicit
-        # UNIXTIME encoding here is supported for roundtrip tests that
-        # simulate server-to-client frames; encode_params_tuple, which is
-        # the outgoing-params path, uses inference and never picks
-        # UNIXTIME, so the server-rejection case cannot arise via the
-        # documented client API.
-        #
-        # Reject bool under explicit non-BOOLEAN types for symmetry with
-        # the FLOAT branch. The default-inference path (no explicit
-        # value_type) still picks BOOLEAN for bools, so a caller who
-        # wants a bool encoded as an integer must coerce explicitly via
-        # ``int(x)``. This prevents the silent "True in an INTEGER
-        # column decodes as 1 (int), not True (bool)" surprise.
+        # UNIXTIME is server-to-client only (C tuple_decoder has no inbound
+        # case); explicit encoding here exists for round-trip tests. Reject
+        # bool so an explicit-INTEGER bool doesn't silently encode as 1.
         if isinstance(value, bool):
             raise EncodeError(
                 f"Cannot encode bool as {value_type.name}; cast with int(x) "
@@ -912,15 +474,9 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             raise EncodeError(f"Expected int for {value_type.name}, got {type(value).__name__}")
         return encode_int64(value), value_type
     elif value_type == ValueType.FLOAT:
-        # Strict reject of ``int`` (and ``bool``, which subclasses int)
-        # for explicit FLOAT. Implicit ``float(int_value)`` would lose
-        # bits silently for |x| >= 2**53 (round-to-nearest-double) and
-        # raise ``OverflowError`` outside the ``EncodeError`` family
-        # for |x| >= 2**1024. Both surfaces collapse into the same
-        # rejection here; callers who genuinely want int -> FLOAT
-        # write ``float(x)`` themselves and accept the precision
-        # boundary explicitly. Mirrors the bool-reject discipline at
-        # the INTEGER / UNIXTIME branch above.
+        # Reject int/bool: implicit float() coercion silently loses bits
+        # (|x| >= 2**53) or overflows. Numeric proxies fall through to
+        # encode_double, which rejects them with a richer message.
         if isinstance(value, bool):
             raise EncodeError(f"Expected float for FLOAT, got {type(value).__name__}")
         if isinstance(value, int):
@@ -929,35 +485,14 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
                 "Implicit coercion would silently lose precision for ints "
                 "with absolute value >= 2**53."
             )
-        # The residual non-float case (numeric proxies like
-        # ``numpy.float64``, ``Decimal``, ``Fraction``) is rejected by
-        # ``encode_double``'s float-subclass check with the canonical
-        # "encode_double requires float ... cast with float(x)
-        # explicitly" wording. A redundant ``if not isinstance(value,
-        # float)`` guard here would fire first with strictly poorer
-        # diagnostics — let the richer message win. The cast is a
-        # static-typing concession: ``encode_double`` is annotated
-        # ``float``-only and surfaces the rejection at runtime for
-        # anything else.
         return encode_double(cast(float, value)), value_type
     elif value_type in (ValueType.TEXT, ValueType.ISO8601):
         if not isinstance(value, str):
             raise EncodeError(f"Expected str for {value_type.name}, got {type(value).__name__}")
         if value_type == ValueType.ISO8601:
-            # Probe-and-discard: ISO8601 cells must be parseable on
-            # the consumer side (``dqlitedbapi`` calls
-            # ``datetime.datetime.fromisoformat`` or
-            # ``datetime.time.fromisoformat`` per the column type).
-            # The C reference is permissive (binds the bytes via
-            # ``sqlite3_bind_text`` without parsing), but the Python
-            # ecosystem's consumer fails far from the bind site if the
-            # string is not ISO 8601 — surface the failure at the
-            # encode site instead. The probe ladder mirrors the
-            # consumer's parser pair so bare-time strings
-            # (``"12:30:45"``) that the consumer's time arm accepts
-            # still pass here. Deliberate divergence from C parity,
-            # justified by the same caller-bug-surfacing rationale as
-            # the BOOLEAN strictness above.
+            # Probe-and-discard so a non-ISO string fails at the bind site, not
+            # far away in the consumer. Mirrors the consumer's datetime/time
+            # parser pair; diverges from C, which binds without parsing.
             try:
                 datetime.datetime.fromisoformat(value)
             except ValueError:
@@ -971,73 +506,31 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
                         f"or format the datetime via .isoformat() "
                         f"before binding."
                     ) from e
-        # Cap the row-cell text length symmetric with the BLOB branch
-        # below and with ``decode_text``'s ``_MAX_TEXT_VALUE_SIZE`` cap
-        # — without ``max_size=`` here, a >16 MiB string encodes
-        # successfully but the same Python decoder rejects the bytes,
-        # so a same-process Python encode → decode round-trip can
-        # fail. Pass ``label=value_type.name`` so the diagnostic names
-        # the wire-cell type (TEXT / ISO8601), not the generic
-        # "Text".
+        # Cap text length so encode and decode stay round-trip-symmetric.
         return encode_text(value, max_size=_MAX_TEXT_VALUE_SIZE, label=value_type.name), value_type
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
-        # NOTE: the ``_reject_non_byte_format_memoryview`` check used
-        # to live here (symmetric with the inference branch). It is
-        # now hoisted to the top of ``encode_value`` so it fires
-        # exactly once per call regardless of inferred-vs-explicit
-        # path — see the comment at the function head.
-        # Cap the size BEFORE materialising via ``bytes(value)`` —
-        # symmetric with ``decode_blob``'s cap-before-allocate
-        # ordering. Without this, a 100 MB ``bytearray`` is copied
-        # to ``bytes`` first, then rejected by ``encode_blob``'s
-        # length check; the materialise allocation is wasted.
-        #
-        # For ``memoryview`` the probe must use ``.nbytes`` — NOT
-        # ``len(mv)`` — because ``len(memoryview(array.array('Q',
-        # [...])))`` is the ELEMENT count, not the byte count. The
-        # earlier ``_reject_non_byte_format_memoryview`` only admits
-        # single-byte formats where ``len == nbytes`` by coincidence,
-        # so a ``len()`` probe is correct today only because of that
-        # ordering. ``.nbytes`` makes the cap correctness robust by
-        # construction: a future refactor that moves or removes the
-        # format check cannot silently re-open a cap bypass through a
-        # multi-byte memoryview where ``8 * len(mv)`` bytes would
-        # materialise. For ``bytes`` / ``bytearray`` / ``mmap.mmap``
-        # the byte count is ``len(value)`` by type.
-        #
-        # ``len()`` works on every supported open container without
-        # materialising. A closed ``mmap.mmap`` raises
-        # ``ValueError("mmap closed or invalid")`` from ``len()``;
-        # a released ``memoryview`` raises ``ValueError`` likewise
-        # from ``.nbytes`` / ``len()``. Fall through to the materialise
-        # step in that case so the original ``EncodeError`` shape (with
-        # the same message prefix) surfaces — preserving backwards
-        # compatibility for callers catching on the existing message
-        # text.
+        # Cap size before materialising via bytes(value) to avoid a wasted copy.
+        # memoryview must probe .nbytes (not len(), the element count) so a
+        # multi-byte view can't bypass the cap if the format check is ever moved.
+        # A closed mmap / released memoryview raises here; fall through so the
+        # materialise step surfaces the canonical EncodeError.
         try:
             length: int | None = value.nbytes if isinstance(value, memoryview) else len(value)
         except (ValueError, BufferError, TypeError):
             length = None
         if length is not None and length > _MAX_BLOB_SIZE:
             raise EncodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
-        # Materialise via ``bytes(value)``. For ``bytes`` / ``bytearray``
-        # / open ``memoryview`` this cannot fail; for a closed
-        # ``mmap.mmap`` it raises ``ValueError("mmap closed or invalid")``,
-        # for a released ``memoryview`` it raises ``BufferError``. Wrap
-        # both as ``EncodeError`` to maintain the wire-layer convention
-        # that all encode failures surface as ``EncodeError``; callers
-        # using ``except EncodeError`` would otherwise silently miss the
-        # failure.
+        # Wrap materialise failures (closed mmap, released memoryview) as
+        # EncodeError so the wire-layer all-failures-are-EncodeError convention holds.
         try:
             materialized = bytes(value)
         except (ValueError, BufferError) as e:
             raise EncodeError(f"Cannot materialise BLOB from {type(value).__name__}: {e}") from e
         return encode_blob(materialized), value_type
     elif value_type == ValueType.NULL:
-        # None is already handled in the early-return branch above, so reaching
-        # here means value is not None with explicit NULL type — always a bug.
+        # None is handled by the early return above; a non-None value here is a bug.
         raise EncodeError(
             f"Cannot encode non-None value {_bounded_repr_any(value)} as NULL. "
             f"Pass value=None or use the appropriate ValueType."
@@ -1059,14 +552,7 @@ def _decode_value_text(data: bytes | memoryview, text_errors: str) -> tuple[Wire
 
 
 def _decode_value_iso8601(data: bytes | memoryview, text_errors: str) -> tuple[WireValue, int]:
-    # ISO8601 is treated as text at the wire level — the C reference
-    # uses text__encode / text__decode for DQLITE_ISO8601 (see dqlite
-    # src/tuple.c) and Go returns the raw string from the codec.
-    # Parsing to datetime belongs in the driver/DBAPI layer.
-    # The ``"ISO8601"`` label is forwarded so truncation / not-null-
-    # terminated diagnostics name the actual cell type rather than
-    # the generic ``"Text ..."`` default — symmetric with
-    # ``encode_value``.
+    # ISO8601 is text on the wire; parsing to datetime is the driver layer's job.
     return decode_text(data, label="ISO8601", errors=text_errors)
 
 
@@ -1075,116 +561,30 @@ def _decode_value_blob(data: bytes | memoryview, _text_errors: str) -> tuple[Wir
 
 
 def _decode_value_null(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
-    # Permissive decode matching Go's
-    # ``r.message.getUint64()`` discard
-    # (``internal/protocol/message.go:539``) and C's
-    # ``uint64__decode(... &value->null)`` (``tuple.c:147``) where
-    # the value is read into a union member that is never inspected.
-    # Delegating to ``decode_uint64`` (instead of rolling an inline
-    # length check) gives the same wording discipline as the
-    # sibling INTEGER / UNIXTIME / FLOAT / BOOLEAN arms — operators
-    # grepping logs for "wire decode short-read" see a uniform
-    # ``"Need 8 bytes for <type> cell"`` phrasing across every
-    # short-read case. Our encoder still writes 8 zero bytes
-    # (``encode_null``), but a peer / future server / mock that
-    # emits non-zero NULL bytes is wire-conformant per upstream's
-    # tuple_decoder semantics. Strict-rejection provided no
-    # defensive value (the field is documented as unused) and was
-    # an interop hazard.
-    #
-    # Round-trip identity caveat: ``encode_value(None)`` writes 8
-    # zero bytes regardless of what the decoder consumed, so a
-    # mock-server / proxy / fuzzer that captured a non-zero NULL
-    # payload cannot recover byte-identity through the public
-    # encode path. The public encoder is uniformly zero-emitting;
-    # callers needing byte-identity must emit the captured 8 bytes
-    # plus the NULL type tag directly. The asymmetry mirrors the
-    # sibling permissive-read patterns at
-    # :meth:`DbResponse.decode_body` and
-    # :meth:`EmptyResponse.decode_body`, which document the same
-    # round-trip lossiness for their reserved fields.
+    # Permissive: read and discard 8 bytes (matching Go/C, which read into an
+    # unused union member). encode_value(None) always writes zeros, so a
+    # captured non-zero NULL can't round-trip byte-identically through the encoder.
     decode_uint64(data, label="NULL cell")
     return None, NULL_CELL_WIDTH
 
 
 def _decode_value_unixtime(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
-    # Returns raw int64 (NOT datetime). Contrast with the BOOLEAN
-    # arm, which DOES collapse to ``bool`` because ``bool`` is a
-    # wire primitive per the module charter. UNIXTIME's primitive is
-    # the epoch-seconds int; the ``datetime`` semantic is driver-
-    # layer (see ``dqlitedbapi``).
-    #
-    # Higher-level clients (``dqlitedbapi``) turn this into a
-    # UTC-aware ``datetime``; Go's ``Rows.Next()`` does the
-    # conversion at the ``database/sql`` driver layer with
-    # ``time.Unix(...)``. Bare wire-layer consumers must convert
-    # themselves; the wire layer's parity bar is "raw bytes →
-    # primitive", not "raw bytes → semantic".
-    #
-    # NOTE: This arm is intentionally context-blind. UNIXTIME is
-    # legitimate in row cells (the C row-encode side at
-    # ``dqlite-upstream/src/query.c`` does emit it) but malformed
-    # in params (``dqlite-upstream/src/tuple.c::tuple_decoder__next``
-    # has no DQLITE_UNIXTIME case in the params switch; the default
-    # returns DQLITE_PARSE). The params-vs-row rejection lives at
-    # the caller's type-code switch in
-    # ``tuples.py::decode_params_tuple``, NOT here — a refactor that
-    # moved the rejection into this arm would also break the row
-    # decoder, which legitimately needs to accept UNIXTIME.
+    # Returns raw int64, not datetime: epoch-seconds is the wire primitive; the
+    # datetime semantic is driver-layer. Context-blind on purpose — params-vs-row
+    # rejection lives in decode_params_tuple, since the row decoder needs UNIXTIME.
     return decode_int64(data, label="UNIXTIME cell"), 8
 
 
 def _decode_value_boolean(data: bytes | memoryview, _text_errors: str) -> tuple[WireValue, int]:
-    # Returns ``bool`` (NOT raw int). Justified by the module
-    # charter at the top of this file, which enumerates ``bool`` as
-    # a wire primitive — not by raw preservation. Contrast with the
-    # UNIXTIME arm, which DOES preserve the raw int64 because
-    # epoch-seconds is the primitive and ``datetime`` is the
-    # driver-layer semantic. The principled split: a type is
-    # "raw"-preserved at the wire layer iff the wire primitive is
-    # itself the canonical representation; ``bool`` is canonical for
-    # BOOLEAN, ``int`` is canonical for UNIXTIME, and the datetime
-    # conversion is deferred to the driver (``dqlitedbapi``). A
-    # peer-emitted BOOLEAN cell carrying a raw uint64 outside
-    # ``{0, 1}`` loses the original integer through this collapse —
-    # see the encode-side asymmetry note on ``encode_value``'s
-    # BOOLEAN arm.
-    #
-    # Permissive truthiness decode: read the wire cell as an
-    # unsigned uint64 (matching C's ``uint64__decode(d->cursor,
-    # &value->boolean)`` in ``dqlite-upstream/src/tuple.c``,
-    # ``DQLITE_BOOLEAN`` case in ``tuple_decoder__next``) and coerce
-    # to ``bool``. Go's reference decoder uses signed
-    # ``getInt64() != 0`` instead
-    # (``internal/protocol/message.go:566``), which agrees on
-    # truthiness for every bit pattern but diverges on the raw int
-    # for the upper half of the range (``[2**63, 2**64 - 1]``);
-    # Python tracks the C side so a hypothetical future
-    # "keep_raw=True" debug knob would yield C-shaped values, not
-    # Go-shaped.
-    #
-    # The dqlite C server emits a ``DQLITE_BOOLEAN`` cell whenever
-    # the column's decltype is ``BOOLEAN`` and the value comes from
-    # ``sqlite3_column_int64`` (``encodeColumn`` in
-    # ``dqlite-upstream/src/query.c``, ``DQLITE_BOOLEAN`` case) —
-    # i.e. any int the column actually contains. SQLite typing is
-    # dynamic, so a row inserted as
-    # ``INSERT INTO t(b BOOLEAN) VALUES (5)`` arrives with raw=5 on
-    # the wire. Strict-rejection would deterministically poison the
-    # decoder for legitimate cluster data while Go and C clients
-    # work fine.
+    # Permissive: read uint64 and coerce to bool, so a raw value outside {0,1}
+    # (SQLite is dynamically typed — INSERT INTO t(b BOOLEAN) VALUES (5) is legal)
+    # collapses to True instead of poisoning the decoder. Loses the original int.
     raw = decode_uint64(data, label="BOOLEAN cell")
     return bool(raw), 8
 
 
-# Dispatch table indexed by the integer value-type code. Replaces
-# the prior 6-arm ``if value_type == ValueType.X`` chain (~500 ns
-# per cell on CPython) with one C-level dict lookup plus one
-# function call (~100 ns per cell). Mirrors the precomputed-table
-# precedent at ``tuples.py``'s ``_NIBBLE_TO_VALUETYPE`` — same
-# pattern, one layer up the call stack. For a 100k-row × 16-col
-# fetch (1.6M cells) the saving is several hundred ms of
-# loop-thread CPU.
+# Dispatch table indexed by value-type code: one dict lookup + call per cell
+# instead of a 6-arm if/elif chain.
 _VALUE_TYPE_DECODERS: Final[
     dict[int, Callable[[bytes | memoryview, str], tuple[WireValue, int]]]
 ] = {
@@ -1205,29 +605,10 @@ def decode_value(
     *,
     text_errors: str = "strict",
 ) -> tuple[WireValue, int]:
-    """Decode a value from wire format.
+    """Decode a value from wire format; return (value, bytes_consumed).
 
-    Returns (value, bytes_consumed).
-
-    ``text_errors`` is forwarded to :func:`decode_text` for TEXT and
-    ISO8601 cells; the default ``"strict"`` matches the dqlite
-    wire-spec contract (UTF-8 only). Cluster data that violates the
-    contract (e.g. rows from a legacy SQLite store with latin-1
-    TEXT) can be coerced via ``text_errors="replace"`` /
-    ``"backslashreplace"`` / ``"surrogateescape"`` — same set
-    :func:`decode_text` accepts — without bypassing the row-decode
-    pipeline. The same knob is reachable at the streaming layer via
-    ``MessageDecoder(text_errors=...)`` and propagates through to
-    every TEXT / ISO8601 cell.
-
-    See :func:`decode_text`'s WARNING about ``"replace"`` /
-    ``"surrogateescape"`` bypassing :func:`sanitize_for_log` and
-    failing re-encode before adopting a non-strict mode.
-
-    Per-value-type dispatch goes through ``_VALUE_TYPE_DECODERS``
-    (defined above) — see each ``_decode_value_*`` helper for
-    arm-specific context (BOOLEAN truthiness rationale, UNIXTIME
-    raw-vs-datetime split, NULL permissive-decode parity, etc.).
+    ``text_errors`` is forwarded to decode_text for TEXT/ISO8601 cells; see its
+    WARNING before using a non-strict mode.
     """
     decoder = _VALUE_TYPE_DECODERS.get(int(value_type))
     if decoder is None:

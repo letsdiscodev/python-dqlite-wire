@@ -69,49 +69,21 @@ __all__ = [
     "primary_sqlite_code",
 ]
 
-# Protocol versions
 PROTOCOL_VERSION: Final[int] = 1
 PROTOCOL_VERSION_LEGACY: Final[int] = 0x86104DD760433FE5  # Pre-1.0 dqlite servers
 
-# Word size in bytes (all messages are padded to 8-byte boundaries)
-WORD_SIZE: Final[int] = 8
-
-# Header size in bytes
+WORD_SIZE: Final[int] = 8  # all messages padded to 8-byte boundaries
 HEADER_SIZE: Final[int] = 8
 
-# Row markers — written as full uint64 words on the wire. Detection
-# validates all 8 bytes of the sentinel (via ``_ROW_DONE_MARKER`` /
-# ``_ROW_PART_MARKER`` bytes in ``tuples.py``); the original first-byte
-# check was tightened in the ``row-marker-full-word`` fix to close a
-# misclassification window where a legitimate value starting with 0xFF
-# or 0xEE could be confused with a marker. Use the uint64 constants
-# below for encoding and the single-byte constants to build the detection
-# byte sequences.
-#
-# The four constants form two paired representations of the same wire
-# sentinel: the single-byte form (``ROW_DONE_BYTE`` / ``ROW_PART_BYTE``)
-# is the source of truth — the bytes form in ``tuples.py`` is derived
-# from it via ``bytes([ROW_DONE_BYTE]) * 8``, and the uint64 int form is
-# derived here via ``int.from_bytes(..., "little")``. Module-load
-# assertions pin both halves to the original hex literals so a typo in
-# either single-byte constant surfaces at import time rather than as a
-# silent encode/decode round-trip break far downstream. The little-
-# endian byte order is load-bearing in general — for the current
-# palindrome patterns (``0xFF`` and ``0xEE`` repeated) the byte order is
-# observationally symmetric, but any non-palindrome marker would
-# disagree across endianness.
+# Row markers are full uint64 words on the wire; detection validates all
+# 8 bytes to avoid misclassifying a value starting 0xFF/0xEE as a marker.
+# The single-byte constants are the source of truth: the byte form in
+# tuples.py and the uint64 form below are both derived from them.
 ROW_DONE_BYTE: Final[int] = 0xFF
 ROW_PART_BYTE: Final[int] = 0xEE
 ROW_DONE_MARKER: Final[int] = int.from_bytes(bytes([ROW_DONE_BYTE]) * 8, "little")
 ROW_PART_MARKER: Final[int] = int.from_bytes(bytes([ROW_PART_BYTE]) * 8, "little")
-# Wrapped in ``if __debug__:`` to make the strip-under-``python -O``
-# posture explicit. The asserts are derivation-correctness invariants,
-# not runtime defences — the encode/decode paths consult the derived
-# constants directly, and the cross-check pin in
-# ``tests/test_row_marker_constants_cross_check.py`` independently
-# verifies the canonical values regardless of optimisation level. The
-# explicit ``if __debug__:`` form documents the intent so a reader
-# does not mistake the bare asserts for load-bearing runtime guards.
+# Derivation-correctness invariants (not runtime guards); strippable under -O.
 if __debug__:
     assert ROW_DONE_MARKER == 0xFFFFFFFFFFFFFFFF
     assert ROW_PART_MARKER == 0xEEEEEEEEEEEEEEEE
@@ -166,90 +138,41 @@ class ValueType(IntEnum):
     TEXT = 3
     BLOB = 4
     NULL = 5
-    # Unix time (deprecated, maps to INTEGER).
-    # Server-to-client ONLY: the upstream C server emits UNIXTIME from
-    # ``query.c`` for DATETIME columns, but the upstream C tuple_decoder
-    # (``tuple.c``) has no inbound case for DQLITE_UNIXTIME and rejects
-    # it with DQLITE_PARSE. This Python decoder is strictly more
-    # permissive than the C client — it accepts UNIXTIME on incoming row
-    # values and returns int64 seconds-since-epoch. Mock servers built
-    # on this encoder must NOT send UNIXTIME to real C clients.
-    # ``encode_params_tuple`` additionally enforces that this tag never
-    # appears on outgoing parameters (the server's parameter parser
-    # rejects it too).
-    #
-    # Subsecond precision is structurally absent: the wire is integer
-    # seconds. A datetime with non-zero microsecond passed through a
-    # column whose server-side function returns UNIXTIME (e.g.
-    # ``unixepoch(now)`` without the ``subsec`` modifier) loses the
-    # microsecond component on the server. Use ISO8601 (= 10) for
-    # microsecond-precision round-trip.
+    # Deprecated, maps to INTEGER. Server-to-client ONLY: the C client
+    # rejects inbound UNIXTIME with DQLITE_PARSE, so mock servers must not
+    # send it to real clients; encode_params_tuple also rejects it outbound.
+    # Wire is integer seconds — subsecond precision is lost; use ISO8601.
     UNIXTIME = 9
     ISO8601 = 10  # ISO8601 string (maps to TEXT)
     BOOLEAN = 11  # Boolean (maps to INTEGER)
 
 
 class NodeRole(IntEnum):
-    """Node roles in a dqlite cluster.
-
-    Matches Go's protocol.Voter/StandBy/Spare and C's
-    DQLITE_VOTER/DQLITE_STANDBY/DQLITE_SPARE.
-    """
+    """Matches Go's Voter/StandBy/Spare and C's DQLITE_VOTER/STANDBY/SPARE."""
 
     VOTER = 0
     STANDBY = 1
     SPARE = 2
 
 
-# SQLite primary error codes upstream's gateway emits via
-# ``failure(req, ...)`` calls. Exported for grep-friendliness so
-# downstream callers can ``code == SQLITE_BUSY`` instead of
-# ``code == 5``. Source: ``dqlite-upstream/src/gateway.c`` emit
-# sites, ``include/dqlite.h`` (extended IOERR variants).
+# SQLite primary error codes upstream's gateway emits via failure().
 SQLITE_ERROR: Final[int] = 1  # generic SQL error (e.g. nonempty statement tail)
 SQLITE_BUSY: Final[int] = 5  # busy retry-or-fail — engine-side OR Raft-side
 SQLITE_NOTFOUND: Final[int] = 12  # gateway.c LOOKUP_DB / LOOKUP_STMT
 SQLITE_PROTOCOL: Final[int] = 15  # gateway.c "bad format version" / wire mismatch
 
-# SQLite extended error codes that signal leader changes in a dqlite
-# cluster. Upstream definitions in ``dqlite-upstream/include/dqlite.h``:
-#
-#     #define SQLITE_IOERR_NOT_LEADER       (SQLITE_IOERR | (40 << 8))
-#     #define SQLITE_IOERR_LEADERSHIP_LOST  (SQLITE_IOERR | (41 << 8))
-#
-# where ``SQLITE_IOERR = 10``. Callers (``dqliteclient`` and
-# ``sqlalchemy-dqlite``) import these to decide whether to invalidate a
+# Extended codes signalling leader changes; callers invalidate the
 # connection and retry against a fresh leader.
 SQLITE_IOERR: Final[int] = 10
 SQLITE_IOERR_NOT_LEADER: Final[int] = SQLITE_IOERR | (40 << 8)  # 10250
 SQLITE_IOERR_LEADERSHIP_LOST: Final[int] = SQLITE_IOERR | (41 << 8)  # 10506
 
-# Legacy sub-code variants emitted by pre-3.32.1 dqlite servers.
-# Go's ``go-dqlite/driver/driver.go::driverError`` carries both the
-# modern (40/41) and the legacy (32/33) sub-codes through the same
-# ``ErrBadConn`` arm so a mixed cluster (one peer on a pre-3.32.1
-# server, others on the modern build) classifies leader-flips
-# uniformly. Without these, a leader flip on a legacy peer surfaces
-# as a non-retryable ``OperationalError`` rather than a retryable
-# ``DqliteConnectionError`` — `cluster.connect`'s retry tuple
-# excludes ``OperationalError`` and the SA dialect's
-# ``is_disconnect`` does not classify it as a disconnect, so the
-# pool returns a broken connection.
-# WARNING: numerical collision with stdlib sqlite3.
-# - SQLITE_IOERR_NOT_LEADER_LEGACY = 8202 collides with
-#   ``sqlite3.SQLITE_IOERR_DATA`` (assigned in SQLite 3.31).
-# - SQLITE_IOERR_LEADERSHIP_LOST_LEGACY = 8458 collides with
-#   ``sqlite3.SQLITE_IOERR_CORRUPTFS`` (assigned in SQLite 3.36).
-#
-# This is an upstream-protocol artifact: pre-3.32.1 dqlite assigned
-# subcodes 32/33 for leader semantics before SQLite assigned semantic
-# meaning to those sub-codes. A legacy-cluster operator reading
-# ``code == sqlite3.SQLITE_IOERR_DATA`` is being misled — the value
-# is identical, but the meaning is "leader changed", not "I/O data
-# error". Documented here so a future audit considering re-exporting
-# the stdlib ``SQLITE_IOERR_*`` family at the wire layer (or adding
-# alias named exports like ``SQLITE_IOERR_DATA = 8202``) does not
-# silently amplify the collision footprint.
+# Legacy leader-change sub-codes from pre-3.32.1 dqlite servers, kept so a
+# mixed cluster classifies leader-flips uniformly (Go carries both modern
+# 40/41 and legacy 32/33 through ErrBadConn).
+# WARNING: these values collide with stdlib sqlite3 codes assigned later —
+# 8202 == sqlite3.SQLITE_IOERR_DATA, 8458 == sqlite3.SQLITE_IOERR_CORRUPTFS.
+# Do NOT re-export the stdlib SQLITE_IOERR_* family or alias these values.
 SQLITE_IOERR_NOT_LEADER_LEGACY: Final[int] = SQLITE_IOERR | (32 << 8)  # 8202
 SQLITE_IOERR_LEADERSHIP_LOST_LEGACY: Final[int] = SQLITE_IOERR | (33 << 8)  # 8458
 
@@ -261,174 +184,77 @@ LEADER_ERROR_CODES: Final[frozenset[int]] = frozenset(
         SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
     }
 )
-# Go's ``driverError`` ALSO maps ``errNotFound`` (= ``SQLITE_NOTFOUND``
-# = 12) to ``driver.ErrBadConn`` with the comment "potentially after
-# leadership loss". Upstream ``gateway.c::LOOKUP_DB`` macro fires on
-# ``(ID != 0 || g->leader == NULL)`` and emits SQLITE_NOTFOUND with
-# the verbatim message "no database opened". The ``ID != 0`` branch
-# is unused by current clients (the wire ``db_id`` is server-assigned
-# and always 0); the practical trigger is the post-Raft-demotion
-# null-leader branch. Both branches emit the same message text.
-# 12 is NOT in this numeric set because the same code is overloaded:
-# ``LOOKUP_STMT`` emits 12 too for an unknown statement id (a server-
-# side state bug, not a transport flip). The dispatch is instead
-# substring-gated via ``LEADER_LOST_DB_LOOKUP_SUBSTRING`` below — see
-# the consumer arms in ``dqliteclient.connection._run_protocol`` and
-# ``sqlalchemy-dqlite/src/sqlalchemydqlite/base.py::is_disconnect``.
+# Go maps errNotFound (SQLITE_NOTFOUND = 12) to ErrBadConn "potentially
+# after leadership loss", but 12 is NOT in LEADER_ERROR_CODES: it is
+# overloaded (LOOKUP_STMT also emits 12 for an unknown statement id, a
+# server-side bug). Dispatch is substring-gated via
+# LEADER_LOST_DB_LOOKUP_SUBSTRING instead.
 
-# dqlite-namespace error codes (>= 1000). These do NOT belong to the
-# SQLite primary-code namespace and ``primary_sqlite_code`` returns
-# them unchanged so a downstream ``code == primary_sqlite_code(...)``
-# check does not collide with a real SQLite primary. Source:
-# ``dqlite-upstream/src/protocol.h`` (DQLITE_PROTO),
-# ``dqlite-upstream/src/lib/registry.h`` (DQLITE_NOTFOUND), and
-# ``dqlite-upstream/src/lib/serialize.h`` (DQLITE_PARSE).
-DQLITE_PROTO: Final[int] = 1001  # protocol.h:9 — Raft FSM-internal protocol error.
-# Currently emitted only inside command.c / fsm.c
-# apply paths and never reaches gateway.c::failure(),
-# but included here for namespace completeness so a
-# future change that surfaces it through the gateway
-# passes through ``primary_sqlite_code`` cleanly.
-DQLITE_NOTFOUND: Final[int] = 1002  # registry lookup miss
-# Unlike ``DQLITE_PROTO`` above, this code IS emitted over the wire by
-# the gateway: ``dqlite-upstream/src/gateway.c::handle_dump`` calls
-# ``failure(req, DQLITE_NOTFOUND, "database does not exists")`` when
-# the requested database is absent from the registry. A Python
-# ``cluster.dump(database="nonexistent")`` therefore surfaces as
-# ``FailureResponse(code=1002, message="database does not exists")``.
-# The dqlite-namespace classifier (``is_dqlite_namespace_code``) handles
-# the code via the range check; recording the upstream emission site
-# here so a future audit does not conclude the code is unreachable from
-# the wire by analogy to ``DQLITE_PROTO``'s narrower scope.
-DQLITE_PARSE: Final[int] = 1005  # gateway.c::INIT_V0 — unrecognized request type
-# or unrecognized schema for the eleven canonical-INIT_V0 handlers.
-# The five params-schema-aware handlers (handle_prepare /
-# handle_exec / handle_query / handle_exec_sql / handle_query_sql)
-# bypass INIT_V0 to admit both V0 and V1 params schema, and on
-# unrecognized schema instead emit ``SQLITE_ERROR`` (= 1) with the
-# same ``"unrecognized schema version"`` message. Tests synthesising
-# the failure shape for those five handlers must pin code=1, not 1005.
+# dqlite-namespace error codes (>= 1000), outside the SQLite primary-code
+# namespace; primary_sqlite_code returns them unchanged to avoid colliding
+# with a real SQLite primary.
+DQLITE_PROTO: Final[int] = 1001  # Raft FSM-internal; never reaches the wire today
+DQLITE_NOTFOUND: Final[int] = 1002  # registry lookup miss; emitted by handle_dump
+DQLITE_PARSE: Final[int] = 1005  # gateway.c::INIT_V0 — unrecognized request type/schema
+# Note: the five params-schema-aware handlers (prepare/exec/query/exec_sql/
+# query_sql) bypass INIT_V0 and emit SQLITE_ERROR (=1), not 1005, on an
+# unrecognized schema; tests for those must pin code=1.
 
-# Bit mask for extracting the primary (low-byte) code from an
-# extended SQLite error code. Upstream encodes extended codes as
-# ``primary | (sub << 8)``; ``code & SQLITE_PRIMARY_CODE_MASK``
-# recovers the primary. Use via :func:`primary_sqlite_code`.
+# Recover the primary (low-byte) code from an extended SQLite code
+# (encoded as ``primary | (sub << 8)``). Use via primary_sqlite_code.
 SQLITE_PRIMARY_CODE_MASK: Final[int] = 0xFF
 
 
-# dqlite-namespace error codes live in ``[1000, 1024)``. Extended
-# SQLite codes (``SQLITE_IOERR_NOT_LEADER = 10250``) never land in
-# this range — extended codes are ``primary | (subcode << 8)`` and
-# the only way to produce a value in [1000, 1024) is primary=232..255
-# with subcode=3, but valid SQLite primaries top out at ~28. The
-# range check auto-includes any future upstream namespace code
-# without a manual sync commit (the historic enumeration was
-# ``{DQLITE_PROTO=1001, DQLITE_NOTFOUND=1002, DQLITE_PARSE=1005}``).
+# Range chosen so extended SQLite codes (primary | (sub << 8)) never land
+# here — valid primaries top out at ~28 — and any future namespace code is
+# auto-included without a manual sync.
 _DQLITE_NAMESPACE_MIN: Final[int] = 1000
 _DQLITE_NAMESPACE_MAX_EXCLUSIVE: Final[int] = 1024
 
 
 def is_dqlite_namespace_code(code: int) -> bool:
-    """True if ``code`` is a dqlite-namespace error code.
-
-    dqlite uses non-SQLite codes for server-internal failure shapes
-    (``DQLITE_PARSE = 1005``, ``DQLITE_NOTFOUND = 1002``,
-    ``DQLITE_PROTO = 1001``). The discriminator is a numeric range:
-    namespace codes live in ``[1000, 1024)``, which extended SQLite
-    codes never enter (extended = ``primary | (subcode << 8)``, and
-    no valid SQLite primary lands at 232–255). A range check
-    auto-includes any future namespace addition upstream without
-    requiring a manual sync commit.
-    """
+    """True if ``code`` is a dqlite-namespace error code (``[1000, 1024)``)."""
     return _DQLITE_NAMESPACE_MIN <= code < _DQLITE_NAMESPACE_MAX_EXCLUSIVE
 
 
 def primary_sqlite_code(code: int) -> int:
-    """Return the primary SQLite error code from an extended code.
+    """Return the primary SQLite code from an extended code; e.g. 10250 -> 10.
 
-    ``SQLITE_IOERR_NOT_LEADER`` (``10250``) → ``SQLITE_IOERR`` (``10``).
-    A primary code (low byte only) passes through unchanged.
-
-    dqlite-namespace codes (``DQLITE_PARSE``, ``DQLITE_NOTFOUND``)
-    are returned UNCHANGED instead of masked. Masking
-    ``DQLITE_PARSE = 1005`` with 0xFF yields 237 — not a real SQLite
-    primary — and a future SQLite primary code 237 would silently
-    collide. Use :func:`is_dqlite_namespace_code` to dispatch on
-    those codes deliberately.
-
-    Matches the ``code & 0xFF`` pattern used by dqlitedbapi for its
-    ``Error`` subclass dispatch and by the no-transaction mask.
-    Exposed so callers don't have to recompute the shift inline and
-    so a future change to the extended-code layout has a single
-    point of rework.
+    dqlite-namespace codes pass through UNCHANGED rather than masked: masking
+    1005 with 0xFF yields 237, which a future SQLite primary 237 would collide
+    with. Use is_dqlite_namespace_code to dispatch on those deliberately.
     """
     if is_dqlite_namespace_code(code):
         return code
     return code & SQLITE_PRIMARY_CODE_MASK
 
 
-# Primary SQLite error codes whose semantics imply server-side
-# auto-rollback of the active transaction. The dqlite leader's polling
-# of ``sqlite3_txn_state`` observes ``SQLITE_TXN_NONE`` after any of
-# these, so the cluster-side tx is gone and the client must clear its
-# tracking state. Source: SQLite docs at
-# https://www.sqlite.org/lang_transaction.html#response_to_errors_within_a_transaction
-# documents NOMEM, IOERR, INTERRUPT, FULL as auto-rollback. ABORT and
-# CORRUPT are NOT on SQLite's documented list but are kept here as
-# defensive over-clears: false-positive auto-rollback is benign (pool
-# reset would do it anyway), false-negative leaves tx state stale.
-# BUSY is intentionally NOT included — dqlite has TWO BUSY origins
-# (engine-side vs Raft-side) that aren't distinguishable from the wire
-# without inspecting the message text; the client-side handler at
-# ``dqliteclient.connection`` carves out the Raft-side
-# "checkpoint in progress" case explicitly.
+# Primary codes implying server-side auto-rollback (see
+# TX_AUTO_ROLLBACK_PRIMARY_CODES). NOMEM/IOERR/INTERRUPT/FULL are
+# SQLite-documented; ABORT/CORRUPT are defensive over-clears (false
+# positive is benign). BUSY is excluded: its two origins (engine vs Raft)
+# are indistinguishable without the message text.
 SQLITE_ABORT: Final[int] = 4  # operation aborted (e.g., sqlite3_interrupt) — defensive
 SQLITE_NOMEM: Final[int] = 7  # out of memory
 SQLITE_INTERRUPT: Final[int] = 9  # query interrupted via INTERRUPT
 SQLITE_CORRUPT: Final[int] = 11  # database disk image malformed — defensive
 SQLITE_FULL: Final[int] = 13  # database/disk full
-# Auxiliary database-file format errors. Both surface from the engine
-# when the file on disk cannot be read as a SQLite database — schema
-# version mismatch, header magic mismatch, or a non-database file
-# opened by mistake. The SA dialect treats codes 11/24/26 as
-# slot-fatal during pre-ping (``do_ping``) and as disconnect-class
-# during failure dispatch (``is_disconnect``); keeping the constants
-# in the wire layer alongside the other SQLite primaries lets both
-# the dialect and the dbapi import them by name instead of inlining
-# magic literals.
+# File-format errors (file on disk not a readable SQLite database). The SA
+# dialect treats 11/24/26 as slot-fatal at pre-ping and disconnect dispatch.
 SQLITE_FORMAT: Final[int] = 24
 SQLITE_NOTADB: Final[int] = 26
 
 
-# SQLite primary codes the dqlite server actually emits as bare
-# ``DatabaseError`` per PEP 249 §9 routing (i.e. NOT routed to a more
-# specific subclass like ``OperationalError`` / ``IntegrityError``).
-# This is the slot-fatal set under SA's pre-ping / disconnect
-# classification: corruption / format / not-a-database all mean the
-# socket pointed at the wrong file or the data on disk is unreadable
-# and the pool slot cannot be reused. dbapi's ``_CODE_TO_EXCEPTION``
-# also routes a handful of other codes (NOLFS / AUTH / NOTICE /
-# WARNING) to bare ``DatabaseError`` as defensive pass-through, but
-# those codes are NOT in this set because dqlite-server doesn't
-# currently emit them on the wire. Hosted here so SA's slot-fatal
-# disconnect classifier can derive its decision from a single source
-# of truth (``sqlalchemydqlite.base._BARE_DBE_DISCONNECT_CODES``
-# imports this frozenset directly). dbapi's ``_CODE_TO_EXCEPTION``
-# also derives its "bare ``DatabaseError``" routes from this set via
-# dict-spread (``**{code: DatabaseError for code in
-# BARE_DATABASE_ERROR_CODES}``), so the two downstream consumers
-# stay aligned automatically if the wire set grows.
+# Codes dqlite emits as bare DatabaseError (not a PEP 249 subclass); the
+# slot-fatal disconnect set under SA. Single source of truth: SA's
+# _BARE_DBE_DISCONNECT_CODES and dbapi's _CODE_TO_EXCEPTION both derive
+# from this, staying aligned if the set grows.
 BARE_DATABASE_ERROR_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_CORRUPT, SQLITE_FORMAT, SQLITE_NOTADB}
 )
 
 
-# Additional primary SQLite codes the dbapi PEP 249 classifier
-# dispatches on (cursor.py's ``_call_client`` arms). Previously
-# duplicated as ``cursor.py``-private ``_SQLITE_*`` literals; promoting
-# them to the wire layer keeps the values in one place and lets the
-# dbapi import them by name (sibling pattern to ``SQLITE_NOTFOUND`` /
-# ``SQLITE_NOMEM`` which are already public).
+# Additional primary codes the dbapi PEP 249 classifier dispatches on.
 SQLITE_INTERNAL: Final[int] = 2
 SQLITE_TOOBIG: Final[int] = 18
 SQLITE_CONSTRAINT: Final[int] = 19
@@ -441,15 +267,7 @@ SQLITE_NOTICE: Final[int] = 27
 SQLITE_WARNING: Final[int] = 28
 
 
-# Extended ``SQLITE_CONSTRAINT_*`` family (high byte 1..11). Stdlib
-# `sqlite3` exposes these for branching on specific constraint
-# violations (UNIQUE / FOREIGNKEY / NOTNULL / CHECK / etc.) — the
-# integer values arrive at the dbapi caller via the wire round-trip,
-# but the symbolic names were missing. Cross-driver porting code
-# doing ``e.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE``
-# previously required ``import sqlite3`` separately; expose the names
-# at the wire layer so callers can use ``dqlitewire.SQLITE_CONSTRAINT_*``
-# uniformly. Values match stdlib bit-for-bit.
+# Extended SQLITE_CONSTRAINT_* family (high byte 1..11); values match stdlib.
 SQLITE_CONSTRAINT_CHECK: Final[int] = SQLITE_CONSTRAINT | (1 << 8)  # 275
 SQLITE_CONSTRAINT_COMMITHOOK: Final[int] = SQLITE_CONSTRAINT | (2 << 8)  # 531
 SQLITE_CONSTRAINT_FOREIGNKEY: Final[int] = SQLITE_CONSTRAINT | (3 << 8)  # 787
@@ -463,95 +281,35 @@ SQLITE_CONSTRAINT_ROWID: Final[int] = SQLITE_CONSTRAINT | (10 << 8)  # 2579
 SQLITE_CONSTRAINT_PINNED: Final[int] = SQLITE_CONSTRAINT | (11 << 8)  # 2835
 
 
-# Message-text substrings that mark a benign "no transaction was
-# active" reply from the server. The full reply is a SQLite-engine-
-# emitted ``SQLITE_ERROR`` (primary code 1) with one of these clauses.
-# Both the dbapi (``commit``/``rollback`` swallow) and the client
-# layer (``transaction()`` context manager / ``_reset_connection``)
-# need to recognise this shape; the substrings are pinned here so
-# both layers cannot drift apart.
-#
-# The integration test ``test_no_transaction_error_wording.py``
-# (in dbapi) verifies the wording against a live cluster — this
-# constant is the single source of truth that test inspects.
-#
-# A primary-code-1 substring guard is also why ``DQLITE_ERROR=1``
-# (which shares the wire low-byte with ``SQLITE_ERROR=1``; see
-# ``include/dqlite.h``) is not silently swallowed when an upstream
-# ``failure(req, DQLITE_ERROR, ...)`` reply arrives — the dqlite
-# emission's wording does not match these substrings.
-NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = (
-    # Anchored to the canonical SQLite phrasing — the bare token
-    # "cannot rollback" was previously also matched but is too
-    # permissive: any unrelated SQLite (or future DQLITE_ERROR=1)
-    # error message that happens to contain that bare phrase would
-    # trigger the silent-swallow path. Both upstream wordings
-    # ("cannot rollback ..." / "cannot commit ...") contain
-    # "no transaction is active" so a single anchored substring
-    # covers both legitimate cases. Pinned by
-    # ``test_no_transaction_error_wording.py`` against a live
-    # cluster.
-    "no transaction is active",
-)
+# Substrings marking a benign "no transaction active" SQLITE_ERROR (code 1)
+# reply, recognised by both dbapi and client layers (single source of truth,
+# pinned by test_no_transaction_error_wording.py against a live cluster).
+# Anchored to "no transaction is active" rather than the over-permissive bare
+# "cannot rollback" so an unrelated code-1 message is not silently swallowed.
+NO_TRANSACTION_MESSAGE_SUBSTRINGS: Final[tuple[str, ...]] = ("no transaction is active",)
 
-# Canonical prefix for wire-decode-failure exception text. The
-# disconnect-classification chain (wire → client.ProtocolError →
-# dbapi.OperationalError(code=None) → SA's _dqlite_disconnect_messages
-# substring scan) depends on this exact lowercase phrase appearing in
-# the rendered exception message. Five sites cooperate via the
-# substring; defining it here keeps them in lockstep.
+# Exact lowercase phrase the disconnect-classification chain (wire ->
+# client.ProtocolError -> dbapi.OperationalError -> SA substring scan)
+# depends on appearing in the rendered exception message.
 WIRE_DECODE_FAILED_PREFIX: Final[str] = "wire decode failed"
 
-# Server-emitted message prefix that — paired with code
-# ``SQLITE_NOTFOUND`` (=12) — marks the post-leader-loss connection-
-# dead arm of go-dqlite's ``driverError`` classifier. Upstream
-# ``dqlite-upstream/src/gateway.c::LOOKUP_DB`` fires on
-# ``(ID != 0 || g->leader == NULL)`` and emits
-# ``failure(req, SQLITE_NOTFOUND, "no database opened")``. The
-# ``ID != 0`` branch is unused by current clients (the wire
-# ``db_id`` field is server-assigned and always 0); the practical
-# trigger is the null-leader branch after a Raft demotion. Both
-# branches emit the same verbatim message. The same code value is
-# also emitted by ``LOOKUP_STMT`` (``"no statement with the given
-# id"``) for an unknown statement id, which is a server-side state
-# bug, not a transport flip. Substring-gating ensures only the
-# leader-flip arm triggers connection invalidation.
-#
-# Go reference (``go-dqlite/driver/driver.go::driverError``):
-#
-#     case errNotFound:
-#         log(client.LogDebug,
-#             "not found - potentially after leadership loss (%d - %s)",
-#             err.Code, err.Description)
-#         return driver.ErrBadConn
-#
-# Consumers: ``dqliteclient.connection._run_protocol`` and
-# ``sqlalchemy-dqlite/src/sqlalchemydqlite/base.py::is_disconnect``.
+# Server message (paired with SQLITE_NOTFOUND=12) marking the post-leader-loss
+# connection-dead arm. Substring-gating distinguishes it from LOOKUP_STMT,
+# which emits the same code for an unknown statement id (a server-side bug).
+# Consumers: dqliteclient.connection._run_protocol and SA's is_disconnect.
 LEADER_LOST_DB_LOOKUP_SUBSTRING: Final[str] = "no database opened"
 
 TX_AUTO_ROLLBACK_PRIMARY_CODES: Final[frozenset[int]] = frozenset(
     {SQLITE_ABORT, SQLITE_NOMEM, SQLITE_INTERRUPT, SQLITE_IOERR, SQLITE_CORRUPT, SQLITE_FULL}
 )
-# See also ``sqlalchemy-dqlite/src/sqlalchemydqlite/base.py``'s
-# ``_BARE_DBE_DISCONNECT_CODES`` which classifies CORRUPT/FORMAT/
-# NOTADB as slot-fatal at the SA pool layer. The two sets serve
-# different purposes — wire-side auto-rollback bookkeeping clear vs
-# pool-side connection eviction — and overlap on SQLITE_CORRUPT only.
-# A maintainer adjusting either set should re-evaluate the other:
-# they are independently correct today but the overlap is not
-# accidental.
+# Distinct from SA's _BARE_DBE_DISCONNECT_CODES (pool-side eviction); the two
+# overlap on SQLITE_CORRUPT only — adjust both together.
 
 
-# Cumulative-row cap for a single SELECT result spanning multiple
-# continuation frames. The default protects against unbounded memory
-# growth on a maliciously slow-drip server while staying well above
-# any realistic legitimate result set. Forwarded to every
-# :class:`DqliteConnection` the public ``connect()`` /
-# ``ConnectionPool`` / dbapi ``connect()`` entry points hand out.
+# Cumulative-row cap for one SELECT across continuation frames; guards against
+# a slow-drip server exhausting memory.
 DEFAULT_MAX_TOTAL_ROWS: Final[int] = 10_000_000
 
-# Per-query continuation-frame cap. Complements
-# ``DEFAULT_MAX_TOTAL_ROWS``: a server sending one row per frame can
-# inflict O(n) Python decode work where n is the row cap; the frame
-# cap bounds that work even when the row cap is large.
+# Per-query frame cap: bounds O(n) decode work when a server sends one row
+# per frame, even with a large row cap.
 DEFAULT_MAX_CONTINUATION_FRAMES: Final[int] = 100_000

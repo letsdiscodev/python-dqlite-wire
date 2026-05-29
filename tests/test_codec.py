@@ -35,7 +35,6 @@ class TestMessageEncoder:
         assert int.from_bytes(handshake, "little") == PROTOCOL_VERSION
 
     def test_encode_handshake_legacy(self) -> None:
-        """Encoder with legacy version should produce the legacy handshake word."""
         encoder = MessageEncoder(version=PROTOCOL_VERSION_LEGACY)
         handshake = encoder.encode_handshake()
         assert len(handshake) == 8
@@ -46,22 +45,18 @@ class TestMessageEncoder:
         assert PROTOCOL_VERSION_LEGACY == 0x86104DD760433FE5
 
     def test_encoder_has_no_buffer_attribute(self) -> None:
-        """MessageEncoder should not have unused _buffer attribute."""
         encoder = MessageEncoder()
         assert not hasattr(encoder, "_buffer")
 
     def test_encoder_rejects_invalid_version(self) -> None:
-        """102: invalid handshake version should raise at construction time."""
         with pytest.raises(ProtocolError, match="Unsupported protocol version"):
             MessageEncoder(version=0xDEADBEEF)
 
     def test_encoder_accepts_legacy_version(self) -> None:
-        """102: PROTOCOL_VERSION_LEGACY must be accepted."""
         encoder = MessageEncoder(version=PROTOCOL_VERSION_LEGACY)
         assert encoder.encode_handshake() is not None
 
     def test_encoder_accepts_default_version(self) -> None:
-        """102: default PROTOCOL_VERSION must be accepted."""
         encoder = MessageEncoder(version=PROTOCOL_VERSION)
         assert encoder.encode_handshake() is not None
 
@@ -81,68 +76,50 @@ class TestMessageEncoder:
 
 class TestMessageDecoder:
     def test_decoder_rejects_invalid_version(self) -> None:
-        """122: response decoder must reject invalid version at construction."""
         with pytest.raises(ProtocolError, match="Unsupported protocol version"):
             MessageDecoder(version=0xDEADBEEF)
 
     def test_decoder_accepts_legacy_version(self) -> None:
-        """122: PROTOCOL_VERSION_LEGACY must be accepted."""
         decoder = MessageDecoder(version=PROTOCOL_VERSION_LEGACY)
         assert decoder.version == PROTOCOL_VERSION_LEGACY
 
     def test_decoder_request_validates_version(self) -> None:
-        """Request decoders must reject unsupported versions at construction.
-
-        Pins the fix for the latent bug where ``MessageDecoder.__init__``
-        skipped the ``version not in _SUPPORTED_VERSIONS`` check when
-        ``is_request=True``. The class invariant "no decoder accepts an
-        unsupported version" must hold uniformly across both request- and
-        response-side decoders, otherwise an unsupported version leaks
-        past validation and reaches version-tagged encode paths.
-        """
+        """Request decoders must reject unsupported versions at construction too:
+        __init__ once skipped the check when is_request=True, leaking past validation."""
         with pytest.raises(HandshakeError, match="Unsupported protocol version"):
             MessageDecoder(is_request=True, version=0xBADBEEF)
 
     def test_decoder_request_accepts_supported_version_at_construction(self) -> None:
-        """Request decoders accept supported versions; ``version`` stays
-        ``None`` until ``decode_handshake()`` populates it from the wire."""
+        """Request decoders accept supported versions; ``version`` stays None until
+        ``decode_handshake()`` populates it from the wire."""
         decoder = MessageDecoder(is_request=True, version=PROTOCOL_VERSION_LEGACY)
         assert decoder.version is None  # not set until handshake
 
     def test_decode_message_request_rejects_unsupported_version(self) -> None:
-        """``decode_message(..., is_request=True, version=...)`` must
-        validate the version through the same ``MessageDecoder.__init__``
-        invariant that response-side construction enforces."""
+        """decode_message(is_request=True) validates version via the same __init__ invariant."""
         with pytest.raises(HandshakeError, match="Unsupported protocol version"):
             decode_message(b"", is_request=True, version=0xBADBEEF)
 
     def test_decoder_custom_max_message_size(self) -> None:
-        """138: max_message_size should be configurable via constructor."""
         import struct
 
         from dqlitewire.exceptions import DecodeError
 
         decoder = MessageDecoder(max_message_size=64)
-        # Feed a message larger than 64 bytes
         oversized = struct.pack("<IBBH", 100, 0, 0, 0)  # 808-byte body
         decoder.feed(oversized)
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decoder.decode()
 
     def test_decoder_default_max_message_size(self) -> None:
-        """138: default max_message_size should match ReadBuffer default."""
         from dqlitewire.buffer import ReadBuffer
 
         decoder = MessageDecoder()
         assert decoder._buffer._max_message_size == ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE
 
     def test_decoder_custom_max_rows(self) -> None:
-        """231: max_rows should be forwarded to RowsResponse.decode_body.
-
-        The knob exists on RowsResponse.decode_body, but MessageDecoder
-        previously omitted it at the call site, leaving the 1M default
-        always in force regardless of caller configuration.
-        """
+        """max_rows must reach RowsResponse.decode_body: MessageDecoder once omitted it
+        at the call site, pinning the 1M default regardless of caller config."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.responses import RowsResponse
@@ -161,33 +138,28 @@ class TestMessageDecoder:
             decoder.decode()
 
     def test_decoder_default_max_rows(self) -> None:
-        """231: default max_rows should match RowsResponse.DEFAULT_MAX_ROWS."""
         from dqlitewire.messages.responses import RowsResponse
 
         decoder = MessageDecoder()
         assert decoder._max_rows == RowsResponse.DEFAULT_MAX_ROWS
 
     def test_decoder_rejects_zero_max_rows(self) -> None:
-        """231: max_rows < 1 should be rejected at construction time."""
         with pytest.raises(ValueError, match="max_rows must be >= 1"):
             MessageDecoder(max_rows=0)
 
     def test_decoder_rejects_zero_max_message_size(self) -> None:
-        """max_message_size < 1 should be rejected at construction time,
-        symmetric with the max_rows validation. Otherwise feed() raises a
-        confusing 'projected ... > 0' error on first byte."""
+        """max_message_size < 1 rejected at construction; else feed() raises a
+        confusing 'projected ... > 0' error on the first byte."""
         with pytest.raises(ValueError, match="max_message_size must be >= 1"):
             MessageDecoder(max_message_size=0)
 
     def test_decoder_rejects_negative_max_message_size(self) -> None:
-        """Negative max_message_size is also invalid."""
         with pytest.raises(ValueError, match="max_message_size must be >= 1"):
             MessageDecoder(max_message_size=-1)
 
     def test_decoder_rejects_zero_max_continuation_frames(self) -> None:
-        """``max_continuation_frames < 1`` rejected at construction so a
-        bug that defaults the cap to 0 cannot silently let any
-        continuation frame through."""
+        """max_continuation_frames < 1 rejected so a cap defaulting to 0 can't
+        silently let continuation frames through."""
         with pytest.raises(ValueError, match="max_continuation_frames must be >= 1"):
             MessageDecoder(max_continuation_frames=0)
 
@@ -196,8 +168,6 @@ class TestMessageDecoder:
             MessageDecoder(max_continuation_frames=-5)
 
     def test_decoder_rejects_zero_max_total_rows(self) -> None:
-        """``max_total_rows < 1`` rejected at construction symmetric
-        with the other two caps."""
         with pytest.raises(ValueError, match="max_total_rows must be >= 1"):
             MessageDecoder(max_total_rows=0)
 
@@ -206,11 +176,8 @@ class TestMessageDecoder:
             MessageDecoder(max_total_rows=-1)
 
     def test_decoder_continuation_honors_max_rows(self) -> None:
-        """231: decode_continuation should also honor max_rows.
-
-        A multi-frame ROWS stream can exceed max_rows across frames; the
-        per-frame cap still applies to each continuation response.
-        """
+        """decode_continuation honors max_rows per-frame (the cap applies to each
+        continuation response, even though a stream may exceed it across frames)."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.responses import RowsResponse
@@ -232,10 +199,8 @@ class TestMessageDecoder:
             decoder.decode_continuation()
 
     def test_decoder_continuation_rejects_total_rows_overflow(self) -> None:
-        """Cumulative ``max_total_rows`` cap fires across frames in a
-        ROWS continuation. Pin the runtime check so a future refactor
-        that drops the running total cannot silently let an unbounded
-        stream through (DoS surface)."""
+        """Cumulative max_total_rows cap fires across continuation frames — a refactor
+        dropping the running total would reopen an unbounded-stream DoS."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.responses import RowsResponse
@@ -265,9 +230,7 @@ class TestMessageDecoder:
             decoder.decode_continuation()
 
     def test_decoder_continuation_rejects_too_many_frames(self) -> None:
-        """``max_continuation_frames`` cap fires after the runtime
-        decoder sees one frame too many. Pin the slow-drip DoS
-        defence."""
+        """max_continuation_frames cap fires after one frame too many (slow-drip DoS defence)."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.responses import RowsResponse
@@ -293,10 +256,8 @@ class TestMessageDecoder:
             rows=[[3]],
             has_more=False,
         )
-        # The decoder counts the initial frame as frame 1, so
-        # max_continuation_frames=2 admits the initial frame plus
-        # exactly one continuation frame; the second continuation
-        # frame (third overall) trips the cap.
+        # The initial frame counts as frame 1, so max=2 admits it plus one
+        # continuation; the second continuation (third overall) trips the cap.
         decoder = MessageDecoder(max_continuation_frames=2, max_total_rows=100)
         decoder.feed(first.encode())
         decoder.decode()
@@ -307,10 +268,8 @@ class TestMessageDecoder:
             decoder.decode_continuation()
 
     def test_decoder_initial_frame_already_exceeded_max_total_rows(self) -> None:
-        """When the first ROWS frame already overflows
-        ``max_total_rows`` (server-side aggregation bug, attacker
-        flood, etc.), the decoder must fail at ``decode()`` time on
-        the initial frame, not delay until ``decode_continuation``."""
+        """A first ROWS frame already over max_total_rows must fail at decode(),
+        not be delayed until decode_continuation()."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.responses import RowsResponse
@@ -399,7 +358,6 @@ class TestMessageDecoder:
         assert decoded2.heartbeat_timeout == 10000
 
     def test_decode_unknown_type(self) -> None:
-        # Create a message with an invalid type
         invalid = b"\x00\x00\x00\x00\xff\x00\x00\x00"  # type 255
 
         decoder = MessageDecoder()
@@ -414,14 +372,12 @@ class TestMessageDecoder:
             Header.decode(b"\x00" * 7)
 
     def test_header_decode_empty_raises_decode_error(self) -> None:
-        """Header.decode() with empty bytes must raise DecodeError."""
         from dqlitewire.messages.base import Header
 
         with pytest.raises(DecodeError):
             Header.decode(b"")
 
     def test_header_roundtrip_minimal(self) -> None:
-        """Minimal header with msg_type=0 and schema=0 roundtrips."""
         from dqlitewire.messages.base import Header
 
         header = Header(size_words=1, msg_type=0, schema=0)
@@ -431,9 +387,8 @@ class TestMessageDecoder:
         assert decoded.msg_type == 0
 
     def test_header_encode_overflow_raises_encode_error(self) -> None:
-        """Header with size_words exceeding uint32 must raise EncodeError
-        at construction time (not at encode()) with a precise field
-        name + observed value diagnostic."""
+        """size_words over uint32 raises EncodeError at construction (not encode()),
+        with a field-name + observed-value diagnostic."""
         from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.base import Header
 
@@ -441,7 +396,6 @@ class TestMessageDecoder:
             Header(size_words=2**32, msg_type=0, schema=0)
 
     def test_header_encode_msg_type_overflow_raises_encode_error(self) -> None:
-        """Header with msg_type exceeding uint8 must raise at construction."""
         from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.base import Header
 
@@ -449,7 +403,6 @@ class TestMessageDecoder:
             Header(size_words=1, msg_type=256, schema=0)
 
     def test_header_encode_schema_overflow_raises_encode_error(self) -> None:
-        """Header with schema exceeding uint8 must raise at construction."""
         from dqlitewire.exceptions import EncodeError
         from dqlitewire.messages.base import Header
 
@@ -469,13 +422,11 @@ class TestMessageDecoder:
             decode_message(data, is_request=True)
 
     def test_decode_bytes_too_short(self) -> None:
-        """decode_bytes with data shorter than HEADER_SIZE should raise DecodeError."""
         decoder = MessageDecoder()
         with pytest.raises(DecodeError, match="too short"):
             decoder.decode_bytes(b"\x00" * 7)
 
     def test_decode_bytes_empty(self) -> None:
-        """decode_bytes with empty data should raise DecodeError."""
         decoder = MessageDecoder()
         with pytest.raises(DecodeError, match="too short"):
             decoder.decode_bytes(b"")
@@ -485,26 +436,17 @@ class TestHandshakeStateEnforcement:
     """Verify that request decoders enforce handshake-before-decode ordering."""
 
     def test_decode_handshake_rejects_unknown_version(self) -> None:
-        """decode_handshake() must reject unknown protocol versions."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
-        # Feed garbage version bytes
         decoder.feed(b"\x42\x42\x42\x42\x42\x42\x42\x42")
         with pytest.raises(ProtocolError, match="[Uu]nsupported protocol version"):
             decoder.decode_handshake()
 
     def test_decode_handshake_failure_does_not_consume_bytes(self) -> None:
-        """On an unsupported version, decode_handshake() must NOT consume the
-        handshake bytes.
-
-        Previously the method read 8 bytes BEFORE validating the version, so
-        a failed handshake left the buffer advanced by 8 with ``_handshake_done``
-        still False. A retry consumed the next 8 bytes as a "version", which
-        was almost always the header of a real message — silently desynchronizing
-        the stream. Peek-before-consume means the bytes stay in the buffer and
-        a retry is deterministic: same bytes, same error.
-        """
+        """An unsupported version must NOT consume the handshake bytes: peek-before-
+        consume keeps them in the buffer so a retry is deterministic (same bytes,
+        same error) instead of misreading the next message as a version."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -524,10 +466,8 @@ class TestHandshakeStateEnforcement:
         assert decoder._buffer.available() == 8
 
     def test_decode_handshake_partial_data_leaves_bytes_intact(self) -> None:
-        """With fewer than 8 bytes buffered, decode_handshake() returns None
-        and leaves the partial data untouched so a subsequent feed() can
-        complete the handshake.
-        """
+        """Fewer than 8 bytes buffered: decode_handshake() returns None and leaves
+        the partial data so a later feed() can complete the handshake."""
         decoder = MessageDecoder(is_request=True)
         version_bytes = PROTOCOL_VERSION_LEGACY.to_bytes(8, "little")
         decoder.feed(version_bytes[:4])
@@ -538,11 +478,8 @@ class TestHandshakeStateEnforcement:
         assert decoder.decode_handshake() == PROTOCOL_VERSION_LEGACY
 
     def test_decode_handshake_failure_preserves_following_bytes(self) -> None:
-        """Direct reproducer of the original bug: a buffer containing a bogus
-        version followed by a real valid version. The pre-fix code consumed
-        both 8-byte chunks across two retries; the fix must consume neither
-        on the first failure.
-        """
+        """Bug reproducer: bogus version followed by a valid one. Pre-fix code consumed
+        both chunks across two retries; the fix consumes neither on the first failure."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -561,9 +498,7 @@ class TestHandshakeStateEnforcement:
         assert decoder._buffer.available() == 16
 
     def test_decode_handshake_recoverable_via_reset(self) -> None:
-        """After a handshake failure, reset() clears the buffer and the
-        decoder accepts a fresh handshake on a reconnect.
-        """
+        """After a handshake failure, reset() clears the buffer and accepts a fresh handshake."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -575,31 +510,26 @@ class TestHandshakeStateEnforcement:
         assert decoder._buffer.available() == 0
         assert not decoder._handshake_done
 
-        # Fresh valid handshake works.
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
         assert decoder.decode_handshake() == PROTOCOL_VERSION
         assert decoder._handshake_done
 
     def test_peek_bytes_does_not_advance_position(self) -> None:
-        """Sanity: ReadBuffer.peek_bytes() must return the requested bytes
-        without advancing _pos. This is the primitive decode_handshake()
-        depends on.
-        """
+        """ReadBuffer.peek_bytes() returns bytes without advancing _pos (the primitive
+        decode_handshake() depends on)."""
         from dqlitewire.buffer import ReadBuffer
 
         buf = ReadBuffer()
         buf.feed(b"abcdefghij")
         assert buf.peek_bytes(4) == b"abcd"
         assert buf.available() == 10
-        # Repeated peeks return the same bytes.
         assert buf.peek_bytes(4) == b"abcd"
         assert buf.available() == 10
-        # Asking for more than available returns None.
+        # More than available returns None.
         assert buf.peek_bytes(20) is None
         assert buf.available() == 10
 
     def test_decode_handshake_rejects_zero_version(self) -> None:
-        """Version 0 is not a valid protocol version."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -615,12 +545,8 @@ class TestHandshakeStateEnforcement:
         assert version == PROTOCOL_VERSION_LEGACY
 
     def test_request_decoder_rejects_decode_before_handshake(self) -> None:
-        """A request decoder must not allow decode() before decode_handshake().
-
-        The dqlite wire protocol requires the client to send an 8-byte protocol
-        version before any messages. If a request decoder (server-side) skips
-        the handshake, it would misinterpret the version bytes as a message header.
-        """
+        """A request decoder must reject decode() before decode_handshake(); else the
+        8-byte version prefix would be misread as a message header."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -631,10 +557,7 @@ class TestHandshakeStateEnforcement:
             decoder.decode()
 
     def test_request_decoder_allows_decode_after_handshake(self) -> None:
-        """After handshake, decode() should work normally."""
         decoder = MessageDecoder(is_request=True)
-
-        # Feed handshake + message
         handshake = PROTOCOL_VERSION.to_bytes(8, "little")
         msg = LeaderRequest()
         decoder.feed(handshake + msg.encode())
@@ -646,7 +569,6 @@ class TestHandshakeStateEnforcement:
         assert isinstance(decoded, LeaderRequest)
 
     def test_request_decoder_decode_bytes_rejects_before_handshake(self) -> None:
-        """decode_bytes() must also enforce handshake on request decoders."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -655,12 +577,8 @@ class TestHandshakeStateEnforcement:
             decoder.decode_bytes(msg.encode())
 
     def test_double_decode_handshake_raises(self) -> None:
-        """Calling decode_handshake() twice must raise ProtocolError.
-
-        A second call would consume 8 bytes of actual message data from the
-        buffer and interpret them as a version number, silently corrupting
-        the stream.
-        """
+        """A second decode_handshake() must raise, not consume 8 message bytes as a
+        version number (silent stream corruption)."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=True)
@@ -668,20 +586,18 @@ class TestHandshakeStateEnforcement:
         msg = LeaderRequest()
         decoder.feed(handshake + msg.encode())
 
-        # First handshake succeeds
         version = decoder.decode_handshake()
         assert version == PROTOCOL_VERSION
 
-        # Second handshake must raise, not consume message bytes
         with pytest.raises(ProtocolError, match="[Hh]andshake already completed"):
             decoder.decode_handshake()
 
-        # The message should still be decodable (not consumed by second handshake)
+        # Message still decodable — the rejected second handshake consumed nothing.
         decoded = decoder.decode()
         assert isinstance(decoded, LeaderRequest)
 
     def test_decode_handshake_on_client_decoder_raises(self) -> None:
-        """Client-side decoder should reject decode_handshake() since _handshake_done=True."""
+        """Client-side decoder rejects decode_handshake() (_handshake_done starts True)."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=False)
@@ -690,24 +606,21 @@ class TestHandshakeStateEnforcement:
             decoder.decode_handshake()
 
     def test_response_decoder_decode_bytes_works_without_handshake(self) -> None:
-        """decode_bytes() on response decoders should work without handshake."""
         decoder = MessageDecoder(is_request=False)
         msg = LeaderResponse(node_id=1, address="localhost:9001")
         decoded = decoder.decode_bytes(msg.encode())
         assert isinstance(decoded, LeaderResponse)
 
     def test_response_decoder_allows_decode_without_handshake(self) -> None:
-        """Response decoders (client-side) don't require inbound handshake."""
+        """Response decoders (client-side) don't require an inbound handshake."""
         decoder = MessageDecoder(is_request=False)
         msg = LeaderResponse(node_id=1, address="localhost:9001")
         decoder.feed(msg.encode())
 
-        # Should work without calling decode_handshake first
         decoded = decoder.decode()
         assert isinstance(decoded, LeaderResponse)
 
     def test_legacy_handshake_decodes_leader_response_as_legacy(self) -> None:
-        """Legacy version should decode LeaderResponse in legacy format."""
         from dqlitewire.codec import decode_message
         from dqlitewire.constants import ResponseType
         from dqlitewire.messages.base import Header
@@ -728,7 +641,6 @@ class TestHandshakeStateEnforcement:
         assert decoded.address == address
 
     def test_modern_handshake_decodes_leader_response_as_modern(self) -> None:
-        """Modern version should decode LeaderResponse in modern format."""
         from dqlitewire.codec import decode_message
 
         msg = LeaderResponse(node_id=42, address="node1:9001")
@@ -739,7 +651,6 @@ class TestHandshakeStateEnforcement:
         assert decoded.address == "node1:9001"
 
     def test_decoder_version_property_request(self) -> None:
-        """Request decoder should expose version=None before handshake, version after."""
         decoder = MessageDecoder(is_request=True)
         assert decoder.version is None
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
@@ -747,7 +658,6 @@ class TestHandshakeStateEnforcement:
         assert decoder.version == PROTOCOL_VERSION
 
     def test_client_decoder_with_version_parameter(self) -> None:
-        """Client-side decoder should accept version parameter for legacy support."""
         from dqlitewire.constants import ResponseType
         from dqlitewire.messages.base import Header
         from dqlitewire.types import encode_text
@@ -761,7 +671,6 @@ class TestHandshakeStateEnforcement:
         )
         data = header.encode() + body
 
-        # With legacy version, should decode using legacy format
         decoder = MessageDecoder(is_request=False, version=PROTOCOL_VERSION_LEGACY)
         assert decoder.version == PROTOCOL_VERSION_LEGACY
         decoder.feed(data)
@@ -771,12 +680,10 @@ class TestHandshakeStateEnforcement:
         assert decoded.address == address
 
     def test_client_decoder_default_version_is_modern(self) -> None:
-        """Client-side decoder should default to modern protocol version."""
         decoder = MessageDecoder(is_request=False)
         assert decoder.version == PROTOCOL_VERSION
 
     def test_client_decoder_modern_version_decodes_modern_leader(self) -> None:
-        """Client-side decoder with modern version should use modern format."""
         decoder = MessageDecoder(is_request=False, version=PROTOCOL_VERSION)
         msg = LeaderResponse(node_id=42, address="node1:9001")
         decoder.feed(msg.encode())
@@ -810,7 +717,6 @@ class TestConvenienceFunctions:
         assert decoded.name == "test.db"
 
     def test_decode_message_with_legacy_version(self) -> None:
-        """decode_message with version=PROTOCOL_VERSION_LEGACY should use legacy format."""
         from dqlitewire.messages.base import Header
         from dqlitewire.types import encode_text
 
@@ -875,7 +781,6 @@ class TestRoundTrip:
         assert decoded.message == "Error: \u00e9\u00e8\u00e0"
 
     def test_rows_response(self) -> None:
-        """131: RowsResponse through full codec round-trip."""
         from dqlitewire.constants import ValueType
         from dqlitewire.messages.responses import RowsResponse
 
@@ -896,7 +801,6 @@ class TestRoundTrip:
         assert decoded.has_more is False
 
     def test_prepare_request_schema_survives_roundtrip(self) -> None:
-        """PrepareRequest with schema=1 must preserve schema through codec round-trip."""
         original = PrepareRequest(db_id=1, sql="SELECT 1", schema=1)
         encoded = encode_message(original)
         decoded = decode_message(encoded, is_request=True)
@@ -904,7 +808,6 @@ class TestRoundTrip:
         assert decoded.schema == 1
 
     def test_stmt_response_v1_through_codec(self) -> None:
-        """StmtResponse V1 must pass through the codec schema-version gate."""
         msg = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=42)
         encoded = msg.encode()
 
@@ -919,7 +822,6 @@ class TestRoundTrip:
         assert decoded.tail_offset == 42
 
     def test_stmt_response_v1_through_decode_message(self) -> None:
-        """112: StmtResponse V1 via decode_message convenience function."""
         msg = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=42)
         encoded = msg.encode()
         decoded = decode_message(encoded)
@@ -927,20 +829,9 @@ class TestRoundTrip:
         assert decoded.tail_offset == 42
 
     def test_decode_bytes_rejects_envelope_trailing_bytes(self) -> None:
-        """decode_bytes() must reject envelope trailing bytes beyond
-        the declared body size (strict-decode parity with the per-
-        message body-trailing-bytes checks).
-
-        Before the strict-envelope fix, the envelope strip silently
-        sliced any input length > ``HEADER_SIZE + body_size``, so a
-        caller passing ``data = header + body + garbage`` got a
-        successful decode with no signal that the input was
-        malformed. AssignRequest's per-decoder branching (1 word =
-        Promote, 2 words = Assign) was held together by the silent
-        slice but that contract failed every other per-message
-        decoder's strict-trailing-bytes posture. The envelope-level
-        check now matches the per-message-level discipline.
-        """
+        """decode_bytes() rejects envelope trailing bytes beyond the declared body size:
+        the envelope strip once silently sliced ``header + body + garbage``, masking
+        malformed input (strict-decode parity with the per-message checks)."""
         from dqlitewire.messages.base import Header
         from dqlitewire.types import encode_uint64
 
@@ -956,24 +847,17 @@ class TestRoundTrip:
             decode_message(data, is_request=True)
 
     def test_decode_bytes_rejects_short_body(self) -> None:
-        """decode_bytes() must raise DecodeError if body is shorter than header claims."""
         from dqlitewire.messages.base import Header
 
-        # Header claims 2 words (16 bytes) but only 8 bytes follow
+        # Header claims 2 words (16 bytes) but only 8 follow.
         header = Header(size_words=2, msg_type=0, schema=0)
-        data = header.encode() + b"\x00" * 8  # Only 8 bytes, not 16
+        data = header.encode() + b"\x00" * 8
         with pytest.raises(DecodeError, match="[Bb]ody.*short"):
             decode_message(data, is_request=True)
 
     def test_heartbeat_request_rejected_by_decode_message(self) -> None:
-        """Type-2 frames are not decodable via the public registry.
-
-        ``_HeartbeatRequest`` stays private and is intentionally absent
-        from ``REQUEST_TYPES`` (upstream C's dispatcher falls through to
-        ``DQLITE_PARSE`` for type 2, so no real server accepts one). A
-        synthesised type-2 frame must surface as the unknown-type error
-        rather than silently decode.
-        """
+        """Type-2 (HEARTBEAT) is absent from REQUEST_TYPES — upstream C falls through to
+        DQLITE_PARSE for it — so a synthesised frame must hit the unknown-type error."""
         from dqlitewire.codec import REQUEST_TYPES
         from dqlitewire.constants import RequestType
 
@@ -1003,12 +887,8 @@ class TestRoundTrip:
         assert decoded.db_id == 7
 
     def test_connect_request_rejected_by_public_dispatch(self) -> None:
-        """CONNECT (type 11) is a Raft-transport frame; the public
-        request dispatcher rejects it with an ``unknown type`` error
-        mirroring upstream ``gateway.c``'s ``DQLITE_PARSE`` fallthrough.
-        The private ``_ConnectRequest`` class is still available for
-        test-mock / golden-byte harnesses.
-        """
+        """CONNECT (type 11) is a Raft-transport frame the public dispatcher rejects as
+        unknown (gateway.c DQLITE_PARSE fallthrough); _ConnectRequest stays private."""
         from dqlitewire.messages.requests import _ConnectRequest
 
         original = _ConnectRequest(node_id=5, address="10.0.0.1:9001")
@@ -1166,7 +1046,6 @@ class TestRoundTrip:
         assert decoded.params == list(range(255))
 
     def test_max_uint64_roundtrip(self) -> None:
-        """Max uint64 values should survive full codec roundtrip."""
         original = ClientRequest(client_id=2**64 - 1)
         encoded = encode_message(original)
         decoded = decode_message(encoded, is_request=True)
@@ -1174,15 +1053,8 @@ class TestRoundTrip:
         assert decoded.client_id == 2**64 - 1
 
     def test_stmt_response_v0_with_trailing_data_rejected(self) -> None:
-        """StmtResponse V0 with trailing bytes must be rejected outright.
-
-        Previously the schema-aware decode only prevented mis-detection
-        as V1 (tail_offset was forced None). Under strict-length semantics
-        a 24-byte body under schema=0 is itself invalid — the Go/C
-        servers never emit trailing padding on fixed-body responses, and
-        accepting it silently is the same "two states collapsed into one"
-        bug that schema-awareness was meant to fix.
-        """
+        """StmtResponse V0 with trailing bytes is rejected outright: a 24-byte schema=0
+        body is invalid since Go/C never pad fixed-body responses (strict-length)."""
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.base import Header
         from dqlitewire.types import encode_uint32, encode_uint64
@@ -1198,12 +1070,10 @@ class TestDecoderContinuation:
     """Test decode_continuation() for multi-part ROWS responses."""
 
     def test_decode_continuation_exists(self) -> None:
-        """MessageDecoder should have a decode_continuation method."""
         decoder = MessageDecoder(is_request=False)
         assert hasattr(decoder, "decode_continuation")
 
     def test_decode_continuation_roundtrip(self) -> None:
-        """Multi-part ROWS: initial decode() + continuation decode_continuation()."""
         from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
         from dqlitewire.messages.base import Header
         from dqlitewire.messages.responses import RowsResponse
@@ -1212,7 +1082,7 @@ class TestDecoderContinuation:
 
         types = [ValueType.INTEGER, ValueType.TEXT]
 
-        # Build initial ROWS message with PART marker
+        # Initial ROWS message with PART marker.
         body1 = encode_uint64(2)  # column_count
         body1 += encode_text("id") + encode_text("name")
         body1 += encode_row_header(types)
@@ -1221,8 +1091,7 @@ class TestDecoderContinuation:
         header1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
         msg1_bytes = header1.encode() + body1
 
-        # Build continuation ROWS message with DONE marker
-        # (C server always includes column_count + column_names)
+        # Continuation with DONE marker; C server always re-sends column_count + names.
         body2 = encode_uint64(2)
         body2 += encode_text("id") + encode_text("name")
         body2 += encode_row_header(types)
@@ -1231,18 +1100,15 @@ class TestDecoderContinuation:
         header2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
         msg2_bytes = header2.encode() + body2
 
-        # Feed both messages
         decoder = MessageDecoder(is_request=False)
         decoder.feed(msg1_bytes + msg2_bytes)
 
-        # Decode initial response
         initial = decoder.decode()
         assert isinstance(initial, RowsResponse)
         assert initial.has_more is True
         assert len(initial.rows) == 1
         assert initial.rows[0] == [1, "alice"]
 
-        # Decode continuation
         continuation = decoder.decode_continuation()
         assert isinstance(continuation, RowsResponse)
         assert continuation.has_more is False
@@ -1250,10 +1116,8 @@ class TestDecoderContinuation:
         assert continuation.rows[0] == [2, "bob"]
 
     def test_decode_continuation_with_column_header(self) -> None:
-        """Continuation frames from the C server include column_count +
-        column_names (same layout as the initial frame). Verify that
-        decode_continuation handles this correctly.
-        """
+        """decode_continuation handles continuation frames that carry column_count +
+        column_names (the C server uses the same layout as the initial frame)."""
         from dqlitewire.constants import ROW_DONE_MARKER, ROW_PART_MARKER, ValueType
         from dqlitewire.messages.base import Header
         from dqlitewire.messages.responses import RowsResponse
@@ -1262,7 +1126,6 @@ class TestDecoderContinuation:
 
         types = [ValueType.INTEGER, ValueType.TEXT]
 
-        # Initial ROWS message (PART marker)
         body1 = encode_uint64(2)
         body1 += encode_text("id") + encode_text("name")
         body1 += encode_row_header(types)
@@ -1270,7 +1133,7 @@ class TestDecoderContinuation:
         body1 += encode_uint64(ROW_PART_MARKER)
         h1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
 
-        # Continuation WITH column header (matching C server output)
+        # Continuation with column header, matching C server output.
         body2 = encode_uint64(2)
         body2 += encode_text("id") + encode_text("name")
         body2 += encode_row_header(types)
@@ -1292,22 +1155,15 @@ class TestDecoderContinuation:
         assert cont.rows[0] == [2, "bob"]
 
     def test_decode_continuation_returns_none_when_no_data(self) -> None:
-        """decode_continuation should return None when no message is available."""
         decoder = MessageDecoder(is_request=False)
         decoder._continuation_expected = True
         result = decoder.decode_continuation()
         assert result is None
 
     def test_decode_continuation_raises_on_failure_response(self) -> None:
-        """decode_continuation should surface server error as ServerFailure.
-
-        The exception must be a ServerFailure (subclass of ProtocolError)
-        carrying structured ``code`` and ``message`` attributes — NOT a
-        DecodeError (which would mean the failure body was misinterpreted
-        as row data) and NOT a bare ProtocolError — callers need to
-        distinguish recoverable server errors from fatal stream
-        desync.
-        """
+        """A mid-continuation server error surfaces as ServerFailure with structured
+        code/message — not DecodeError (misread body) or bare ProtocolError — so
+        callers can tell a recoverable server error from fatal stream desync."""
         from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse
 
@@ -1324,7 +1180,6 @@ class TestDecoderContinuation:
         assert exc_info.value.message == "disk I/O error"
 
     def test_decode_continuation_raises_on_unexpected_type(self) -> None:
-        """decode_continuation should raise ProtocolError for non-ROWS, non-FAILURE type."""
         from dqlitewire.exceptions import ProtocolError
 
         result = ResultResponse(last_insert_id=0, rows_affected=0)
@@ -1338,17 +1193,8 @@ class TestDecoderContinuation:
             decoder.decode_continuation()
 
     def test_decode_continuation_accepts_empty_response_as_terminator(self) -> None:
-        """decode_continuation must accept an EmptyResponse mid-stream as
-        a clean terminator.
-
-        The upstream C server emits ``EmptyResponse`` instead of a final
-        ROWS frame when the in-flight query is cancelled by an INTERRUPT
-        request (gateway.c::handle_query_done_cb). The reference Go
-        client (Protocol.Interrupt) loops reading until it sees
-        ``ResponseEmpty`` and treats that frame as the normal
-        acknowledgement that the in-flight query was interrupted. The
-        Python codec must not poison its buffer on that frame.
-        """
+        """A mid-stream EmptyResponse is a clean terminator (must not poison): upstream
+        emits it instead of a final ROWS frame when an INTERRUPT cancels the query."""
         from dqlitewire.messages.responses import EmptyResponse
 
         empty_bytes = EmptyResponse().encode()
@@ -1359,17 +1205,12 @@ class TestDecoderContinuation:
 
         result = decoder.decode_continuation()
         assert isinstance(result, EmptyResponse)
-        # Flag cleared so the decoder can resume normal traffic.
         assert decoder._continuation_expected is False
-        # Buffer is NOT poisoned.
         assert not decoder._buffer.is_poisoned
 
     def test_decode_continuation_empty_after_partial_rows(self) -> None:
-        """Realistic interrupt-mid-stream sequence: a ROWS-PART frame
-        with rows is delivered, then the caller drains via
-        ``decode_continuation`` and receives an EmptyResponse instead of
-        a final ROWS-DONE frame. Pin that this transition clears the
-        continuation flag without poisoning."""
+        """Interrupt-mid-stream: ROWS-PART then an EmptyResponse instead of ROWS-DONE
+        clears the continuation flag without poisoning."""
         from dqlitewire.constants import ROW_PART_MARKER, ValueType
         from dqlitewire.messages.base import Header
         from dqlitewire.messages.responses import EmptyResponse, RowsResponse
@@ -1400,13 +1241,9 @@ class TestDecoderContinuation:
         assert not decoder._buffer.is_poisoned
 
     def test_decode_continuation_clean_failure_does_not_poison(self) -> None:
-        """A well-formed FailureResponse mid-continuation surfaces as
-        ``ServerFailure`` without poisoning the buffer. Upstream's
-        ``query_work_done`` path can emit FAILURE after ROWS_PART chunks
-        have already been written (e.g. mid-stream constraint or
-        SQLITE_BUSY). The connection is still wire-coherent at the
-        offset following the failure body, so subsequent requests must
-        decode normally without ``reset()``."""
+        """A well-formed mid-continuation FailureResponse surfaces as ServerFailure
+        without poisoning: the buffer stays wire-coherent, so later requests decode
+        without reset(). Upstream query_work_done can emit FAILURE after ROWS_PART."""
         from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse
 
@@ -1434,22 +1271,15 @@ class TestDecoderContinuation:
         assert msg.address == "127.0.0.1:9001"
 
     def test_decode_continuation_malformed_failure_body_does_not_poison(self) -> None:
-        """A malformed FAILURE body (e.g. missing null terminator on
-        the message text) raises DecodeError but does NOT poison the
-        buffer: ``read_message`` already advanced past the offending
-        frame, so the connection is wire-coherent. Mirrors the
-        ``StreamError`` precedent for coherent-offset anomalies — the
-        clean-failure path returns via ``ServerFailure`` without
-        poison, and the malformed-body path now follows the same
-        non-poisoning discipline via the dedicated ``DecodeError`` arm.
-        """
+        """A malformed FAILURE body raises DecodeError without poisoning: read_message
+        already advanced past the frame, so the offset stays wire-coherent (same
+        non-poisoning discipline as the clean-failure ServerFailure path)."""
         import struct as _struct
 
         from dqlitewire.exceptions import DecodeError
         from dqlitewire.messages.base import Header
 
-        # Body: 8 bytes of code, then 8 bytes of a bareword without a NUL
-        # terminator. ``decode_text`` raises DecodeError on the missing NUL.
+        # 8-byte code, then a bareword with no NUL — decode_text raises on the missing NUL.
         body = _struct.pack("<Q", 1) + b"abcdefgh"
         header = Header(size_words=len(body) // 8, msg_type=0, schema=0)
         bad_failure = header.encode() + body
@@ -1463,12 +1293,8 @@ class TestDecoderContinuation:
         assert decoder.is_poisoned is False
 
     def test_decode_continuation_empty_with_non_zero_reserved_does_not_poison(self) -> None:
-        """Negative-pin behaviour pair: EmptyResponse.decode_body
-        permissively accepts non-zero reserved word (Go parity per
-        responses.py:1047-1052). Only the length mismatch poisons —
-        the reserved value itself does NOT. Pins the codec.py
-        decode_continuation EMPTY arm rationale comment.
-        """
+        """EmptyResponse.decode_body permissively accepts a non-zero reserved word
+        (Go parity); only a length mismatch poisons, not the reserved value."""
         import struct
 
         from dqlitewire.messages.base import Header
@@ -1488,15 +1314,9 @@ class TestDecoderContinuation:
         assert decoder.is_poisoned is False
 
     def test_decode_continuation_malformed_empty_size_does_not_poison(self) -> None:
-        """A malformed EmptyResponse (wrong body length, e.g. 16 bytes
-        instead of 8) surfaces the underlying DecodeError but does NOT
-        poison the buffer: ``read_message`` already advanced past the
-        offending frame so the buffer offset is wire-coherent, and the
-        DecodeError arm in ``decode_continuation`` mirrors the
-        ``StreamError`` / ``ServerFailure`` precedents for
-        coherent-offset anomalies. The reserved field itself is
-        permissive on decode (matching Go), so we use a length
-        mismatch to trigger the malformed path."""
+        """A wrong-length EmptyResponse (16 bytes vs 8) raises DecodeError without
+        poisoning: read_message already advanced past the frame (coherent offset).
+        The reserved field is permissive on decode, so a length mismatch is used."""
         import struct
 
         from dqlitewire.exceptions import DecodeError
@@ -1518,16 +1338,9 @@ class TestDecoderContinuation:
 
 
 class TestDecoderContinuationExpected:
-    """Regression tests for the continuation-expected state machine.
-
-    When ``decode()`` returns a ``RowsResponse`` with ``has_more=True``,
-    the decoder enters a "continuation expected" state. Calling ``decode()``
-    again before draining all continuations via ``decode_continuation()``
-    is a protocol error — the next frame in the buffer is a continuation
-    (no column header prefix), so ``decode()`` would misparse it. The
-    ``_continuation_expected`` flag makes this misuse fail loudly with
-    ``ProtocolError`` instead of producing silent stream desynchronization.
-    """
+    """After decode() returns a has_more=True RowsResponse, the _continuation_expected
+    flag makes a second decode() (instead of decode_continuation) fail loudly rather
+    than misparse the headerless continuation frame as a new message."""
 
     def test_decode_raises_when_continuation_expected(self) -> None:
         """decode() must refuse while a ROWS continuation is in progress."""
@@ -1540,7 +1353,6 @@ class TestDecoderContinuationExpected:
 
         types = [ValueType.INTEGER]
 
-        # Build a RowsResponse with has_more=True
         body = encode_uint64(1)  # column_count
         body += encode_text("id")
         body += encode_row_header(types)
@@ -1549,18 +1361,16 @@ class TestDecoderContinuationExpected:
         header = Header(size_words=len(body) // 8, msg_type=7, schema=0)
         msg_bytes = header.encode() + body
 
-        # Also feed a second (standalone) message that decode() would try to read
+        # A standalone second message decode() would wrongly read mid-continuation.
         second = ResultResponse(last_insert_id=0, rows_affected=0).encode()
 
         decoder = MessageDecoder(is_request=False)
         decoder.feed(msg_bytes + second)
 
-        # First decode() returns the initial RowsResponse with has_more=True
         result = decoder.decode()
         assert isinstance(result, RowsResponse)
         assert result.has_more is True
 
-        # Second decode() must raise — we're in "continuation expected" state
         with pytest.raises(ProtocolError, match="continuation"):
             decoder.decode()
 
@@ -1574,7 +1384,6 @@ class TestDecoderContinuationExpected:
 
         types = [ValueType.INTEGER]
 
-        # Initial frame (has_more=True)
         body1 = encode_uint64(1)
         body1 += encode_text("id")
         body1 += encode_row_header(types)
@@ -1582,7 +1391,6 @@ class TestDecoderContinuationExpected:
         body1 += encode_uint64(ROW_PART_MARKER)
         h1 = Header(size_words=len(body1) // 8, msg_type=7, schema=0)
 
-        # Continuation frame (has_more=False) — includes column header
         body2 = encode_uint64(1)
         body2 += encode_text("id")
         body2 += encode_row_header(types)
@@ -1590,21 +1398,17 @@ class TestDecoderContinuationExpected:
         body2 += encode_uint64(ROW_DONE_MARKER)
         h2 = Header(size_words=len(body2) // 8, msg_type=7, schema=0)
 
-        # Normal message after the ROWS sequence
         normal = ResultResponse(last_insert_id=5, rows_affected=3).encode()
 
         decoder = MessageDecoder(is_request=False)
         decoder.feed(h1.encode() + body1 + h2.encode() + body2 + normal)
 
-        # decode initial
         initial = decoder.decode()
         assert isinstance(initial, RowsResponse) and initial.has_more
 
-        # decode continuation
         cont = decoder.decode_continuation()
         assert isinstance(cont, RowsResponse) and not cont.has_more
 
-        # Now decode() should work again
         result = decoder.decode()
         assert isinstance(result, ResultResponse)
         assert result.last_insert_id == 5
@@ -1630,7 +1434,6 @@ class TestDecoderContinuationExpected:
         result = decoder.decode()
         assert isinstance(result, RowsResponse) and result.has_more
 
-        # Reset should clear the flag
         decoder.reset()
         normal = ResultResponse(last_insert_id=0, rows_affected=0).encode()
         decoder.feed(normal)
@@ -1638,7 +1441,6 @@ class TestDecoderContinuationExpected:
         assert isinstance(msg, ResultResponse)
 
     def test_has_more_false_does_not_set_flag(self) -> None:
-        """A RowsResponse with has_more=False should NOT set the flag."""
         from dqlitewire.constants import ValueType
         from dqlitewire.messages.responses import RowsResponse
 
@@ -1655,27 +1457,17 @@ class TestDecoderContinuationExpected:
         result = decoder.decode()
         assert isinstance(result, RowsResponse) and not result.has_more
 
-        # decode() should work fine — no continuation expected
         result2 = decoder.decode()
         assert isinstance(result2, ResultResponse)
 
 
 class TestContinuationFlagCompleteness:
-    """Regression tests for continuation-flag completeness.
-
-    The ``_continuation_expected`` flag was added so ``decode()``
-    could refuse to run on a frame that is actually a continuation.
-    The state machine is complete only when
-    ``decode_continuation()`` also refuses when the flag is False
-    (no continuation in progress), and ``skip_message()`` refuses
-    when the flag is True (continuation in progress).
-    """
+    """State-machine completeness: decode_continuation() must refuse when the flag is
+    False, and skip_message() must refuse when it is True."""
 
     def test_decode_continuation_raises_when_not_expected(self) -> None:
-        """decode_continuation() must refuse when no continuation is
-        in progress — calling it without a prior has_more=True would
-        silently consume and misparse the next message.
-        """
+        """decode_continuation() must refuse with no continuation in progress; else it
+        would silently consume and misparse the next message."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=False)
@@ -1685,11 +1477,9 @@ class TestContinuationFlagCompleteness:
         with pytest.raises(ProtocolError, match="no ROWS continuation"):
             decoder.decode_continuation()
 
-        # The message must NOT have been consumed
         assert decoder.has_message(), (
             "decode_continuation must not consume the message when the guard fires"
         )
-        # Caller can still decode it correctly
         msg = decoder.decode()
         assert isinstance(msg, ResultResponse)
 
@@ -1719,14 +1509,8 @@ class TestContinuationFlagCompleteness:
             decoder.skip_message()
 
     def test_skip_message_during_continuation_reset_recovery(self) -> None:
-        """After ``skip_message()`` is rejected mid-continuation, the
-        caller can ``reset()`` and re-use the decoder for a fresh
-        top-level message. The docstring at
-        ``MessageDecoder.skip_message`` documents this as the
-        "abandon the stream" recovery path; pin the full cycle so a
-        future refactor of ``_finalize_continuation_state`` cannot
-        silently break it.
-        """
+        """reset() is the documented recovery after skip_message() is rejected
+        mid-continuation; the decoder then accepts a fresh top-level message."""
         from dqlitewire.constants import ROW_PART_MARKER, ValueType
         from dqlitewire.exceptions import ProtocolError
         from dqlitewire.messages.base import Header
@@ -1747,14 +1531,9 @@ class TestContinuationFlagCompleteness:
         first = decoder.decode()
         assert isinstance(first, RowsResponse) and first.has_more
 
-        # Mid-continuation: skip_message refuses. The decoder retains
-        # ``_continuation_expected=True``.
         with pytest.raises(ProtocolError, match="continuation"):
             decoder.skip_message()
 
-        # ``reset()`` is the documented recovery from a rejected
-        # ``skip_message`` mid-continuation. After reset the decoder
-        # must accept and correctly decode a fresh top-level message.
         decoder.reset()
 
         recovered = ResultResponse(last_insert_id=0, rows_affected=0)
@@ -1769,7 +1548,6 @@ class TestDecoderSkipMessage:
     """Test skip_message() and is_skipping on MessageDecoder."""
 
     def test_skip_message_exists_on_decoder(self) -> None:
-        """MessageDecoder should expose skip_message() for oversized recovery."""
         decoder = MessageDecoder(is_request=False)
         assert hasattr(decoder, "skip_message")
         assert hasattr(decoder, "is_skipping")
@@ -1780,29 +1558,24 @@ class TestDecoderSkipMessage:
 
         from dqlitewire.exceptions import DecodeError, ProtocolError
 
-        # Create a decoder with a small max_message_size
         decoder = MessageDecoder(is_request=False)
         decoder._buffer._max_message_size = 128
 
-        # Build an oversized message header (size_words=100 → 808 bytes total)
+        # size_words=100 → 808 bytes total, over the 128 cap.
         oversized_header = struct.pack("<IBBH", 100, 0, 0, 0)
-
-        # Feed just the oversized header
         decoder.feed(oversized_header)
 
         assert decoder.has_message() is True
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decoder.decode()
 
-        # skip_message() should handle the oversized message
         result = decoder.skip_message()
         assert result is False
         assert decoder.is_skipping is True
 
-        # Feed enough bytes to complete the capped skip
         decoder.feed(b"\x00" * decoder._buffer._skip_remaining)
 
-        # Buffer is now poisoned — stream is desynchronized
+        # Capped skip completed — stream is desynchronized, so the buffer is poisoned.
         assert decoder.is_skipping is False
         assert decoder.is_poisoned is True
 
@@ -1811,17 +1584,11 @@ class TestDecoderSkipMessage:
 
 
 class TestDecoderPoisonedState:
-    """Once the decoder has produced a mid-stream error from already-consumed
-    bytes, subsequent operations must fail fast with a poisoned-state error —
-    the buffer's _pos is in an unknown position and silently continuing would
-    corrupt downstream reads. A reset() method returns the decoder to a clean
-    state after a reconnect.
-    """
+    """After a mid-stream error from already-consumed bytes, _pos is unknown, so all
+    operations must fail fast with a poisoned-state error until reset()."""
 
     def test_decode_poisons_on_unknown_message_type(self) -> None:
-        """An unknown message type surfaces via decode(), which must poison
-        the decoder so retries fail loudly.
-        """
+        """An unknown message type must poison the decoder so retries fail loudly."""
         import struct
 
         from dqlitewire.exceptions import ProtocolError
@@ -1836,19 +1603,15 @@ class TestDecoderPoisonedState:
             decoder.decode()
         assert decoder.is_poisoned is True
 
-        # Subsequent operations fail fast with a ProtocolError from poisoning.
-        # Per the poison-gate contract, every mutating/consuming entry point on the buffer
-        # and decoder — including feed() — refuses to run on a poisoned
-        # buffer. Recovery requires reset().
+        # Poison-gate contract: every consuming entry point, including feed(),
+        # refuses on a poisoned buffer; recovery requires reset().
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.feed(struct.pack("<IBBH", 0, 0xFE, 0, 0))
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.decode()
 
     def test_reset_unpoisons_decoder(self) -> None:
-        """reset() clears buffer state and the poison flag so the decoder
-        can be reused after a reconnect.
-        """
+        """reset() clears buffer state and the poison flag for reuse after a reconnect."""
         import struct
 
         from dqlitewire.exceptions import ProtocolError
@@ -1876,13 +1639,8 @@ class TestDecoderPoisonedState:
             decoder.decode()
 
     def test_oversized_header_does_not_poison_before_skip(self) -> None:
-        """An oversized-header error from the buffer framing layer is
-        recoverable via skip_message(); it must NOT poison because the
-        bytes have not yet been consumed from the buffer.
-
-        After a capped skip completes, the buffer IS poisoned because the
-        stream is desynchronized.
-        """
+        """An oversized-header error must NOT poison before skip_message() — the bytes
+        aren't consumed yet. After a capped skip completes, the buffer IS poisoned."""
         import struct
 
         decoder = MessageDecoder(is_request=False)
@@ -1892,31 +1650,23 @@ class TestDecoderPoisonedState:
 
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decoder.decode()
-        # NOT poisoned before skip — skip_message() is the recovery path.
         assert decoder.is_poisoned is False
 
-        # After capped skip completes, buffer IS poisoned (desync).
         decoder.skip_message()
         decoder.feed(b"\x00" * decoder._buffer._skip_remaining)
         assert decoder.is_poisoned is True
 
     def test_poison_catches_non_protocol_exceptions(self) -> None:
-        """Any exception from decode_bytes — not just DecodeError/ProtocolError —
-        must poison the decoder. A `decode_body` implementation could raise
-        struct.error, ValueError, UnicodeDecodeError, IndexError, etc., and
-        all of them mean the bytes have been consumed and the offset is now
-        unknown. Catching only the protocol exception types would let other
-        failures leak through with the buffer in a desynchronized state.
-        """
+        """Any exception from decode_bytes (struct.error, ValueError, ...) must poison:
+        the bytes are consumed and the offset is unknown, so catching only protocol
+        types would leave the buffer desynchronized."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=False)
-        # Build a real message and feed it.
         msg = LeaderResponse(node_id=1, address="x:1").encode()
         decoder.feed(msg)
 
-        # Monkey-patch decode_bytes to raise a non-protocol exception, simulating
-        # a bug or unexpected input in a real decode_body implementation.
+        # Simulate a non-protocol exception from a real decode_body.
         sentinel = ValueError("simulated body parse failure")
 
         def boom(_data: bytes) -> object:
@@ -1928,12 +1678,8 @@ class TestDecoderPoisonedState:
             decoder.decode()
         assert decoder.is_poisoned is True
 
-        # Subsequent decode() must raise poisoned, even though decode_bytes
-        # is monkey-patched. Restore the real decode_bytes first to make
-        # sure the poison check fires before any decode_bytes call.
-        # Per the poison-gate contract, feed() on a poisoned buffer also raises, so we
-        # cannot push more bytes through without a reset — the poison
-        # check fires directly on decode().
+        # Restore real decode_bytes; the poison check fires before it runs, and
+        # feed() on a poisoned buffer also raises (no reset done).
         del decoder.decode_bytes
         with pytest.raises(ProtocolError, match="poisoned"):
             decoder.feed(msg)
@@ -1943,23 +1689,9 @@ class TestDecoderPoisonedState:
     def test_decode_continuation_raises_streamerror_on_wrong_type_without_poison(
         self,
     ) -> None:
-        """decode_continuation() raises StreamError when the next
-        message is not a ROWS continuation, FAILURE, or EMPTY — and
-        does NOT poison the decoder.
-
-        ``read_message`` already advanced past the offending frame, so
-        the buffer offset is correctly aligned with the next frame
-        boundary. A hostile or buggy peer sending one unexpected-type
-        frame must not kill the connection's decoder; the caller can
-        choose to invalidate or resync. Mirrors the existing
-        ``ServerFailure`` precedent (clean offset, do NOT poison) and
-        Go's ``Protocol.Recv`` which also does not poison on
-        unexpected types.
-
-        ``EmptyResponse`` is treated as a clean interrupt-ack
-        terminator and does NOT poison — that case is covered in
-        :class:`TestDecoderContinuation` separately.
-        """
+        """An unexpected-type continuation frame (not ROWS/FAILURE/EMPTY) raises
+        StreamError without poisoning: read_message left a coherent offset, so one
+        bad frame from a peer must not kill the decoder (Go Protocol.Recv parity)."""
         from dqlitewire.exceptions import StreamError
 
         decoder = MessageDecoder(is_request=False)
@@ -1969,19 +1701,13 @@ class TestDecoderPoisonedState:
 
         with pytest.raises(StreamError, match="Expected ROWS continuation"):
             decoder.decode_continuation()
-        # Load-bearing: the decoder is NOT poisoned. The offending
-        # frame was consumed cleanly; the next legitimate frame on the
-        # wire can still be decoded after the caller handles the
-        # StreamError.
+        # Load-bearing: not poisoned, so the next legitimate frame still decodes.
         assert decoder.is_poisoned is False
-        # The continuation flag was also cleared at the raise site.
         assert decoder._continuation_expected is False
 
-        # A subsequent legitimate decode() works against the now-empty
-        # buffer (returns None — no more bytes), not poisoned.
+        # Now-empty buffer returns None, not poisoned.
         assert decoder.decode() is None
 
-        # And feeding a fresh well-formed message decodes cleanly.
         msg = LeaderResponse(node_id=1, address="x:1").encode()
         decoder.feed(msg)
         decoded = decoder.decode()
@@ -1989,30 +1715,19 @@ class TestDecoderPoisonedState:
         assert decoded.node_id == 1
 
     def test_decode_bytes_honors_poison(self) -> None:
-        """Regression: decode_bytes must honor the poison flag.
-
-        ``MessageDecoder.decode_bytes`` is a public method that parses a
-        single caller-supplied bytes object. ``decode()`` goes through a
-        poison gate before calling ``decode_bytes``, but a user who
-        catches ``ProtocolError`` from ``decode()`` and tries to
-        "resume" by feeding the raw bytes to ``decode_bytes`` directly
-        bypasses the poison contract entirely. Any public entry point
-        that consumes bytes and runs parser code must refuse to run on
-        a poisoned decoder; ``decode_bytes`` was the last gap.
-        """
+        """decode_bytes must honor the poison flag too: it's a public parse entry point,
+        and a user "resuming" by feeding raw bytes to it would bypass the poison gate."""
         from dqlitewire.exceptions import ProtocolError
 
         decoder = MessageDecoder(is_request=False)
         decoder._buffer.poison(DecodeError("original cause"))
 
-        # Build a well-formed message that would otherwise decode fine.
         msg = LeaderResponse(node_id=1, address="x:1").encode()
         with pytest.raises(ProtocolError, match="poisoned") as ei:
             decoder.decode_bytes(msg)
         assert isinstance(ei.value.__cause__, DecodeError)
 
-        # decode_message() helper creates a fresh decoder on every call,
-        # so it must still work even though the dispatch name overlaps.
+        # decode_message() builds a fresh decoder per call, so it still works.
         from dqlitewire.codec import decode_message
 
         fresh = decode_message(msg, is_request=False)
@@ -2020,9 +1735,7 @@ class TestDecoderPoisonedState:
         assert fresh.node_id == 1
 
     def test_poison_is_first_error_wins(self) -> None:
-        """ReadBuffer.poison() must NOT overwrite an existing poison error.
-        First error wins so the original __cause__ remains visible.
-        """
+        """ReadBuffer.poison() keeps the first error so the original __cause__ stays visible."""
         from dqlitewire.buffer import ReadBuffer
 
         buf = ReadBuffer()
@@ -2033,14 +1746,8 @@ class TestDecoderPoisonedState:
         assert buf._poisoned is first
 
     def test_has_message_true_then_decode_raises_and_poisons_on_reserved(self) -> None:
-        """``has_message()`` inspects only the 4-byte ``size_words`` prefix —
-        a well-framed header with a non-zero 16-bit reserved field returns
-        True, but ``decode()`` then reads the bytes, surfaces
-        ``DecodeError("reserved field must be 0")`` from ``Header.decode``,
-        and poisons the buffer. Pin the compound contract so a regression
-        that moves reserved validation out of the decode path (or narrows
-        the ``except BaseException`` poison handler) fails loudly.
-        """
+        """has_message() inspects only the size_words prefix, so a non-zero reserved
+        field returns True; decode() then surfaces the DecodeError and poisons."""
         import struct
 
         from dqlitewire.constants import ResponseType
@@ -2058,20 +1765,14 @@ class TestDecoderPoisonedState:
             decoder.decode()
         assert decoder.is_poisoned is True
 
-        # Subsequent decode on the poisoned buffer must raise the
-        # poison-specific error (a ProtocolError subclass), not re-run
-        # the header parse.
+        # Poisoned buffer raises the poison error, not a re-run of the header parse.
         with pytest.raises((PoisonedError, ProtocolError), match="poisoned"):
             decoder.decode()
 
     def test_request_decoder_reset_clears_handshake_state(self) -> None:
-        """For a server-side (request) decoder, reset() must also un-do the
-        handshake so a reconnect requires a fresh handshake. Otherwise the
-        decoder would silently accept message bytes as a continuation of
-        the dead session.
-        """
+        """A request decoder's reset() must also undo the handshake; else a reconnect
+        would silently accept message bytes as a continuation of the dead session."""
         decoder = MessageDecoder(is_request=True)
-        # Complete a handshake.
         decoder.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
         decoder.decode_handshake()
         assert decoder._handshake_done is True
@@ -2080,7 +1781,7 @@ class TestDecoderPoisonedState:
         decoder.reset()
         assert decoder._handshake_done is False
         assert decoder.version is None
-        # And the decoder must refuse decode() until a fresh handshake.
+        # Must refuse decode() until a fresh handshake.
         from dqlitewire.exceptions import ProtocolError
 
         with pytest.raises(ProtocolError, match="[Hh]andshake"):
@@ -2088,21 +1789,16 @@ class TestDecoderPoisonedState:
 
 
 class TestDecoderPoisonOnMalformedBody:
-    """Verify decode() poisons on a malformed message body — not just
-    on unknown types or oversized headers.
-    """
+    """decode() poisons on a malformed body, not just on unknown types or oversized headers."""
 
     def test_decode_poisons_on_truncated_rows_body(self) -> None:
-        """A ROWS message with a valid header but a body too short for
-        the claimed column_count must poison the decoder.
-        """
+        """A ROWS message with a valid header but a body too short for column_count poisons."""
         import struct
 
         from dqlitewire.constants import ResponseType
         from dqlitewire.exceptions import ProtocolError
 
-        # Valid ROWS header (type 7), body = 8 bytes (column_count=1
-        # but no column name follows — decode_body will fail)
+        # column_count=1 but no column name follows — decode_body fails.
         body = struct.pack("<Q", 1)
         header = struct.pack("<IBBH", len(body) // 8, ResponseType.ROWS, 0, 0)
 
@@ -2128,9 +1824,6 @@ class TestStreamingContinuation:
     """
 
     def test_full_streaming_continuation_roundtrip(self) -> None:
-        """082: encode multi-part, feed, decode initial + continuation,
-        verify all row data and column names.
-        """
         from dqlitewire.constants import ValueType
         from dqlitewire.messages.responses import RowsResponse
 
@@ -2161,21 +1854,15 @@ class TestStreamingContinuation:
         assert msg2.has_more is False
         assert msg2.rows == [[2, "bob"]]
 
-        # Decoder ready for next message
         normal = ResultResponse(last_insert_id=0, rows_affected=0)
         decoder.feed(normal.encode())
         msg3 = decoder.decode()
         assert isinstance(msg3, ResultResponse)
 
     def test_failure_during_continuation_does_not_poison(self) -> None:
-        """083: server sends FailureResponse instead of continuation.
-
-        The well-formed failure decode is a clean operational signal —
-        the buffer is NOT poisoned and the connection remains usable
-        for subsequent requests. Upstream's ``query_work_done`` reaches
-        this path on mid-stream I/O / constraint failures after PART
-        rows have already been written; users should see a normal
-        OperationalError, not a forced reconnect."""
+        """A FailureResponse instead of a continuation is a clean signal: not poisoned,
+        connection stays usable. Upstream query_work_done hits this on mid-stream
+        I/O/constraint failures after PART rows — users see OperationalError, not a reconnect."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse, RowsResponse
@@ -2200,7 +1887,7 @@ class TestStreamingContinuation:
         assert not decoder.is_poisoned
 
     def test_failure_during_continuation_clears_flag(self) -> None:
-        """103: _continuation_expected must be False after FailureResponse."""
+        """_continuation_expected must be False after a FailureResponse."""
         from dqlitewire.constants import ValueType
         from dqlitewire.exceptions import ServerFailure
         from dqlitewire.messages.responses import FailureResponse, RowsResponse
@@ -2222,11 +1909,10 @@ class TestStreamingContinuation:
         with pytest.raises(ServerFailure, match="disk I/O error"):
             decoder.decode_continuation()
 
-        # The continuation flag must be cleared on the clean-failure path.
         assert not decoder._continuation_expected
 
     def test_chained_continuations_part_part_done(self) -> None:
-        """084: three frames — initial(PART) + cont(PART) + cont(DONE)."""
+        """Three frames: initial(PART) + cont(PART) + cont(DONE)."""
         from dqlitewire.constants import ValueType
         from dqlitewire.messages.responses import RowsResponse
 
@@ -2265,34 +1951,31 @@ class TestStreamingContinuation:
         assert msg3.has_more is False
         assert msg3.rows == [[3]]
 
-        # Decoder should now accept decode() again
         normal = ResultResponse(last_insert_id=0, rows_affected=0)
         decoder.feed(normal.encode())
         msg4 = decoder.decode()
         assert isinstance(msg4, ResultResponse)
 
     def test_decode_continuation_rejects_unsupported_schema(self) -> None:
-        """099: decode_continuation must validate schema like decode_bytes."""
+        """decode_continuation must validate schema like decode_bytes."""
         import struct
 
         from dqlitewire.constants import ValueType
         from dqlitewire.messages.responses import RowsResponse
 
-        # Build an initial ROWS frame with has_more=True
         initial = RowsResponse(
             column_names=["x"],
             column_types=[ValueType.INTEGER],
             rows=[[1]],
             has_more=True,
         )
-        # Build a continuation frame with schema=1 (unsupported for ROWS)
+        # Continuation with schema=1, unsupported for ROWS.
         cont_body = RowsResponse(
             column_names=["x"],
             column_types=[ValueType.INTEGER],
             rows=[[2]],
             has_more=False,
         ).encode_body()
-        # Manually build header with schema=1
         from dqlitewire.constants import ResponseType
 
         size_words = len(cont_body) // 8
@@ -2309,7 +1992,6 @@ class TestStreamingContinuation:
             decoder.decode_continuation()
 
     def test_oversized_continuation_frame_clears_flag_and_poisons(self) -> None:
-        """123: oversized continuation frame must clear flag and poison."""
         import struct
 
         from dqlitewire.constants import ValueType
@@ -2337,7 +2019,6 @@ class TestStreamingContinuation:
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decoder.decode_continuation()
 
-        # Flag must be cleared and buffer poisoned
         assert not decoder._continuation_expected
         assert decoder.is_poisoned
 
@@ -2350,36 +2031,27 @@ class TestEndToEndPipeline:
 
     def test_handshake_then_request_response_roundtrip(self) -> None:
         """Full stateful pipeline: handshake → request → response."""
-        # Client side
         encoder = MessageEncoder()
         client_decoder = MessageDecoder(is_request=False)
-
-        # Server side
         server_decoder = MessageDecoder(is_request=True)
 
-        # Step 1: Client sends handshake
         handshake_bytes = encoder.encode_handshake()
 
-        # Step 2: Server receives and decodes handshake
         server_decoder.feed(handshake_bytes)
         version = server_decoder.decode_handshake()
         assert version == PROTOCOL_VERSION
 
-        # Step 3: Client sends a LeaderRequest
         request = LeaderRequest()
         request_bytes = encoder.encode(request)
 
-        # Step 4: Server receives and decodes request
         server_decoder.feed(request_bytes)
         assert server_decoder.has_message()
         decoded_request = server_decoder.decode()
         assert isinstance(decoded_request, LeaderRequest)
 
-        # Step 5: Server sends a LeaderResponse
         response = LeaderResponse(node_id=1, address="127.0.0.1:9001")
         response_bytes = response.encode()
 
-        # Step 6: Client receives and decodes response
         client_decoder.feed(response_bytes)
         assert client_decoder.has_message()
         decoded_response = client_decoder.decode()
@@ -2388,14 +2060,12 @@ class TestEndToEndPipeline:
         assert decoded_response.address == "127.0.0.1:9001"
 
     def test_multiple_messages_single_feed(self) -> None:
-        """Concatenate multiple encoded messages, feed all at once, decode sequentially."""
         decoder = MessageDecoder(is_request=False)
 
         msg1 = WelcomeResponse(heartbeat_timeout=15000000000)
         msg2 = DbResponse(db_id=0)
         msg3 = StmtResponse(db_id=0, stmt_id=1, num_params=2)
 
-        # Concatenate all bytes and feed in one call
         all_bytes = msg1.encode() + msg2.encode() + msg3.encode()
         decoder.feed(all_bytes)
 
@@ -2413,21 +2083,17 @@ class TestEndToEndPipeline:
         assert decoded3.stmt_id == 1
         assert decoded3.num_params == 2
 
-        # No more messages
         assert not decoder.has_message()
 
     def test_partial_feed_chunked(self) -> None:
-        """Split encoded message at arbitrary points, feed in chunks."""
         decoder = MessageDecoder(is_request=False)
         msg = ResultResponse(last_insert_id=42, rows_affected=7)
         encoded = msg.encode()
 
-        # Feed one byte at a time
         for i in range(len(encoded) - 1):
             decoder.feed(encoded[i : i + 1])
             assert not decoder.has_message(), f"should not be complete at byte {i}"
 
-        # Feed the last byte — now the message should be complete
         decoder.feed(encoded[-1:])
         assert decoder.has_message()
 
@@ -2468,11 +2134,8 @@ class TestPicklePrevention:
     def test_message_decoder_pickle_message_does_not_claim_connection_binding(
         self,
     ) -> None:
-        """The rejection message must describe the actual rejection
-        reason (the class owns a ReadBuffer with per-stream-position
-        state plus continuation counters) rather than invent a
-        "single connection" binding the class does not hold.
-        """
+        """The rejection message must cite the ReadBuffer stream state, not invent a
+        "single connection" binding the class does not hold."""
         import pickle
 
         try:
@@ -2490,11 +2153,8 @@ class TestPicklePrevention:
     def test_message_encoder_pickle_message_aligns_with_stateless_docstring(
         self,
     ) -> None:
-        """The rejection message must not contradict the class's own
-        "effectively stateless" docstring by claiming a "single
-        connection" binding. ``vars(MessageEncoder()) == {'_version': int}``
-        — there is no connection reference.
-        """
+        """The rejection message must not claim a "single connection" binding, contradicting
+        the class's "effectively stateless" docstring (vars is just {'_version': int})."""
         import pickle
 
         try:
@@ -2511,14 +2171,9 @@ class TestPicklePrevention:
 
 
 class TestMaxSchemaDirection:
-    """Schema-version ceiling must not bleed across request/response directions.
-
-    ``RequestType`` and ``ResponseType`` share numeric codes (e.g.
-    ``RequestType.QUERY_SQL=9`` collides with ``ResponseType.FILES=9``).
-    A direction-agnostic ceiling lookup would let a hostile or buggy
-    server emit a response whose type does not actually support schema>0
-    but whose numeric code matches a request type that does.
-    """
+    """The schema ceiling must be direction-specific: Request/Response share numeric
+    codes (e.g. QUERY_SQL=9 vs FILES=9), so a shared lookup would let a server emit a
+    schema>0 response on a type that doesn't support it."""
 
     def test_response_decoder_rejects_schema_1_on_db(self) -> None:
         """DB (type 4) must not accept schema=1 even though PREPARE

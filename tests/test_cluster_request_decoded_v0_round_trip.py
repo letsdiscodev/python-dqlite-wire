@@ -1,14 +1,6 @@
-"""Pin: ``ClusterRequest`` round-trips a V0 (``format=0``) wire body
-byte-identically when the dataclass was obtained via ``decode_body``.
-
-The decoder admits V0 via the ``_decoded=True`` sentinel; the
-encoder previously rejected ``format=0`` unconditionally, which made
-``decode → encode`` asymmetric for V0 and blocked proxy / replay /
-capture-replay tooling. The encoder now mirrors the sentinel: a
-decoded V0 instance re-encodes to its original 8-byte body. A fresh
-``ClusterRequest(format=0)`` is still rejected at construction —
-the V0 escape hatch is opt-in only.
-"""
+"""A V0 (``format=0``) ``ClusterRequest`` obtained via ``decode_body`` re-encodes
+byte-identically (the ``_decoded=True`` sentinel), but a fresh ``ClusterRequest(format=0)``
+is still rejected at construction."""
 
 from __future__ import annotations
 

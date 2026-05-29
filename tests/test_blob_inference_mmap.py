@@ -1,19 +1,4 @@
-"""Pin: ``mmap.mmap`` must infer to ``ValueType.BLOB``.
-
-Stdlib ``sqlite3`` accepts ``mmap.mmap`` as a BLOB bind via the
-buffer protocol (``PyObject_CheckBuffer`` →
-``SQLITE_BLOB``). Without the explicit fallthrough, large-blob /
-memory-mapped-file workflows that pass mmap regions to avoid an
-extra copy hit ``EncodeError`` in dqlite while round-tripping
-fine in stdlib sqlite3.
-
-The inference discriminator at ``types.py`` lists
-``(bytes, bytearray, memoryview, mmap.mmap)`` — broad enough to cover
-the canonical buffer-protocol shapes that stdlib accepts, but narrow
-enough to keep the deliberate ``array.array`` rejection in place
-(``array.array`` of non-byte items would silently lose the type tag
-on round-trip).
-"""
+"""``mmap.mmap`` infers to ``ValueType.BLOB`` (parity with stdlib sqlite3)."""
 
 from __future__ import annotations
 
@@ -38,9 +23,6 @@ def test_encode_value_infers_blob_from_mmap() -> None:
 
 
 def test_encode_value_blob_explicit_accepts_mmap() -> None:
-    """The explicit-BLOB branch (caller-supplied ``ValueType.BLOB``)
-    must also accept ``mmap.mmap`` — symmetric with the inference
-    branch so callers can use either entry point."""
     payload = b"explicit blob payload"
     mm = mmap.mmap(-1, len(payload))
     try:
@@ -55,9 +37,7 @@ def test_encode_value_blob_explicit_accepts_mmap() -> None:
 
 
 def test_encode_value_blob_mmap_decodes_to_bytes() -> None:
-    """The decoder yields ``bytes`` (not ``mmap.mmap``); pin the
-    decoded type so a future change that returned a memoryview-style
-    view would break here rather than only at the ORM layer."""
+    """The decoder yields ``bytes``, not a view over ``mmap.mmap``."""
     raw = b"mmap-payload-content"
     mm = mmap.mmap(-1, len(raw))
     try:

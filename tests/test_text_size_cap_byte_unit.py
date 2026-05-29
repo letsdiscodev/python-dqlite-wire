@@ -1,19 +1,5 @@
-"""Pin: ``encode_text`` and ``decode_text`` cap on UTF-8 BYTES, not
-codepoints.
-
-Decode-side caps have always counted bytes (``decode_text`` walks the
-buffer until NUL and compares ``null_pos`` to ``max_size``). Encode-
-side caps used to count codepoints (``len(s)``) at every call site,
-so the encoder admitted non-ASCII payloads near the boundary that
-the decoder rejected — round-trip identity broke for any content
-where ``len(s.encode("utf-8")) != len(s)``.
-
-The fix routes the cap through ``encode_text(value, max_size=...)``
-so the units match. This also closes the cap-after-allocate ordering
-in ``decode_text`` (the materialisation now bounds itself to
-``max_size + 1`` bytes) and in ``encode_value`` BLOB
-(``len(value)`` is checked before ``bytes(value)`` materialises).
-"""
+"""encode_text and decode_text cap on UTF-8 BYTES, not codepoints, so
+round-trip identity holds for content where byte length != codepoint length."""
 
 from __future__ import annotations
 
@@ -31,18 +17,14 @@ from dqlitewire.types import decode_text, encode_text
 
 class TestEncodeTextMaxSizeBytes:
     def test_max_size_caps_on_bytes_not_codepoints(self) -> None:
-        # 4-byte UTF-8 sequence (😀 = U+1F600) takes 4 bytes per
-        # codepoint. 32 codepoints = 128 bytes. cap=130 admits it.
-        # cap=120 must reject it because byte length exceeds cap,
-        # even though codepoint length (32) is well below.
+        # 😀 is 4 bytes; 32 codepoints = 128 bytes. cap=130 admits, cap=120 rejects.
         text = "😀" * 32
-        encode_text(text, max_size=130)  # ok
+        encode_text(text, max_size=130)
         with pytest.raises(EncodeError, match="length 128 exceeds maximum"):
             encode_text(text, max_size=120)
 
     def test_default_no_cap(self) -> None:
-        # Without max_size, encode_text matches its historical
-        # contract — no per-call cap.
+        # Without max_size, there is no per-call cap.
         encode_text("a" * 100_000)
 
     def test_label_in_error(self) -> None:
@@ -52,8 +34,7 @@ class TestEncodeTextMaxSizeBytes:
 
 class TestRoundTripIdentityAtCap:
     def test_failure_message_round_trip_at_byte_cap(self) -> None:
-        # 4-byte UTF-8 codepoints at the byte boundary.
-        text = "😀" * (_MAX_FAILURE_MESSAGE_SIZE // 4)
+        text = "😀" * (_MAX_FAILURE_MESSAGE_SIZE // 4)  # 4 bytes each
         body = FailureResponse(code=1, message=text).encode_body()
         decoded = FailureResponse.decode_body(body)
         assert decoded.message == text
@@ -72,10 +53,8 @@ class TestRoundTripIdentityAtCap:
 
 class TestDecodeTextCapBeforeAllocate:
     def test_cap_bound_materialisation_window(self) -> None:
-        # Build a buffer where the NUL is well past max_size. The
-        # decoder must surface a cap-exceeded error WITHOUT
-        # materialising the entire buffer — but we cannot directly
-        # observe allocation, so we just confirm the error shape.
+        # NUL well past max_size: decoder must cap-error without materialising
+        # the whole buffer (we can only observe the error shape, not allocation).
         too_long = b"a" * 100 + b"\x00"
         view = memoryview(too_long)
         with pytest.raises(Exception, match="exceeds maximum"):

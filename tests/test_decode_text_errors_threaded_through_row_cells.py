@@ -1,11 +1,6 @@
-"""Pin: ``MessageDecoder`` accepts a ``text_errors`` knob and threads
-it through to per-row-cell TEXT / ISO8601 decoding.
-
-A single non-UTF-8 TEXT cell (e.g. a legacy SQLite store with latin-1
-columns) used to fail the entire ``RowsResponse`` decode under the
-strict default. The knob lets a caller opt into permissive decoding
-(``"replace"``, ``"backslashreplace"``, etc.) and matches Go's
-``getString`` shape that just returns raw bytes.
+"""``MessageDecoder`` accepts a ``text_errors`` knob threaded through to
+per-row-cell TEXT / ISO8601 decoding, letting a caller opt into permissive
+decoding so one non-UTF-8 cell doesn't fail the whole ``RowsResponse``.
 """
 
 from __future__ import annotations
@@ -38,7 +33,6 @@ def test_decode_value_text_errors_replace_admits_bad_utf8() -> None:
     value, _ = decode_value(_bad_utf8_text_block(), ValueType.TEXT, text_errors="replace")
     assert isinstance(value, str)
     assert "caf" in value
-    # Replacement char must appear at the bad bytes.
     assert "�" in value
 
 
@@ -49,16 +43,14 @@ def test_decode_row_values_text_errors_threaded() -> None:
 
 
 def _rows_response_body_with_bad_utf8_text() -> bytes:
-    """Build a single-column, single-row RowsResponse body whose only
-    TEXT cell carries bytes that are not valid UTF-8."""
+    """Single-column, single-row RowsResponse body whose TEXT cell carries
+    non-UTF-8 bytes."""
     body = encode_uint64(1)  # column_count
     body += encode_text("col0")
-    # Row header: single TEXT cell — one 4-bit nibble per cell,
-    # padded to word boundary (8 bytes).
+    # Row header: one 4-bit nibble per cell, padded to an 8-byte word.
     body += bytes([int(ValueType.TEXT)]) + b"\x00" * 7
     body += _bad_utf8_text_block()
-    # Row DONE marker.
-    body += struct.pack("<Q", 0xFFFFFFFFFFFFFFFF)
+    body += struct.pack("<Q", 0xFFFFFFFFFFFFFFFF)  # row DONE marker
     return body
 
 
@@ -75,7 +67,6 @@ def test_rows_response_text_errors_replace_admits_bad_utf8() -> None:
 
 def test_message_decoder_text_errors_propagates_to_row_cells() -> None:
     decoder = MessageDecoder(is_request=False, text_errors="replace")
-    # Build a Rows wire frame containing the bad-utf8 row.
     encoder = MessageEncoder()
     valid = RowsResponse(
         column_names=["c0"],
@@ -84,10 +75,8 @@ def test_message_decoder_text_errors_propagates_to_row_cells() -> None:
         has_more=False,
     )
     wire = encoder.encode(valid)
-    # Splice the bad-utf8 body in place of the valid one by re-using the
-    # full wire pipeline: feed and decode.
     bad_body = _rows_response_body_with_bad_utf8_text()
-    # Construct the header manually so we don't need a custom encoder.
+    # Build the header manually so we don't need a custom encoder.
     from dqlitewire.constants import ResponseType
     from dqlitewire.messages.base import Header
 
@@ -100,7 +89,7 @@ def test_message_decoder_text_errors_propagates_to_row_cells() -> None:
     assert isinstance(decoded, RowsResponse)
     assert "�" in str(decoded.rows[0][0])
 
-    # Also keep the valid round-trip working through the same decoder.
+    # The valid round-trip must still work with the same setting.
     decoder2 = MessageDecoder(is_request=False, text_errors="replace")
     decoder2.feed(wire)
     assert isinstance(decoder2.decode(), RowsResponse)

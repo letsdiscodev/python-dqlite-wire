@@ -1,21 +1,10 @@
-"""Pin: the malformed ``(node_id, address)`` ``DecodeError`` in
-both ``LeaderResponse.decode_body`` and ``ServersResponse.decode_body``
-routes the address through ``sanitize_server_text`` BEFORE the
-64-char truncation and the ``!r`` rendering.
-
-``repr`` escapes ``\\n`` / ``\\r`` / ``\\t`` but does NOT escape the
-broader line-separator class (U+2028 LINE SEPARATOR, U+2029 PARAGRAPH
-SEPARATOR), bidi marks (U+202A..E), zero-width characters
-(U+200B..D, U+FEFF). A hostile peer crafting a malformed atomicity
-entry with one of those codepoints in ``address`` would otherwise
-land a line-split in ``journald`` / SIEM ingest via the
-``DecodeError`` text — the 64-char truncation does not help because
-a single codepoint fits.
-
-``sanitize_server_text`` replaces the broader class with ``?`` so
-the ``DecodeError`` text stays in a single forensically-recoverable
-line.
-"""
+"""Pin: the malformed ``(node_id, address)`` ``DecodeError`` in both
+``LeaderResponse`` and ``ServersResponse`` routes the address through
+``sanitize_server_text`` before truncation and ``!r`` rendering. ``repr``
+escapes ``\\n``/``\\r``/``\\t`` but not the broader line-separator/bidi/
+zero-width class, so a hostile single codepoint could otherwise inject a
+line-split into journald/SIEM ingest (truncation does not help — one
+codepoint fits)."""
 
 from __future__ import annotations
 
@@ -27,9 +16,8 @@ from dqlitewire.types import encode_text, encode_uint64
 
 
 def test_leader_response_malformed_decode_error_sanitises_u2028() -> None:
-    """U+2028 in the address survives the 64-char cap but must NOT
-    survive the sanitiser. ``str(DecodeError)`` cannot contain a
-    raw line-separator."""
+    """``str(DecodeError)`` must not contain a raw U+2028 line separator
+    (repr does not escape it)."""
     # Malformed atomicity: node_id=0 paired with a non-empty address.
     forged = "leader FORGED:9001"
     body = encode_uint64(0) + encode_text(forged)
@@ -43,9 +31,8 @@ def test_leader_response_malformed_decode_error_sanitises_u2028() -> None:
 
 
 def test_leader_response_malformed_decode_error_sanitises_bidi() -> None:
-    """U+202E RIGHT-TO-LEFT OVERRIDE in the address must be sanitised
-    so an attacker cannot reorder the diagnostic text shown in
-    operator log viewers."""
+    """U+202E RIGHT-TO-LEFT OVERRIDE must be sanitised so an attacker can't
+    reorder the diagnostic shown in operator log viewers."""
     forged = "leader‮FORGED:9001"
     body = encode_uint64(0) + encode_text(forged)
     with pytest.raises(DecodeError) as exc_info:
@@ -55,9 +42,7 @@ def test_leader_response_malformed_decode_error_sanitises_bidi() -> None:
 
 
 def test_servers_response_malformed_decode_error_sanitises_u2028() -> None:
-    """Sibling pin for ``ServersResponse``'s per-entry atomicity
-    check. The two decoders share the diagnostic shape; both must
-    route through ``sanitize_server_text``."""
+    """Sibling pin for ``ServersResponse``'s per-entry atomicity check."""
     forged = "node 1:9001"
     body = (
         encode_uint64(1)  # count
@@ -72,17 +57,10 @@ def test_servers_response_malformed_decode_error_sanitises_u2028() -> None:
 
 
 def test_leader_response_malformed_decode_error_truncation_still_applied() -> None:
-    """Belt-and-suspenders: a malformed address just over the 64-char
-    cap (no sanitisable codepoints) still gets the display truncation
-    suffix. Sanitising before truncation must not bypass the cap.
-
-    The input length is pinned at ``cap + 1`` (65 chars) rather than an
-    arbitrary 200: the assertion below verifies the rendered address is
-    shorter than the input, which is the truncation invariant. A future
-    cap raise would surface as a deliberate update to this single
-    length literal, not as a misread "sanitisation regression" against
-    an over-long forged input.
-    """
+    """An address just over the cap still gets the truncation suffix:
+    sanitising first must not bypass it. Length is pinned at ``cap + 1`` so a
+    future cap raise surfaces as a deliberate edit here, not a misread
+    regression."""
     forged = "A" * 65
     body = encode_uint64(0) + encode_text(forged)
     with pytest.raises(DecodeError) as exc_info:
@@ -99,8 +77,8 @@ def test_leader_response_malformed_decode_error_truncation_still_applied() -> No
 
 
 def test_servers_response_malformed_decode_error_truncation_still_applied() -> None:
-    """Sibling pin for ``ServersResponse``. See sibling docstring above
-    for the ``cap + 1`` rationale."""
+    """Sibling pin for ``ServersResponse`` (see above for the ``cap + 1``
+    rationale)."""
     forged = "B" * 65
     body = encode_uint64(1) + encode_uint64(0) + encode_text(forged) + encode_uint64(0)
     with pytest.raises(DecodeError) as exc_info:

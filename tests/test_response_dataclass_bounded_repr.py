@@ -1,20 +1,6 @@
-"""Pin: response dataclasses with unbounded list / dict fields
-emit a bounded summary ``__repr__`` rather than enumerating every
-element.
-
-The dataclass-generated ``__repr__`` would walk every cell of every
-row (RowsResponse), every file's content bytes (FilesResponse), or
-every node entry (ServersResponse). At the wire caps that produces
-multi-megabyte strings. No in-tree caller emits ``%r`` against
-these types today, but the implicit hazard is real: asyncio task
-names, SA echo_pool, Sentry breadcrumbs, pytest pretty-assert, and
-operator-supplied observability all reach for ``repr``, and a
-future log site would surface as latent loop monopolisation.
-
-Mirrors the bounded-``__repr__`` discipline already established on
-``DqliteConnection`` / ``DqliteCursor`` / ``ConnectionPool`` /
-``DqliteError``.
-"""
+"""Pin: response dataclasses with unbounded list / dict fields emit a
+bounded summary ``__repr__`` rather than enumerating every element
+(the dataclass-generated repr would produce multi-megabyte strings)."""
 
 from __future__ import annotations
 
@@ -29,8 +15,6 @@ from dqlitewire.types import WireValue
 
 
 def test_rows_response_repr_is_bounded_under_large_rows() -> None:
-    """A 10k-row response must produce a short repr that does not
-    enumerate the per-row payload."""
     rows: list[list[WireValue]] = [[i, f"name-{i}"] for i in range(10_000)]
     row_types = [[ValueType.INTEGER, ValueType.TEXT] for _ in range(10_000)]
     msg = RowsResponse(
@@ -42,11 +26,9 @@ def test_rows_response_repr_is_bounded_under_large_rows() -> None:
     )
     rendered = repr(msg)
 
-    # Bound the repr length.
     assert len(rendered) < 500, (
         f"RowsResponse repr is {len(rendered)} chars for 10k rows; expected a bounded summary"
     )
-    # Summary form mentions row count without listing them.
     assert "<10000 items>" in rendered
     assert "has_more=False" in rendered
 

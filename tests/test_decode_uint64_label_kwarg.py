@@ -1,13 +1,4 @@
-"""Pin: :func:`decode_uint64` accepts a ``label=`` kwarg that
-interpolates into the truncation diagnostic so a caller decoding a
-specific field gets a per-field error message — symmetric with
-:func:`decode_text`'s existing ``label=`` discipline.
-
-The first regression-pin verifies the specific cited example
-(``OpenRequest.flags``); the second verifies the primitive-level
-kwarg works in isolation; the third pins backwards-compat by
-checking the historical default-label message wording.
-"""
+"""decode_uint64 accepts a label= kwarg that interpolates into the truncation diagnostic."""
 
 from __future__ import annotations
 
@@ -29,11 +20,7 @@ def test_decode_uint64_label_kwarg_appears_in_diagnostic() -> None:
 
 
 def test_open_request_truncated_flags_diagnostic_names_field() -> None:
-    """Build a body that decodes ``database name`` cleanly then
-    truncates inside ``flags``. The resulting DecodeError must name
-    both the request class and the field — historically the message
-    was the bare ``Need 8 bytes for uint64`` with no class / field
-    context."""
+    """Body decodes db name then truncates inside flags; error must name both class and field."""
     from dqlitewire.types import encode_text
 
     body = encode_text("test.db") + b"\x00\x00\x00"

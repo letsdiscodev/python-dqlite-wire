@@ -1,19 +1,7 @@
-"""Pin the public-exception taxonomy for wire-format invariant
-validators that fire at dataclass-construction time.
-
-Each cited site is a wire-format gate: the value crossing the gate
-either came off the wire or is about to be put on the wire. The
-canonical public exception class for "wire layer cannot serialise
-this value" is ``EncodeError`` (a ``ProtocolError`` subclass exported
-from ``dqlitewire.exceptions``). Pre-fix these construction-time
-validators raised plain ``ValueError``, splitting the public taxonomy
-between two unrelated classes (``ValueError`` is not in any
-parent/child relationship with ``EncodeError``).
-
-Pure Python-level argument validators (e.g. ``ReadBuffer.__init__``'s
-``max_message_size < 1``) intentionally remain ``ValueError`` —
-those are caller bugs that don't represent a wire violation.
-"""
+"""Construction-time wire-format validators must raise ``EncodeError``, not
+plain ``ValueError``. Pure Python argument validators (e.g.
+``ReadBuffer.__init__``'s ``max_message_size < 1``) stay ``ValueError`` —
+caller bugs, not wire violations."""
 
 import pytest
 
@@ -106,16 +94,9 @@ class TestNodeInfoRoleRaisesEncodeError:
 
 
 class TestConnectRequestAddressTypeRaisesEncodeError:
-    """Sibling-discipline pin matching ``AddRequest.address`` /
-    ``DumpRequest.name`` / ``OpenRequest.name``: ``_ConnectRequest``
-    gates its ``address`` field at construction with an explicit
-    ``isinstance(address, str)`` check.
-
-    Without the gate, ``_ConnectRequest(node_id=1, address=b"x:1")``
-    would construct successfully and only fail late at
-    ``encode_body``'s ``encode_text`` call, after the bad value was
-    stored in a dataclass field that may be repr'd into logs.
-    """
+    """``_ConnectRequest`` gates ``address`` with an ``isinstance(str)`` check
+    at construction; without it a bad value fails late at ``encode_body``
+    after being stored in a field that may be repr'd into logs."""
 
     @pytest.mark.parametrize("bad", [b"x:1", None, 9001, ("host", 9001), ["host", 9001]])
     def test_non_str_address_rejected(self, bad: object) -> None:
@@ -138,14 +119,9 @@ class TestDumpRequestNameTypeRaisesEncodeError:
 
 
 class TestOpenRequestNameTypeRaisesEncodeError:
-    """Sibling discipline pin: PrepareRequest.sql / _ConnectRequest.address
-    / AddRequest.address / DumpRequest.name all gate their text fields at
-    construction with an explicit ``isinstance(..., str)`` check. Without
-    the gate, ``OpenRequest(name=b"db", flags=0)`` constructs successfully
-    and only fails late at ``encode_body``'s ``encode_text`` call, after
-    the bad value has been stored in a dataclass field that may be
-    repr'd into logs or threaded through caller code.
-    """
+    """``OpenRequest`` gates ``name``/``vfs`` with ``isinstance(str)`` at
+    construction; without it a bad value fails late at ``encode_body`` after
+    being stored in a field that may be repr'd into logs."""
 
     @pytest.mark.parametrize("bad", [b"db.sqlite", None, 0, ["db"], (1, 2)])
     def test_non_str_name_rejected(self, bad: object) -> None:
@@ -158,14 +134,11 @@ class TestOpenRequestNameTypeRaisesEncodeError:
             OpenRequest(name="db", flags=0, vfs=bad)  # type: ignore[arg-type]
 
     def test_ordinary_str_name_and_vfs_accepted(self) -> None:
-        """Pin baseline: well-typed str fields construct without error."""
         req = OpenRequest(name="users_db", flags=0, vfs="")
         assert req.name == "users_db"
         assert req.vfs == ""
 
 
-# NOTE: ``ServersResponse.decode_body`` validates the
-# ``unknown_role_policy`` kwarg and raises ``DecodeError`` (not
-# ``EncodeError``) — every error from a ``decode_*`` path surfaces
-# under ``DecodeError``. The pin lives at
-# ``test_servers_response_unknown_role_policy.py::test_invalid_policy_raises_decode_error``.
+# ``ServersResponse.decode_body``'s ``unknown_role_policy`` raises
+# ``DecodeError`` (decode-path), not ``EncodeError``; pinned in
+# test_servers_response_unknown_role_policy.py.

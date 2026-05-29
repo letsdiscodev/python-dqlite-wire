@@ -1,24 +1,8 @@
-"""Pin: ``MessageDecoder.decode_bytes`` (reached via the
-``decode_message`` convenience helper) rejects envelope trailing
-bytes beyond ``HEADER_SIZE + body_size``.
-
-Every per-message decoder (FailureResponse, LeaderResponse,
-RowsResponse, ServersResponse, FilesResponse, all request decoders)
-maintains a strict ``if offset != len(data): raise DecodeError
-("trailing bytes")`` posture for its own body. The envelope-level
-strip in ``MessageDecoder.decode_bytes`` previously sliced silently
-on any input length >= ``HEADER_SIZE + body_size`` — so a caller
-passing ``data = header + body + garbage`` got a successful decode
-with no indication that the input was malformed.
-
-The streaming path (``ReadBuffer.read_message``) returns exactly
-``HEADER_SIZE + body_size`` bytes so the envelope-level strict check
-is unreachable through streaming. But ``decode_bytes`` /
-``decode_message`` exposes the laxness to direct callers (mock
-servers, golden-byte harnesses, fuzzers, packet replay tools).
-Strict-decode parity with the per-message decoders is the
-documented invariant.
-"""
+"""Pin: ``MessageDecoder.decode_bytes`` (and the ``decode_message`` helper)
+rejects envelope trailing bytes beyond ``HEADER_SIZE + body_size``, for
+strict-decode parity with the per-message body decoders. The streaming path
+returns exact-length frames, so only direct callers hit the previously-lax
+envelope strip."""
 
 from __future__ import annotations
 
@@ -30,7 +14,6 @@ from dqlitewire.messages.responses import LeaderResponse
 
 
 def test_decode_message_rejects_envelope_trailing_bytes() -> None:
-    """A valid frame + trailing garbage is rejected as malformed."""
     msg = LeaderResponse(node_id=5, address="host:9001")
     valid_bytes = encode_message(msg)
     with pytest.raises(DecodeError, match="trailing"):
@@ -38,7 +21,6 @@ def test_decode_message_rejects_envelope_trailing_bytes() -> None:
 
 
 def test_decode_message_accepts_exact_length() -> None:
-    """A valid frame with no trailing bytes still decodes cleanly."""
     msg = LeaderResponse(node_id=5, address="host:9001")
     valid_bytes = encode_message(msg)
     decoded = decode_message(valid_bytes)
@@ -47,8 +29,7 @@ def test_decode_message_accepts_exact_length() -> None:
 
 
 def test_decode_bytes_rejects_envelope_trailing_bytes_via_class() -> None:
-    """Same reject via the ``MessageDecoder.decode_bytes`` entry
-    point (not just the convenience helper)."""
+    """Same reject via the ``MessageDecoder.decode_bytes`` entry point."""
     msg = LeaderResponse(node_id=5, address="host:9001")
     valid_bytes = encode_message(msg)
     decoder = MessageDecoder(is_request=False)
@@ -57,9 +38,8 @@ def test_decode_bytes_rejects_envelope_trailing_bytes_via_class() -> None:
 
 
 def test_decode_message_short_input_still_diagnoses_short_body() -> None:
-    """Regression: the existing 'body too short' diagnostic still
-    fires for the under-size case — the new check covers only
-    over-size."""
+    """The 'body too short' diagnostic still fires for under-size input — the
+    trailing-bytes check covers only over-size."""
     from dqlitewire.constants import ResponseType
     from dqlitewire.messages.base import Header
 
@@ -71,9 +51,8 @@ def test_decode_message_short_input_still_diagnoses_short_body() -> None:
 
 
 def test_decode_message_zero_trailing_bytes_is_canonical() -> None:
-    """A frame with exactly ``HEADER_SIZE + body_size`` bytes is the
-    canonical wire shape and must decode cleanly. Pin against a
-    future regression that incorrectly rejects exact-length frames."""
+    """Exact-length frames are canonical and must decode cleanly (guard
+    against a regression that rejects them)."""
     from dqlitewire.constants import HEADER_SIZE
     from dqlitewire.messages.responses import FailureResponse
 

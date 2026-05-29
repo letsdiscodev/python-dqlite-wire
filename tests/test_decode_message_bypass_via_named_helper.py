@@ -1,11 +1,7 @@
-"""Pin: the stateless ``decode_message`` helper routes its handshake
-bypass through the named ``MessageDecoder._force_handshake_for_stateless``
-method rather than writing ``_handshake_done`` / ``_version`` directly.
-
-The direct private-attr write is mechanically equivalent today but
-would silently bypass any future property setter or observability
-hook added to the handshake state machine. Centralising the bypass
-on a single named method gives a forward-compat anchor.
+"""``decode_message`` routes its handshake bypass through the named
+``MessageDecoder._force_handshake_for_stateless`` rather than writing
+``_handshake_done`` / ``_version`` directly, so a future property setter
+or observability hook isn't silently bypassed.
 """
 
 from __future__ import annotations
@@ -28,17 +24,14 @@ def test_decode_message_does_not_write_handshake_done_directly() -> None:
 
 
 def test_force_handshake_for_stateless_rejects_unsupported_version() -> None:
-    """Defense-in-depth re-validation: a future refactor that drops the
-    constructor's version check must not silently smuggle bogus values
-    past the bypass helper."""
+    """The bypass helper re-validates the version even if the constructor's
+    check is later dropped."""
     decoder = MessageDecoder(is_request=True)
     with pytest.raises(HandshakeError, match="Unsupported protocol version"):
         decoder._force_handshake_for_stateless(0xDEADBEEF)
 
 
 def test_decode_message_round_trip_request_unchanged() -> None:
-    """Behaviour-preservation: a round-tripped request decodes equal to
-    its encoded form (the bypass is mechanically equivalent)."""
     msg = LeaderRequest()
     wire = encode_message(msg)
     decoded = decode_message(wire, is_request=True, version=PROTOCOL_VERSION)

@@ -1,32 +1,5 @@
-"""Pin: ``NodeInfo.__post_init__`` rejects the raft-config-invariant
-violations ``(node_id=0, *)`` and ``(node_id != 0, address="")`` so a
-caller-built malformed value can't reach ``ServersResponse.encode_body``
-and emit bytes the same package's ``ServersResponse.decode_body`` will
-reject.
-
-Upstream ``dqlite-upstream/src/gateway.c::encodeServer`` populates each
-entry from ``raft->configuration.servers``, which the Raft API
-documents as requiring ``node_id >= 1`` and a non-empty address (the
-upstream ``Add`` request rejects empty addresses). So the only
-legitimate per-entry shape is ``(>=1, non-empty)``.
-
-The decoder side has rejected these shapes since a prior cycle
-(``ServersResponse.decode_body``'s raft-configuration invariant
-check). The encoder side did not — a caller could:
-
-    ServersResponse(nodes=[NodeInfo(node_id=0, address="evil", role=VOTER)]).encode_body()
-
-producing wire bytes the same package's ``decode_body`` then refused.
-Mock-server / proxy / golden-byte authors got values that round-
-tripped in neither direction.
-
-Symmetric with the LeaderResponse encode-side fix in
-``test_leader_response_encode_side_atomicity.py``. The check lives on
-``NodeInfo.__post_init__`` rather than on ``ServersResponse.encode_body``
-because there is no legacy decoder that produces ``(0, addr)`` entries
-(unlike ``LeaderResponse.decode_body_legacy``) — every existing
-construction site uses the legitimate shape. Failing fast at the
-``NodeInfo`` caller frame is the cleanest fail point.
+"""``NodeInfo.__post_init__`` rejects raft-config violations ``(node_id=0, *)`` and
+``(node_id != 0, address="")``; only ``(>=1, non-empty)`` is legitimate per upstream Raft.
 """
 
 from __future__ import annotations
@@ -39,37 +12,31 @@ from dqlitewire.messages.responses import NodeInfo, ServersResponse
 
 
 def test_zero_id_with_nonempty_address_rejected_at_construction() -> None:
-    """``NodeInfo.__post_init__`` rejects ``node_id=0``; raft node ids
-    are >= 1 by invariant."""
+    """Raft node ids are >= 1 by invariant."""
     with pytest.raises(EncodeError, match="node_id"):
         NodeInfo(node_id=0, address="evil:9001", role=NodeRole.VOTER)
 
 
 def test_zero_id_with_empty_address_rejected_at_construction() -> None:
-    """``(0, "")`` is meaningful in ``LeaderResponse`` ("no leader
-    known") but inside a ServersResponse entry it represents a
-    phantom no-op node. Rejected for the same reason."""
+    """``(0, "")`` means "no leader" in LeaderResponse but is a phantom node here."""
     with pytest.raises(EncodeError, match="node_id"):
         NodeInfo(node_id=0, address="", role=NodeRole.VOTER)
 
 
 def test_nonzero_id_with_empty_address_rejected_at_construction() -> None:
-    """A ``node_id != 0`` entry must carry a routable address — the
-    upstream ``Add`` request requires non-empty address."""
+    """A ``node_id != 0`` entry must carry a routable address."""
     with pytest.raises(EncodeError, match="address"):
         NodeInfo(node_id=42, address="", role=NodeRole.VOTER)
 
 
 def test_nonzero_id_with_nonempty_address_accepted() -> None:
-    """The only legitimate shape ``(>=1, non-empty)``."""
     node = NodeInfo(node_id=5, address="host:9001", role=NodeRole.VOTER)
     assert node.node_id == 5
     assert node.address == "host:9001"
 
 
 def test_construction_reject_message_includes_caller_value() -> None:
-    """The construction-time reject diagnostic identifies which caller-
-    supplied field was malformed."""
+    """The reject diagnostic identifies which field was malformed."""
     with pytest.raises(EncodeError) as exc_info:
         NodeInfo(node_id=0, address="phantom:1234", role=NodeRole.VOTER)
     diag = str(exc_info.value)
@@ -82,8 +49,6 @@ def test_construction_reject_message_includes_caller_value() -> None:
 
 
 def test_servers_response_round_trip_unchanged_for_valid_shapes() -> None:
-    """Regression: a normal multi-node ServersResponse still round-
-    trips cleanly through the encoder + decoder pair."""
     from dqlitewire.codec import MessageDecoder, encode_message
 
     msg = ServersResponse(
@@ -103,10 +68,7 @@ def test_servers_response_round_trip_unchanged_for_valid_shapes() -> None:
 
 
 def test_empty_servers_response_still_encodes_cleanly() -> None:
-    """Regression: an empty ServersResponse (zero nodes) is the
-    canonical "cluster topology unknown" shape and must encode
-    cleanly. The atomicity check fires on each NodeInfo, not on the
-    container, so an empty list bypasses it."""
+    """Empty ServersResponse ("topology unknown") encodes cleanly: the check fires per-NodeInfo."""
     from dqlitewire.codec import MessageDecoder, encode_message
 
     msg = ServersResponse(nodes=[])
@@ -118,14 +80,11 @@ def test_empty_servers_response_still_encodes_cleanly() -> None:
 
 
 def test_pre_existing_decode_side_reject_still_works() -> None:
-    """Regression: the decode-side reject for the same shape still
-    fires (defense in depth against a malicious peer that bypasses
-    Python construction via raw bytes)."""
+    """Decode-side reject also fires: defense against a peer bypassing Python construction."""
     from dqlitewire.exceptions import DecodeError
     from dqlitewire.types import encode_text, encode_uint64
 
-    # Hand-build a (0, non-empty, VOTER) entry frame WITHOUT going
-    # through the Python constructor.
+    # Hand-build a (0, non-empty, VOTER) frame, bypassing the constructor.
     body = (
         encode_uint64(1)  # count = 1
         + encode_uint64(0)  # node_id = 0 (invalid)

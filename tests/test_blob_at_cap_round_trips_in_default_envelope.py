@@ -1,17 +1,7 @@
-"""A blob at the documented ``_MAX_BLOB_SIZE`` cap must round-trip
-through a default ``MessageDecoder`` (no ``max_message_size``
-override). Mirror for TEXT cells at ``_MAX_TEXT_VALUE_SIZE``.
-
-The previous fix raised both inner caps to 64 MiB ``"to match"``
-``DEFAULT_MAX_MESSAGE_SIZE`` — but the encoder produced 64 MiB +
-framing-overhead bytes for a 64 MiB payload, and the same-default
-decoder then rejected its own encoder's output with
-``DecodeError``. The cap-vs-envelope arithmetic must leave enough
-margin for the in-row framing (8 message header + 8 col_count + 8
-col_name + 8 row_header + 8 length prefix + 8 row marker = 48
-bytes; rounded to 64 for slop) so a payload at the documented cap
-round-trips.
-"""
+"""A blob at the _MAX_BLOB_SIZE cap (and text at _MAX_TEXT_VALUE_SIZE) must
+round-trip through a default MessageDecoder: the cap sits below
+DEFAULT_MAX_MESSAGE_SIZE by enough to cover in-row framing overhead, so the
+encoder's output is not rejected by its own same-default decoder."""
 
 from __future__ import annotations
 
@@ -23,10 +13,9 @@ from dqlitewire.types import _MAX_BLOB_SIZE, _MAX_TEXT_VALUE_SIZE
 
 
 def test_max_blob_size_leaves_room_for_in_row_framing_overhead() -> None:
-    """Arithmetic pin: ``_MAX_BLOB_SIZE`` must leave at least 48 bytes
-    (worst-case in-row framing) below ``DEFAULT_MAX_MESSAGE_SIZE``. If
-    the constants drift back to exact equality, an encoder at the cap
-    produces wire bytes the same-default decoder rejects."""
+    """_MAX_BLOB_SIZE must leave >= 48 bytes (worst-case in-row framing) below
+    DEFAULT_MAX_MESSAGE_SIZE, else an at-cap encode produces bytes the
+    same-default decoder rejects."""
     overhead = 48  # 8 hdr + 8 cnt + 8 col + 8 row_hdr + 8 len + 8 marker
     margin = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE - _MAX_BLOB_SIZE
     assert margin >= overhead, (
@@ -37,17 +26,15 @@ def test_max_blob_size_leaves_room_for_in_row_framing_overhead() -> None:
 
 
 def test_max_text_value_size_leaves_room_for_in_row_framing_overhead() -> None:
-    """Mirror for TEXT cells. Same overhead budget applies."""
+    """Mirror for TEXT cells."""
     overhead = 48
     margin = ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE - _MAX_TEXT_VALUE_SIZE
     assert margin >= overhead
 
 
 def test_blob_at_documented_cap_round_trips_in_default_decoder() -> None:
-    """End-to-end: a blob of exactly ``_MAX_BLOB_SIZE`` bytes in a
-    single-row ``RowsResponse`` must round-trip through a default
-    ``MessageDecoder``. Previously failed with ``DecodeError`` from
-    the buffer envelope check."""
+    """End-to-end: an at-cap blob in a single-row RowsResponse round-trips
+    through a default MessageDecoder."""
     blob = b"x" * _MAX_BLOB_SIZE
     resp = RowsResponse(
         column_names=["data"],
@@ -67,8 +54,7 @@ def test_blob_at_documented_cap_round_trips_in_default_decoder() -> None:
 
 
 def test_text_at_documented_cap_round_trips_in_default_decoder() -> None:
-    """Mirror end-to-end for TEXT cells. Sanity check on the symmetric
-    cap; if either cap regresses, both this and the blob twin trip."""
+    """Mirror end-to-end for TEXT cells."""
     text = "x" * _MAX_TEXT_VALUE_SIZE
     resp = RowsResponse(
         column_names=["data"],
@@ -79,8 +65,7 @@ def test_text_at_documented_cap_round_trips_in_default_decoder() -> None:
     )
     wire = encode_message(resp)
     assert len(wire) <= ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE
-    # Use a stateful MessageDecoder.feed/decode path symmetric with
-    # production usage, not the convenience decode_message wrapper.
+    # Stateful feed/decode path (production usage), not decode_message.
     dec = MessageDecoder()
     dec.feed(wire)
     decoded = dec.decode()

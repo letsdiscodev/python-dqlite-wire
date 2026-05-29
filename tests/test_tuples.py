@@ -21,15 +21,12 @@ from dqlitewire.types import WireInput
 
 class TestParamsTuple:
     def test_encode_empty(self) -> None:
-        """Empty params should encode to nothing, matching Go behavior."""
+        """Empty params encode to nothing, matching Go."""
         encoded = encode_params_tuple([])
         assert encoded == b""
 
     def test_params_tuple_rejects_unixtime_tag(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Defense in depth: if anything ever produces a UNIXTIME tag on an
-        outgoing param, encode_params_tuple must reject it — the C server
-        cannot decode DQLITE_UNIXTIME inbound.
-        """
+        """Reject a UNIXTIME tag on an outgoing param: the C server can't decode it inbound."""
         from dqlitewire import tuples as tuples_mod
 
         def fake_encode(value: object, value_type: object = None) -> tuple[bytes, ValueType]:
@@ -40,16 +37,9 @@ class TestParamsTuple:
             encode_params_tuple([1_700_000_000])
 
     def test_decode_params_tuple_rejects_unixtime_tag(self) -> None:
-        """Symmetric with the encode-side rejection: a peer that
-        constructs a params-tuple body with type tag 9 (UNIXTIME)
-        must be rejected just as the upstream C server's
-        ``tuple_decoder__next`` does (``default → DQLITE_PARSE``).
-
-        Without this guard, a Python mock-server built on
-        ``decode_params_tuple`` silently accepts what a real C
-        gateway would reject — integration tests on the mock pass
-        and regress when migrated to a real cluster.
-        """
+        """Reject a params-tuple body with type tag 9 (UNIXTIME), matching the C
+        server's ``tuple_decoder__next`` default → DQLITE_PARSE; otherwise a Python
+        mock-server accepts what a real C gateway rejects."""
         import struct
 
         body = (
@@ -66,7 +56,6 @@ class TestParamsTuple:
         assert len(encoded) == 16
         assert encoded[0] == 1  # count
         assert encoded[1] == ValueType.INTEGER  # type code
-        # Verify value: 42 as little-endian int64 at offset 8
         import struct
 
         assert struct.unpack("<q", encoded[8:16])[0] == 42
@@ -78,7 +67,6 @@ class TestParamsTuple:
         assert encoded[1] == ValueType.INTEGER
         assert encoded[2] == ValueType.INTEGER
         assert encoded[3] == ValueType.INTEGER
-        # Roundtrip to verify values
         decoded, _ = decode_params_tuple(encoded)
         assert decoded == [1, 2, 3]
 
@@ -91,7 +79,6 @@ class TestParamsTuple:
         assert encoded[3] == ValueType.FLOAT
         assert encoded[4] == ValueType.NULL
         assert encoded[5] == ValueType.BLOB
-        # Verify full roundtrip
         decoded, _ = decode_params_tuple(encoded)
         assert decoded[0] == 42
         assert decoded[1] == "hello"
@@ -100,29 +87,19 @@ class TestParamsTuple:
         assert decoded[4] == b"blob"
 
     def test_decode_empty(self) -> None:
-        """Empty params data should decode to empty list."""
         values, consumed = decode_params_tuple(b"")
         assert values == []
         assert consumed == 0
 
     def test_decode_rejects_short_data_for_nonzero_count(self) -> None:
-        """``decode_params_tuple(short_data, count=N)`` with N>0 must
-        raise DecodeError when there are not enough bytes for the
-        params header. Pin the diagnostic so a refactor that
-        silently returns an empty list (instead of raising) is
-        caught — that would make the wire silently drop params
-        on a torn read."""
+        """count>0 with too few bytes must raise, not return [] (drops params on a torn read)."""
         from dqlitewire.exceptions import DecodeError
 
         with pytest.raises(DecodeError, match="Not enough data"):
             decode_params_tuple(b"\x00\x00\x00\x00", count=1)
 
     def test_decode_short_data_with_zero_count_returns_empty(self) -> None:
-        """``decode_params_tuple(short_data, count=0)`` is the
-        legitimate "the upstream bound the count to zero, the wire
-        is short but that's fine" path. Returns empty list. Pin
-        this branch alongside the raise-on-nonzero-count branch
-        above so a refactor that conflates them is caught."""
+        """count=0 with short data is legitimate (upstream bound count to zero); returns []."""
         values, consumed = decode_params_tuple(b"\x00\x00\x00\x00", count=0)
         assert values == []
         assert consumed == 0
@@ -130,13 +107,13 @@ class TestParamsTuple:
     def test_roundtrip_integers(self) -> None:
         params = [1, 2, 3, 100, -50]
         encoded = encode_params_tuple(params)
-        decoded, _ = decode_params_tuple(encoded)  # count read from data
+        decoded, _ = decode_params_tuple(encoded)
         assert decoded == params
 
     def test_roundtrip_mixed(self) -> None:
         params: list[WireInput] = [42, "hello", 3.14, None]
         encoded = encode_params_tuple(params)
-        decoded, _ = decode_params_tuple(encoded)  # count read from data
+        decoded, _ = decode_params_tuple(encoded)
         assert decoded[0] == 42
         assert decoded[1] == "hello"
         assert abs(cast(float, decoded[2]) - 3.14) < 0.0001
@@ -148,14 +125,12 @@ class TestParamsTuple:
         encoded = encode_params_tuple(params, schema=1)
         # V1 header: count(4) + 3 types + padding(1) = 8, 3 values = 24, total = 32
         assert len(encoded) == 32
-        # uint32 count in first 4 bytes (little-endian)
         import struct
 
         count = struct.unpack("<I", encoded[:4])[0]
         assert count == 3
 
     def test_roundtrip_v1(self) -> None:
-        """V1 params should roundtrip correctly."""
         params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, schema=1)
         decoded, _ = decode_params_tuple(encoded, schema=1)
@@ -163,25 +138,23 @@ class TestParamsTuple:
         assert decoded[1] == "hello"
 
     def test_decode_zero_count_v0_consumes_header(self) -> None:
-        """Decoding a V0 tuple with count=0 should consume the header word."""
-        # V0: count=0 at byte 0, rest padding = 8 bytes total
+        """Decoding a V0 count=0 tuple consumes the 8-byte header word."""
         data = b"\x00" * 8 + b"\xaa" * 8  # header + trailing data
         values, consumed = decode_params_tuple(data, schema=0)
         assert values == []
-        assert consumed == 8  # one word consumed for the header
+        assert consumed == 8
 
     def test_decode_zero_count_v1_consumes_header(self) -> None:
-        """Decoding a V1 tuple with count=0 should consume the header word."""
+        """Decoding a V1 count=0 tuple consumes the 8-byte header word."""
         import struct
 
-        # V1: uint32 count=0 at bytes 0-3, rest padding = 8 bytes total
         data = struct.pack("<I", 0) + b"\x00" * 4 + b"\xbb" * 8
         values, consumed = decode_params_tuple(data, schema=1)
         assert values == []
-        assert consumed == 8  # one word consumed for the header
+        assert consumed == 8
 
     def test_v0_rejects_more_than_255_params(self) -> None:
-        """V0 schema uses uint8 count, so > 255 params must raise EncodeError."""
+        """V0 uses a uint8 count, so > 255 params must raise EncodeError."""
         import pytest
 
         from dqlitewire.exceptions import EncodeError
@@ -191,12 +164,11 @@ class TestParamsTuple:
             encode_params_tuple(params, schema=0)
 
     def test_v0_255_params_boundary(self) -> None:
-        """Exactly 255 params is the V0 maximum — count byte should be 0xFF."""
+        """Exactly 255 params is the V0 maximum (count byte 0xFF)."""
         params = list(range(255))
         encoded = encode_params_tuple(params, schema=0)
-        assert encoded[0] == 255  # count byte = 0xFF (max uint8)
+        assert encoded[0] == 255
 
-        # Roundtrip
         decoded, consumed = decode_params_tuple(encoded, schema=0)
         assert len(decoded) == 255
         assert decoded == params
@@ -204,20 +176,14 @@ class TestParamsTuple:
 
 
 class TestParamsTupleExternalCount:
-    """Tests for decode_params_tuple with externally provided count.
-
-    When count is externally provided, the data does NOT contain a count
-    field — type codes start at data[0]. The caller must pass buffer_offset
-    accounting for the count field that was consumed externally (1 byte for
-    V0, 4 bytes for V1) so that padding aligns correctly.
-    """
+    """External count: data has no count field (types start at data[0]); caller
+    passes buffer_offset for the externally-consumed count (1 byte V0, 4 bytes V1)
+    so padding aligns."""
 
     def test_decode_with_external_count_v0(self) -> None:
-        """External count should read types from data[0], not data[1]."""
+        """External count reads types from data[0]; buffer_offset=1 accounts for the count byte."""
         params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, schema=0)
-        # Strip the 1-byte count prefix — external count means no count in data.
-        # Pass buffer_offset=1 because the count byte was consumed externally.
         data_without_count = encoded[1:]
         decoded, consumed = decode_params_tuple(
             data_without_count, count=2, schema=0, buffer_offset=1
@@ -226,11 +192,9 @@ class TestParamsTupleExternalCount:
         assert decoded[1] == "hello"
 
     def test_decode_with_external_count_v1(self) -> None:
-        """External count with V1 schema should skip 4-byte count prefix."""
+        """External count with V1 skips the 4-byte count prefix; buffer_offset=4."""
         params: list[WireInput] = [42, "hello"]
         encoded = encode_params_tuple(params, schema=1)
-        # Strip the 4-byte count prefix.
-        # Pass buffer_offset=4 because the count field was consumed externally.
         data_without_count = encoded[4:]
         decoded, consumed = decode_params_tuple(
             data_without_count, count=2, schema=1, buffer_offset=4

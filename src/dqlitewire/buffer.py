@@ -16,22 +16,11 @@ _COMPACT_THRESHOLD: Final[int] = 4096
 class WriteBuffer:
     """Buffer for building wire protocol messages.
 
-    Thread-safety: NOT thread-safe. A single ``WriteBuffer``
-    instance must be owned by one thread (or one asyncio
-    coroutine) at a time. The single-owner contract matches Go's
-    ``driver.Conn`` layer in go-dqlite. ``write_padded`` guards
-    against a specific torn-payload/pad interleave, but that is a
-    narrow defense, not a general thread-safety guarantee.
+    NOT thread-safe: single-owner (one thread/coroutine). ``write_padded``
+    guards only against a torn payload/pad interleave, not general concurrency.
     """
 
     def __reduce__(self) -> NoReturn:
-        # The class only carries a ``bytearray`` — there is no socket
-        # or stream to be "bound to". The rejection is policy-correct
-        # (single-owner mutable state; sharing across processes makes
-        # no sense because consumers would have a divergent view of
-        # the bytes already written) but the message describes the
-        # actual reason rather than inventing a connection binding.
-        # ``type(self).__name__`` so subclasses inherit the right name.
         raise TypeError(
             f"cannot pickle {type(self).__name__!r} object — instances "
             f"hold mutable buffered bytes under a single-owner discipline; "
@@ -42,59 +31,15 @@ class WriteBuffer:
         self._data = bytearray()
 
     def write(self, data: bytes | bytearray | memoryview) -> None:
-        """Append data to buffer.
-
-        Accepts any bytes-like object; ``bytearray.extend`` consumes
-        the buffer protocol so the annotation is widened to match the
-        runtime contract.
-        """
         self._data.extend(data)
 
     def write_padded(self, data: bytes | bytearray | memoryview) -> None:
-        """Append data with padding to word boundary.
-
-        Concurrency contract — narrow:
-
-        - **Within a single call**, the payload and its trailing pad
-          bytes are emitted via a single ``bytearray.extend``, so
-          another thread's bytes cannot land between the payload and
-          its pad. This removes the torn payload/pad split that used
-          to be visible to callers under accidental concurrent misuse.
-
-        - **Across calls**, ``write_padded`` does NOT serialize
-          concurrent writers. Two threads each calling
-          ``write_padded`` succeed in unbounded order — each individual
-          payload is intact and correctly padded, but the inter-payload
-          ordering is not defined. The wire layer relies on
-          per-connection ownership (one task per ``WriteBuffer``) for
-          cross-call ordering; ``write_padded`` protects only the
-          within-call atomicity.
-
-        If multiple threads must share one ``WriteBuffer``, wrap every
-        call site in a ``threading.Lock`` (or ``asyncio.Lock`` for
-        coroutines) at the layer that owns the buffer.
-        """
+        """Append data with NUL padding to the next word boundary."""
         remainder = len(data) % WORD_SIZE
         if remainder:
-            # Single ``extend`` so no torn write is possible: a thread
-            # switch between two ``extend`` calls (one for payload,
-            # one for padding) could land another thread's payload
-            # inside the first thread's padding window, producing
-            # ``b'BBBBBAAA'`` instead of ``b'AAAAA\x00\x00\x00'``.
-            # See ``test_write_padded_no_interleaved_tearing_under_contention``
-            # for the race shape this guards against.
-            #
-            # Pre-build the payload + padding in a local ``bytearray``
-            # so the single ``extend`` consumes one already-contiguous
-            # buffer. The ``+=`` operator extends in place so the
-            # padding bytes are written into the local without a second
-            # allocation. Compared with the previous ``bytes(data) +
-            # b"\x00" * pad`` shape (which allocates a new ``bytes`` of
-            # length ``len(data) + pad`` for the concatenation, on top
-            # of the buffer-protocol consume by ``extend``), peak
-            # allocation drops from ``2 * len(data)`` to roughly
-            # ``len(data)`` — material on the hot encode paths
-            # (``FilesResponse`` dump emission, large BLOB row cells).
+            # Single ``extend`` of a pre-built local so payload and pad
+            # cannot be torn apart by a concurrent writer, and to avoid
+            # the second allocation of a ``bytes(data) + pad`` concat.
             chunk = bytearray(data)
             chunk += b"\x00" * (WORD_SIZE - remainder)
             self._data.extend(chunk)
@@ -102,72 +47,31 @@ class WriteBuffer:
             self._data.extend(data)
 
     def getvalue(self) -> bytes:
-        """Get buffer contents."""
         return bytes(self._data)
 
     def __len__(self) -> int:
         return len(self._data)
 
     def clear(self) -> None:
-        """Clear the buffer."""
         self._data.clear()
 
 
 class ReadBuffer:
-    """Buffer for reading wire protocol messages from a stream.
+    """Buffer for reading wire protocol messages from a stream; handles
+    partial reads and framing.
 
-    Handles partial reads and message framing.
-
-    Thread-safety: NOT thread-safe. A single ``ReadBuffer`` instance
-    must be owned by one thread (or one asyncio coroutine) at a
-    time. The single-owner contract matches Go's ``driver.Conn``
-    layer in go-dqlite.
-
-    Concurrent misuse from multiple threads produces **silent data
-    corruption**, not exceptions. Specifically:
-
-    - Two readers can each observe the same ``_pos`` and slice the
-      same message bytes, returning the same message twice while
-      silently skipping the next one (lost update on ``_pos +=``).
-    - Readers can observe torn ``_pos``/``_data`` snapshots across
-      a concurrent ``_maybe_compact()`` call, producing garbage
-      bytes that decode to plausible-looking (but wrong) messages.
-
-    The ``poison()`` mechanism does NOT and CANNOT detect this
-    class of failure. Poison is designed to catch single-owner
-    torn state from interrupted signal delivery. It cannot observe
-    lost-update races or torn reads that produce valid-looking
-    output.
-
-    If you need concurrent access to a single wire stream, wrap
-    every call site in an ``asyncio.Lock`` (for coroutines) or
-    ``threading.Lock`` (for threads) at the layer that owns the
-    socket and decoder.
+    NOT thread-safe: single-owner (one thread/coroutine). Concurrent misuse
+    silently corrupts data (lost ``_pos`` updates, torn ``_pos``/``_data``
+    snapshots across ``_maybe_compact()``) — ``poison()`` cannot detect this.
     """
 
     DEFAULT_MAX_MESSAGE_SIZE: ClassVar[int] = 64 * 1024 * 1024  # 64 MiB
-    # Defense-in-depth upper bound on ``max_message_size``. Mirrors the
-    # C server's per-frame structural ceiling at
-    # ``dqlite-upstream/src/conn.c:169``
-    # (``if (8 * c->request.words > UINT32_MAX) return DQLITE_ERROR``),
-    # which rejects any single inbound frame above ``UINT32_MAX`` bytes.
-    # A Python ``max_message_size`` above this bound can never
-    # legitimately see a frame the C server would accept, so the cap
-    # below blocks operator typos / mis-forwarded config values from
-    # silently disabling the composite-frame protection the envelope
-    # is supposed to provide. The class-attribute lives on
-    # ``ReadBuffer`` so both the encoder and the decoder can import it
-    # without a magic-number duplication.
+    # Mirrors the C server's per-frame ceiling at dqlite-upstream/src/conn.c:169
+    # (rejects any single frame above UINT32_MAX bytes), so a misconfigured
+    # max_message_size above it can never disable the composite-frame guard.
     MAX_MESSAGE_SIZE_CEILING: ClassVar[int] = 0xFFFFFFFF
 
     def __reduce__(self) -> NoReturn:
-        # The class only carries ``bytearray + ints + None`` — no
-        # socket or stream reference. The rejection is policy-correct
-        # (per-stream-position mutable state under single-owner
-        # discipline; the read cursor and the poison machinery cannot
-        # be shared across processes) but the message describes the
-        # actual reason rather than inventing a connection binding.
-        # ``type(self).__name__`` so subclasses inherit the right name.
         raise TypeError(
             f"cannot pickle {type(self).__name__!r} object — instances "
             f"hold per-stream-position mutable state under a single-owner "
@@ -197,12 +101,10 @@ class ReadBuffer:
         return self._poisoned is not None
 
     def poison(self, error: Exception) -> None:
-        """Mark the buffer as unrecoverable.
+        """Mark the buffer unrecoverable; every method raises until reset().
 
-        Call this when a decode error means the stream offset is no longer
-        trustworthy (parsing consumed bytes but failed afterwards). Once
-        poisoned, every public method raises ``ProtocolError`` until
-        ``reset()`` is called.
+        Call when a decode error means the stream offset is no longer trustworthy
+        (bytes were consumed but parsing failed afterwards).
         """
         if self._poisoned is None:
             self._poisoned = error
@@ -222,12 +124,10 @@ class ReadBuffer:
             ) from self._poisoned
 
     def _check_torn_size(self, size_words: int) -> None:
-        """Poison and raise if size_words is structurally impossible.
+        """Poison and raise if size_words exceeds the 4-byte field width.
 
-        The wire size field is 4 bytes (uint32 LE), so any value
-        > 0xFFFFFFFF indicates a torn read from a concurrent realloc
-        on a free-threaded build. Distinguish from legitimate oversized
-        messages so the non-poisoning DecodeError contract is preserved.
+        A value > 0xFFFFFFFF can only come from a torn read (concurrent realloc
+        on a free-threaded build), distinct from a legitimate oversized message.
         """
         if size_words > 0xFFFFFFFF:
             err = DecodeError(
@@ -238,94 +138,30 @@ class ReadBuffer:
             raise err
 
     def feed(self, data: bytes) -> None:
-        """Add received data to the buffer.
+        """Add received data to the buffer; discard bytes while mid-skip of an
+        oversized message.
 
-        If an oversized message is being skipped (after skip_message() returned
-        False), incoming bytes are silently discarded until the full oversized
-        message has been consumed.
-
-        Raises ``ProtocolError`` if the buffer is poisoned — callers must
-        ``reset()`` (or ``clear()``) before feeding further data.
-        Raises ``DecodeError`` (non-poisoning) if the resulting buffer size
-        would exceed ``max_message_size``.
-
-        **Recovery semantics on the size-projection ``DecodeError`` are
-        narrower than the read-side oversize path.** The rejected ``data``
-        argument is silently dropped (never appended).
-
-        - If the rejection fires on an **empty buffer** with no skip
-          in flight, no in-flight wire state has been lost: the chunk
-          that overflowed was never appended and there are no
-          buffered bytes to clobber. ``reset()`` / ``clear()`` is
-          safe — there is no in-flight message body to drain. This is
-          the only case where the documented safe-reset recovery
-          actually holds.
-        - If the rejection fires while ANY in-flight wire state is
-          present — either ``_skip_remaining > 0`` (mid-skip of an
-          oversized message) or the buffer already holds ANY
-          unconsumed bytes (waiting on the rest of a header or on a
-          frame's body) — the buffer self-poisons. The buffered
-          prefix includes wire bytes the caller cannot safely
-          discard: the next peer bytes are the continuation, and
-          ``reset()`` would clobber the prefix and silently desync
-          the next ``feed()``. The widened predicate covers both
-          the partial-header (1-7 stray bytes) and full
-          header+body cases. The caller's next feed / decode raises
-          ``PoisonedError`` so ``reset()`` cannot be misapplied —
-          the only correct recovery is to drop the connection.
-        - This applies symmetrically to BOTH the entry-side
-          oversize reject (``len(data) > 2 * max_message_size``)
-          and the projection-side reject
-          (``projected > max_message_size``).
-
-        The read-side oversize path (``read_message()`` raising
-        ``DecodeError`` after the header is decoded) IS genuinely
-        recoverable via ``skip_message()``: the bytes are still in the
-        buffer, the declared length is known from the header, and
-        ``skip_message`` consumes the over-large message (using
-        ``_skip_remaining`` to drain any tail still on the wire).
-
-        Signal-safety note: the mutation block below is
-        wrapped in ``try/except BaseException`` so that any async
-        exception leaking out — most notably between the
-        ``_maybe_compact()`` return and the subsequent
-        ``_data.extend(data)``, a reachable RESUME delivery point in
-        3.11+ — poisons the buffer. The ``DecodeError`` size check
-        is deliberately kept OUTSIDE the try block so the buffer is
-        not poisoned: a caller in the safe-reset case above can
-        recover.
+        Raises ``ProtocolError`` if poisoned. Raises a non-poisoning
+        ``DecodeError`` if the buffer would exceed ``max_message_size``. The
+        rejected ``data`` is never appended: ``reset()`` recovery is only safe
+        when the buffer was empty with no skip in flight — otherwise the reject
+        self-poisons because the buffered prefix is unconsumed wire state that
+        ``reset()`` would clobber and desync. (The read-side oversize path in
+        ``read_message`` stays recoverable via ``skip_message``.)
         """
         self._check_poisoned()
-        # Early oversize reject: a caller that hands in a chunk larger
-        # than ``2 * max_message_size`` is certainly misbehaving (legal
-        # messages fit in one cap, bursty reads occasionally double).
-        # Rejecting at entry means ``ReadBuffer`` — which is part of
-        # the public API — surfaces the misuse before the caller's
-        # upstream buffer allocation grows unbounded. The factor of
-        # two allows a caller to legitimately push a single chunk
-        # containing the tail of a max-size message followed by a
-        # fresh max-size message.
+        # Reject a chunk > 2x max_message_size at entry (legal messages fit one
+        # cap, bursty reads occasionally double) before upstream allocation grows
+        # unbounded; the size check stays OUTSIDE the try below so a safe-reset
+        # caller is not poisoned.
         if len(data) > 2 * self._max_message_size:
             err = DecodeError(
                 f"feed data ({len(data)}) exceeds 2x max_message_size "
                 f"({self._max_message_size}); split into smaller chunks"
             )
-            # Self-poison when ANY in-flight wire state is present so
-            # the documented "safe reset" case cannot be misapplied.
-            # Two sub-cases trip this:
-            # - ``_skip_remaining > 0``: an oversized message is mid-
-            #   skip and the rejected chunk contained body bytes that
-            #   were not discarded. The wire offset is unrecoverable.
-            # - The buffer already holds ANY unconsumed bytes — a
-            #   partial header (1-7 stray bytes) or a header+body
-            #   in flight. A peer that chunked a header across two
-            #   sends and tripped the cap on the second leaves
-            #   1-7 stray header bytes; ``reset()`` would clobber
-            #   them and the next feed would mis-frame from a wrong
-            #   offset with no further diagnostic. The widened
-            #   predicate (``available() > 0``) matches
-            #   ``_skip_remaining``'s strictness. Mirrors the
-            #   projection-side discipline below.
+            # Self-poison when any in-flight wire state is present (mid-skip, or
+            # any unconsumed buffered bytes) so the safe-reset case cannot be
+            # misapplied — reset() would clobber the prefix and mis-frame.
             inflight_state = (len(self._data) - self._pos) > 0
             if self._skip_remaining > 0 or inflight_state:
                 if self._skip_remaining > 0:
@@ -333,11 +169,8 @@ class ReadBuffer:
                     self._poison_after_skip = None
                 self.poison(err)
             raise err
-        # Size check BEFORE any mutation: the DecodeError raised here
-        # must NOT poison the buffer, because its caller-recovery
-        # contract is "drain or reset() and continue". The check
-        # accounts for the would-be skip-discard so that a buffer
-        # in skip mode can legitimately accept incoming bytes whose
+        # Projection check before any mutation (must not poison). Account for
+        # the would-be skip-discard so a buffer mid-skip can accept bytes whose
         # post-discard remainder fits within max_message_size.
         if self._skip_remaining > 0:
             effective_len = max(0, len(data) - self._skip_remaining)
@@ -346,29 +179,13 @@ class ReadBuffer:
         projected = len(self._data) - self._pos + effective_len
         if projected > self._max_message_size:
             err = DecodeError(f"Buffer size {projected} exceeds maximum {self._max_message_size}")
-            # Self-poison when ANY in-flight wire state is present so
-            # the caller's documented ``reset()`` recovery cannot be
-            # misapplied. Two sub-cases trip this — symmetric with the
-            # entry-side oversize reject above:
-            # - ``_skip_remaining > 0``: an oversized message is mid-
-            #   skip and the rejected chunk contained body bytes
-            #   that were not discarded; offset unrecoverable.
-            # - The buffer already holds ANY unconsumed bytes —
-            #   partial header (1-7 stray) or full header+body in
-            #   flight. ``reset()`` would clobber the buffered prefix
-            #   and the next feed would mis-frame from a wrong offset
-            #   silently. Widened from ``>= HEADER_SIZE`` to
-            #   ``available() > 0`` so a peer chunking the header
-            #   across two sends cannot trip the cap and then desync
-            #   the caller via the documented safe-reset path.
+            # Self-poison when any in-flight wire state is present (symmetric
+            # with the entry-side reject above) so reset() recovery cannot be
+            # misapplied — it would clobber the prefix and mis-frame.
             inflight_state = (len(self._data) - self._pos) > 0
             if self._skip_remaining > 0 or inflight_state:
                 if self._skip_remaining > 0:
-                    # Clear the skip-tracking fields so any post-poison
-                    # introspection (or a future recover() helper) sees
-                    # consistent unrecoverable state. Mirrors reset()'s
-                    # discipline; the buffer is unrecoverable until reset()
-                    # regardless, so this is for diagnostic consistency.
+                    # Clear skip-tracking for consistent post-poison state.
                     self._skip_remaining = 0
                     self._poison_after_skip = None
                 self.poison(err)
@@ -378,9 +195,8 @@ class ReadBuffer:
                 discard = min(len(data), self._skip_remaining)
                 data = data[discard:]
                 self._skip_remaining -= discard
-                # Trigger deferred poison once the capped skip completes.
-                # The stream is desynchronized — remaining peer bytes were
-                # not discarded — so all further reads would be garbage.
+                # Fire deferred poison once the capped skip completes: the stream
+                # is desynchronized, so further reads would be garbage.
                 if self._skip_remaining == 0 and self._poison_after_skip is not None:
                     self._poisoned = self._poison_after_skip
                     self._poison_after_skip = None
@@ -389,11 +205,8 @@ class ReadBuffer:
             self._maybe_compact()
             self._data.extend(data)
         except BaseException as e:
-            # Any torn state here is unrecoverable — subsequent
-            # callers MUST see poison rather than silently reading
-            # from a buffer with a gap. ``poison()`` is first-error-
-            # wins, so if ``_maybe_compact`` already poisoned with
-            # its own cause, that original cause is preserved.
+            # Torn state here is unrecoverable; poison so the next caller fails
+            # fast rather than reading from a buffer with a gap (first-error-wins).
             if self._poisoned is None:
                 if isinstance(e, Exception):
                     self._poisoned = e
@@ -402,87 +215,40 @@ class ReadBuffer:
             raise
 
     def has_message(self) -> bool:
-        """Check if a complete message is available.
+        """Check if a complete message is available; total (never raises).
 
-        This predicate is total: it never raises. An oversized header
-        (claiming a body larger than ``max_message_size``) is reported as
-        ``True`` so that the caller's ``while decoder.has_message(): ...``
-        loop proceeds to the consume call, where the error actually surfaces.
-        The raise lives in ``read_message()`` / ``skip_message()``, not here.
-
-        Only the 4-byte ``size_words`` field is inspected. The other header
-        fields (``msg_type``, ``schema_version``, ``reserved``) are not
-        validated at this layer, so a ``True`` return does not imply that
-        the subsequent ``read_message()`` / ``Header.decode`` will succeed.
-        A non-zero ``reserved`` value (rejected by ``Header.decode`` per the
-        upstream C invariant) still reports ``True`` here; the decode path
-        then raises ``DecodeError`` and poisons the buffer.
+        Only ``size_words`` is inspected. An oversized header reports ``True`` so
+        the caller's ``while has_message():`` loop reaches the consume call, where
+        the error actually surfaces; ``True`` does not imply the subsequent
+        decode succeeds (e.g. a non-zero ``reserved`` field).
         """
         available = len(self._data) - self._pos
 
         if available < HEADER_SIZE:
             return False
 
-        # Read size from header (first 4 bytes = size in words)
         size_words = int.from_bytes(self._data[self._pos : self._pos + 4], "little")
-        # Torn-read sanity: if the slice was widened by
-        # a concurrent realloc, report "something to consume" so the
-        # caller's while-loop proceeds to read_message(), which then
-        # poisons. has_message() itself is a total predicate and
-        # must not raise.
         if size_words > 0xFFFFFFFF:  # pragma: no cover
-            # Defensive: ``size_words`` is read from 4 bytes via
-            # ``int.from_bytes(..., "little")`` and so caps at exactly
-            # ``0xFFFFFFFF`` — strictly-greater requires a concurrent
-            # slice-widening that no Python-level test can drive.
-            # Kept as the torn-read shortcut for free-threaded /
-            # signal-interrupted readers.
+            # Torn read from concurrent slice-widening; report "consumable" so
+            # read_message() poisons. Caps at 0xFFFFFFFF, so unreachable in tests.
             return True
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
-            # Report "something to consume" — the consume call will raise.
             return True
 
         return available >= total_size
 
     def peek_header(self) -> tuple[int, int, int] | None:
-        """Peek at the message header without consuming it.
+        """Peek the header without consuming it.
 
-        Returns (size_in_words, message_type, schema_version) or None if not
-        enough data. Raises ``DecodeError`` if the header claims a total
-        message size larger than ``max_message_size``.
-
-        Note the deliberate asymmetry with ``has_message()``: that predicate
-        is total (returns ``True`` for oversized so the documented
-        ``while has_message(): decode()`` loop proceeds to the consume call,
-        which then raises). ``peek_header()`` instead raises immediately
-        because its return value is an attacker-controlled integer that a
-        caller might use directly for allocation, timeout, or routing
-        decisions — silently returning an unbounded value would defeat the
-        ``max_message_size`` guard the caller is presumably relying on. The
-        error message and exception type match ``read_message()`` so the
-        consume-side recovery path (``skip_message()``) applies the same way.
-
-        The ``msg_type`` and ``schema_version`` bytes are returned raw and
-        the 16-bit ``reserved`` field is not inspected. A successful peek
-        therefore does not imply that a subsequent ``Header.decode`` will
-        succeed: a non-zero ``reserved`` value (rejected strictly by
-        ``Header.decode`` per the upstream C invariant) is silently passed
-        through here, and the decode path will then raise and poison the
-        buffer. Callers that need decode-success guarantees must go through
-        ``read_message()``.
-
-        The ``schema_version`` byte is likewise a raw wire value with no
-        per-``msg_type`` bound enforced here — the per-type maximum lives
-        in the codec layer (``_REQUEST_MAX_SCHEMA`` /
-        ``_RESPONSE_MAX_SCHEMA`` in ``codec.py``). Callers
-        using this field for routing / metrics / dispatch should
-        re-validate against the codec's cap before acting on it; the
-        ``read_message`` / ``MessageDecoder.decode`` path enforces the
-        bound itself.
-
-        Raises ``ProtocolError`` if the buffer is poisoned.
+        Returns (size_in_words, message_type, schema_version) or None if short.
+        Raises ``DecodeError`` if the claimed size exceeds ``max_message_size``
+        (raised immediately, unlike ``has_message()``, because the returned size
+        is attacker-controlled and a caller may use it for allocation/routing).
+        ``msg_type``/``schema_version`` are raw: a successful peek does not imply
+        the subsequent ``Header.decode``/codec schema check will succeed.
+        Raises ``ProtocolError`` if poisoned.
         """
         self._check_poisoned()
         available = len(self._data) - self._pos
@@ -494,10 +260,8 @@ class ReadBuffer:
         self._check_torn_size(size_words)
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
         if total_size > self._max_message_size:
-            # Format size in hex: under concurrent misuse
-            # `total_size` can be a torn bigint whose decimal form exceeds
-            # CPython's 4300-digit int-to-str limit, which would make this
-            # f-string itself raise ValueError. Hex formatting has no cap.
+            # Hex format: a torn bigint's decimal form can exceed CPython's
+            # 4300-digit int-to-str limit and make this f-string itself raise.
             raise DecodeError(
                 f"Message size {total_size:#x} bytes exceeds maximum {self._max_message_size}"
             )
@@ -525,10 +289,8 @@ class ReadBuffer:
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
         if total_size > self._max_message_size:
-            # Format size in hex: under concurrent misuse
-            # `total_size` can be a torn bigint whose decimal form exceeds
-            # CPython's 4300-digit int-to-str limit, which would make this
-            # f-string itself raise ValueError. Hex formatting has no cap.
+            # Hex format: a torn bigint's decimal form can exceed CPython's
+            # 4300-digit int-to-str limit and make this f-string itself raise.
             raise DecodeError(
                 f"Message size {total_size:#x} bytes exceeds maximum {self._max_message_size}"
             )
@@ -551,22 +313,13 @@ class ReadBuffer:
         return message
 
     def skip_message(self) -> bool:
-        """Skip the current message in the buffer.
+        """Skip the current message; True only if fully skipped AND still usable.
 
-        For normal-sized messages (within max_message_size), waits until the
-        full message is available before skipping. For oversized messages that
-        exceed max_message_size, discards available bytes and tracks the
-        remainder via ``_skip_remaining``; subsequent ``feed()`` calls will
-        silently discard the remaining oversized bytes.
-
-        Returns True if a message was fully skipped AND the buffer remains
-        usable. Returns False if not enough data for a header, a normal-sized
-        message is still incomplete, an oversized message skip is still in
-        progress (check ``is_skipping``), OR the immediate-poison sub-branch
-        fired (the declared message exceeded ``max_message_size`` and was
-        synchronously capped — caller must ``reset()`` before continuing).
-
-        Raises ``ProtocolError`` if the buffer is poisoned.
+        Normal messages skip only when complete. Oversized messages discard
+        available bytes and track the rest via ``_skip_remaining`` for ``feed()``
+        to drain. Returns False on a short header, an incomplete message, an
+        in-progress skip (``is_skipping``), or a synchronous cap-poison.
+        Raises ``ProtocolError`` if poisoned.
         """
         self._check_poisoned()
         available = len(self._data) - self._pos
@@ -577,8 +330,8 @@ class ReadBuffer:
         self._check_torn_size(size_words)
         total_size = HEADER_SIZE + (size_words * WORD_SIZE)
 
-        # Normal-sized message: only skip when complete to avoid
-        # stream corruption from partially consumed messages.
+        # Skip a normal-sized message only when complete (partial skip corrupts
+        # the stream).
         if total_size <= self._max_message_size and available < total_size:
             return False
 
@@ -586,26 +339,20 @@ class ReadBuffer:
             if total_size <= self._max_message_size:
                 self._pos += total_size
             else:
-                # Oversized message: discard what we have and track remaining
-                # bytes to be discarded in subsequent feed() calls.
-                # Cap to max_message_size to prevent amplification attacks
-                # where an 8-byte header claiming a ~32 GiB body would cause
-                # that much legitimate data to be silently discarded.
+                # Oversized: discard what we have, track the rest for feed().
+                # Cap to max_message_size to block amplification (an 8-byte
+                # header claiming ~32 GiB discarding that much real data).
                 effective_total = min(total_size, self._max_message_size)
                 skip_now = min(effective_total, available)
                 self._pos += skip_now
                 self._skip_remaining = effective_total - skip_now
-                # If the cap is smaller than the actual message, mark for
-                # deferred poisoning. We cannot poison immediately because
-                # feed() needs to keep discarding bytes during the skip.
-                # Once _skip_remaining reaches 0, feed() will poison.
+                # Cap < actual message: poison, but defer while feed() still
+                # has bytes to discard (it poisons once _skip_remaining hits 0).
                 if effective_total < total_size:
                     if self._skip_remaining == 0:
-                        # Capped skip completed immediately — poison now.
-                        # Return False below: the buffer is no longer usable,
-                        # so the natural ``if buf.skip_message(): continue``
-                        # caller pattern must NOT proceed. The raw
-                        # ``_skip_remaining == 0`` value would say True here.
+                        # Capped skip already done — poison now and return False
+                        # (buffer unusable) so the caller's
+                        # ``if skip_message(): continue`` does not proceed.
                         self.poison(
                             DecodeError(
                                 f"Oversized message skip capped to "
@@ -616,7 +363,6 @@ class ReadBuffer:
                         self._maybe_compact()
                         return False
                     else:
-                        # Deferred: feed() will poison once skip completes.
                         self._poison_after_skip = DecodeError(
                             f"Oversized message skip capped to "
                             f"{effective_total} of {total_size} bytes; "
@@ -634,11 +380,9 @@ class ReadBuffer:
         return self._skip_remaining == 0
 
     def read_bytes(self, n: int) -> bytes | None:
-        """Read exactly n bytes from the buffer.
+        """Read exactly n bytes, or None if fewer are available.
 
-        Returns None if not enough data available.
-        Raises ``ProtocolError`` if the buffer is poisoned.
-        Raises ``ValueError`` if *n* is negative.
+        Raises ``ProtocolError`` if poisoned, ``ValueError`` if *n* is negative.
         """
         if n < 0:
             raise ValueError(f"n must be non-negative, got {n}")
@@ -661,14 +405,10 @@ class ReadBuffer:
         return data
 
     def peek_bytes(self, n: int) -> bytes | None:
-        """Return the next n bytes without advancing the read position.
+        """Return the next n bytes without advancing, or None if fewer available.
 
-        Returns None if fewer than n bytes are available. Symmetric with
-        ``read_bytes(n)`` but non-consuming — use this when you need to
-        validate the bytes before deciding whether to consume them.
-
-        Raises ``ProtocolError`` if the buffer is poisoned.
-        Raises ``ValueError`` if *n* is negative.
+        Non-consuming counterpart to ``read_bytes(n)``: validate before consuming.
+        Raises ``ProtocolError`` if poisoned, ``ValueError`` if *n* is negative.
         """
         if n < 0:
             raise ValueError(f"n must be non-negative, got {n}")
@@ -679,38 +419,16 @@ class ReadBuffer:
         return bytes(self._data[self._pos : self._pos + n])
 
     def _maybe_compact(self) -> None:
-        """Compact buffer if we've consumed a lot.
+        """Compact the buffer once enough has been consumed.
 
-        Signal-safety note: this method mutates two
-        attributes — ``_data`` and ``_pos`` — which compile to two
-        ``STORE_ATTR`` bytecodes. CPython checks for pending signals
-        at bytecode line transitions, so a ``KeyboardInterrupt`` (or
-        any ``PyErr_SetAsyncExc`` delivery) landing between the two
-        stores used to leave the buffer with a freshly compacted
-        ``_data`` but a stale ``_pos`` still pointing at the old
-        offset. ``available()`` would return a negative number, reads
-        would silently return nonsense, and no poison fired because
-        no exception originated inside the buffer — the interrupt was
-        purely external. A single-owner caller pressing Ctrl-C during
-        a busy decode loop would end up with silent message dropout.
-
-        We cannot make the two stores atomic at the Python level, but
-        we can catch ``BaseException`` and poison so that the next
-        caller fails fast with ``ProtocolError`` instead of reading
-        from an inconsistent offset.
+        Catch BaseException and poison: an async exception (KeyboardInterrupt /
+        PyErr_SetAsyncExc) between the ``_data`` and ``_pos`` stores would leave
+        a compacted ``_data`` with a stale ``_pos`` and silently corrupt reads.
         """
         if self._pos <= _COMPACT_THRESHOLD:
             return
-        # Half-fill amortisation: only compact when at least half
-        # the buffer has been consumed. The prior gate fired
-        # whenever ``_pos > _COMPACT_THRESHOLD`` (4096 bytes), which
-        # allowed a single compact to memcpy a multi-MiB tail when
-        # the buffer was near-full and only ~4 KiB had been
-        # consumed — worst-case ~64 MiB synchronous loop CPU on
-        # a max-cap buffer. The half-fill gate caps the worst-case
-        # single-compact at half the buffer size; each byte is
-        # copied at most twice over its lifetime, so total
-        # work-per-byte is bounded at 2×.
+        # Only compact when at least half consumed, so each byte is copied at
+        # most twice over its lifetime (bounds worst-case single-compact CPU).
         if self._pos < len(self._data) // 2:
             return
         try:
@@ -718,10 +436,6 @@ class ReadBuffer:
             self._data = new_data
             self._pos = 0
         except BaseException as e:
-            # Any torn state here is unrecoverable — the next caller
-            # MUST see poison, not a silently inconsistent buffer.
-            # ``poison()`` is first-error-wins and its body is a
-            # single ``STORE_ATTR`` so cannot itself be split.
             if self._poisoned is None:
                 if isinstance(e, Exception):
                     self._poisoned = e
@@ -730,7 +444,6 @@ class ReadBuffer:
             raise
 
     def available(self) -> int:
-        """Return number of bytes available to read."""
         return len(self._data) - self._pos
 
     @property
@@ -739,14 +452,5 @@ class ReadBuffer:
         return self._skip_remaining > 0
 
     def clear(self) -> None:
-        """Clear buffer state and un-poison.
-
-        Equivalent to ``reset()``. Kept as a convenience alias because
-        ``clear()`` predates the poison concept and was briefly
-        inconsistent with ``reset()`` — it used to leave the
-        ``_poisoned`` flag intact, which meant a caller who reached
-        for ``clear()`` as a recovery primitive got a half-fresh
-        buffer that still raised ``ProtocolError`` on the next
-        operation.
-        """
+        """Alias for ``reset()`` (clears state and un-poisons)."""
         self.reset()

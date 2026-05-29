@@ -1,11 +1,6 @@
-"""Pin: ROWS continuation frames must have the same column_count as
-the initial frame.
-
-A peer that drops to ``column_count=0`` mid-stream silently
-truncates the result; a peer that grows ``column_count`` produces
-phantom NULLs. Either is a corrupt-stream signal that the decoder
-must surface as ``DecodeError``.
-"""
+"""Pin: ROWS continuation frames must keep the initial frame's column_count;
+drift silently truncates results or fabricates NULLs, so the decoder raises
+DecodeError."""
 
 from __future__ import annotations
 
@@ -29,18 +24,13 @@ def _build_initial_frame(column_count: int, has_more: bool, decoder: MessageDeco
 
 
 def test_continuation_column_count_drift_raises() -> None:
-    """A continuation frame with a different column_count from the
-    initial frame must raise DecodeError."""
     decoder = MessageDecoder(is_request=False)
-    # Bypass handshake for response decoder (handshake_done=True per
-    # is_request=False)
     initial_bytes = _build_initial_frame(column_count=3, has_more=True, decoder=decoder)
     decoder.feed(initial_bytes)
     initial = decoder.decode()
     assert isinstance(initial, RowsResponse)
     assert decoder._continuation_column_count == 3
 
-    # Continuation frame with a different (smaller) column_count.
     cont_bytes = _build_initial_frame(column_count=2, has_more=False, decoder=decoder)
     decoder.feed(cont_bytes)
     with pytest.raises(DecodeError, match="column count drift"):
@@ -48,14 +38,11 @@ def test_continuation_column_count_drift_raises() -> None:
 
 
 def test_continuation_column_count_match_passes() -> None:
-    """A continuation frame with the same column_count as the initial
-    frame is accepted normally."""
     decoder = MessageDecoder(is_request=False)
     initial_bytes = _build_initial_frame(column_count=3, has_more=True, decoder=decoder)
     decoder.feed(initial_bytes)
     decoder.decode()
 
-    # Continuation frame with same column_count, no more.
     cont_bytes = _build_initial_frame(column_count=3, has_more=False, decoder=decoder)
     decoder.feed(cont_bytes)
     cont = decoder.decode_continuation()

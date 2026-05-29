@@ -1,14 +1,6 @@
-"""Pin: ``MessageDecoder.decode_bytes`` and
-``MessageDecoder.decode_continuation`` use the canonical
-``Header.body_size`` property for words-to-bytes conversion rather
-than inline ``size_words * 8``.
-
-The SSOT discipline keeps ``WORD_SIZE`` and ``Header.body_size`` as
-the single source of truth for the conversion. Inlining the literal
-``* 8`` works today but denies ``Header.body_size`` its production
-caller and weakens the constant's grep-ability — a future cleanup
-wave running dead-code linting could plausibly mistake the property
-for unused. This test guards against the inline literal returning.
+"""decode_bytes and decode_continuation must use the ``Header.body_size`` property,
+not inline ``size_words * 8``, keeping WORD_SIZE/body_size as the single source of
+truth and giving the property a production caller.
 """
 
 from __future__ import annotations

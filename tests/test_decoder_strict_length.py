@@ -1,19 +1,5 @@
-"""Request / response decoders must reject trailing bytes.
-
-Upstream C drives every decode through a ``struct cursor`` with an
-explicit ``cap``, so extra bytes past the declared fields are
-detected (``DQLITE_PARSE``). The same strict-length pattern is
-applied to ``EmptyResponse`` / ``DbResponse`` / ``ResultResponse`` /
-``LeaderRequest`` (sibling tests in this directory). This module
-fences the rest of the surface:
-
-- ``DescribeRequest`` format membership (only ``format == 0`` valid)
-- the fixed-size + variable-size request decoders (strict ``cap``)
-- ``AssignRequest`` decode requires exact 16-byte body (equality,
-  not threshold)
-- ``FilesResponse`` rejects trailing bytes past the last file
-- ``RowsResponse`` zero-column fast path rejects trailing bytes
-"""
+"""Request / response decoders must reject trailing bytes past the declared
+fields, matching upstream C's explicit-``cap`` struct cursor (``DQLITE_PARSE``)."""
 
 from __future__ import annotations
 
@@ -64,7 +50,6 @@ class TestFixedSizeRequestStrictLength:
         ],
     )
     def test_too_long_body_rejected(self, cls: Any) -> None:
-        # Exactly 8 bytes should succeed; extra 8 should fail.
         body = encode_uint64(1) + encode_uint64(0)
         with pytest.raises(DecodeError, match="bytes"):
             cls.decode_body(body)
@@ -86,18 +71,15 @@ class TestFixedSizeRequestStrictLength:
 
 
 class TestAssignRequestStrictLength:
-    """``AssignRequest.decode_body`` must require exact 8- or 16-byte
-    bodies (equality), not ``len(data) >= 16`` (threshold). The
-    threshold form silently dropped trailing bytes."""
+    """``AssignRequest.decode_body`` must require an exact 8- or 16-byte body
+    (equality, not a ``>= 16`` threshold that silently drops trailing bytes)."""
 
     def test_eight_byte_body_is_promote(self) -> None:
         from dqlitewire.constants import NodeRole
 
         body = encode_uint64(1)
-        # Legacy PROMOTE (1-word body) maps to NodeRole.VOTER on
-        # decode so the dataclass round-trips through encode_body
-        # cleanly. PROMOTE upstream-semantically elevates the node
-        # to voter.
+        # Legacy PROMOTE (1-word body) maps to VOTER: upstream PROMOTE
+        # elevates the node to voter.
         assert AssignRequest.decode_body(body) == AssignRequest(1, NodeRole.VOTER)
 
     def test_sixteen_byte_body_is_assign(self) -> None:
@@ -105,17 +87,14 @@ class TestAssignRequestStrictLength:
         assert AssignRequest.decode_body(body) == AssignRequest(1, 0)
 
     def test_twenty_four_byte_body_rejected(self) -> None:
-        # Previously silently dropped the trailing 8 bytes.
         body = encode_uint64(1) + encode_uint64(0) + encode_uint64(42)
         with pytest.raises(DecodeError, match="8 .* or 16 .* bytes"):
             AssignRequest.decode_body(body)
 
 
 class TestDescribeRequestFormatMembership:
-    """Upstream rejects ``DescribeRequest.format != 0`` with
-    ``SQLITE_PROTOCOL``. Reject client-side so callers get a local
-    ``EncodeError`` instead of a server round-trip.
-    """
+    """Upstream rejects ``DescribeRequest.format != 0``; reject client-side so
+    callers get a local error instead of a server round-trip."""
 
     def test_construct_with_nonzero_format_rejected(self) -> None:
         from dqlitewire.exceptions import EncodeError
@@ -146,8 +125,8 @@ class TestVariableSizeRequestStrictLength:
             PrepareRequest.decode_body(valid + b"\x00" * 8)
 
     def test_exec_request_trailing_bytes_rejected(self) -> None:
-        # Use params so decode_params_tuple consumes a non-trivial window;
-        # trailing bytes must then be caught by the offset-exhaustion check.
+        # Non-empty params so the offset-exhaustion check (not an early
+        # length check) is what catches the trailing bytes.
         valid = ExecRequest(1, 2, [42]).encode_body()
         with pytest.raises(DecodeError, match="trailing bytes"):
             ExecRequest.decode_body(valid + b"\x00" * 8)
@@ -189,8 +168,7 @@ class TestVariableSizeRequestStrictLength:
 
 
 class TestFilesResponseTrailingBytesRejected:
-    """``FilesResponse.decode_body`` must reject bytes past the last
-    file (strict end-of-buffer check)."""
+    """``FilesResponse.decode_body`` must reject bytes past the last file."""
 
     def test_trailing_bytes_after_last_file_rejected(self) -> None:
         msg = FilesResponse(files={"a.db": b"\x00" * 8})
@@ -200,14 +178,11 @@ class TestFilesResponseTrailingBytesRejected:
 
 
 class TestRowsResponseZeroColumnTrailingBytesRejected:
-    """``RowsResponse`` zero-column fast path must enforce buffer
-    exhaustion just like the general path."""
+    """``RowsResponse`` zero-column fast path must enforce buffer exhaustion
+    just like the general path."""
 
     def test_trailing_bytes_after_zero_column_marker_rejected(self) -> None:
-        # Body: column_count=0 (uint64), DONE marker (uint64) — all 16 bytes.
         body = encode_uint64(0) + ROW_DONE_MARKER.to_bytes(WORD_SIZE, "little")
-        # Valid case should decode cleanly.
         RowsResponse.decode_body(body)
-        # Appending a trailing aligned word must now fail.
         with pytest.raises(DecodeError, match="trailing bytes"):
             RowsResponse.decode_body(body + b"\x00" * 8)

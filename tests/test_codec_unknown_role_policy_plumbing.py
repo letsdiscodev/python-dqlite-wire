@@ -1,16 +1,6 @@
-"""Pin: ``MessageDecoder`` plumbs ``unknown_role_policy`` through to
-``ServersResponse.decode_body`` so production cluster-info consumers
-can opt into forward-compat tolerance without bypassing the streaming
-decoder.
-
-Threat model: a future C server emits a new role byte (e.g., role=4).
-Default ``"reject"`` mode raises ``DecodeError``. Operators wanting
-graceful degradation set ``unknown_role_policy="warn"`` (substitute
-``NodeRole.SPARE`` and emit ``logger.warning``) or ``"accept"``
-(substitute silently). Without the plumbing the knob was reachable
-only by callers who skipped ``MessageDecoder`` and called
-``ServersResponse.decode_body`` directly — i.e., dead code through
-production paths.
+"""MessageDecoder must plumb ``unknown_role_policy`` through to
+``ServersResponse.decode_body`` so consumers can opt into forward-compat tolerance
+("reject"/"warn"/"accept" for an unknown role byte) without bypassing the decoder.
 """
 
 from __future__ import annotations
@@ -32,19 +22,16 @@ from dqlitewire.messages.responses import NodeInfo, ServersResponse
 
 
 def _build_servers_frame_with_unknown_role(role: int) -> bytes:
-    """Construct a SERVERS response frame whose single node has the
-    given role byte. Used to drive the policy paths."""
-    # Body shape: count uint64 LE | for each node: id uint64 | text(address) | role uint64.
+    """A SERVERS response frame whose single node has the given role byte."""
+    # Body: count uint64 LE | per node: id uint64 | text(address) | role uint64.
     address = "10.0.0.1:9001"
     addr_bytes = address.encode("utf-8") + b"\x00"
-    # Pad address to 8-byte boundary.
     pad = (-len(addr_bytes)) % 8
     addr_padded = addr_bytes + b"\x00" * pad
     body = struct.pack("<Q", 1)  # node count
     body += struct.pack("<Q", 42)  # node_id
     body += addr_padded
     body += struct.pack("<Q", role)
-    # Header: size_words + msg_type + schema=0 + reserved=0
     assert len(body) % 8 == 0
     size_words = len(body) // 8
     header_bytes = Header(size_words, ResponseType.SERVERS, schema=0).encode()
@@ -91,34 +78,26 @@ def test_accept_policy_decoder_substitutes_spare_silently(
 
 
 def test_invalid_policy_value_raises_at_construction() -> None:
-    # Mirrors the deeper ServersResponse.decode_body validator, which
-    # raises DecodeError for the same input. Callers can use a single
-    # ``except DecodeError`` for both the construction-time and the
-    # decode-time validators.
+    # DecodeError mirrors the ServersResponse.decode_body validator, so callers
+    # can use one ``except DecodeError`` for both construction- and decode-time.
     with pytest.raises(DecodeError, match="unknown_role_policy must be one of"):
         MessageDecoder(unknown_role_policy="bogus")
 
 
 def test_decode_message_helper_forwards_unknown_role_policy() -> None:
-    """Pin: ``decode_message(..., unknown_role_policy="warn")`` parity
-    with ``MessageDecoder``. The convenience helper must forward the
-    kwarg so stateless one-off decode (e.g., from a packet trace) can
-    opt into forward-compat tolerance."""
+    """decode_message must forward unknown_role_policy too, so stateless one-off decode
+    (e.g. from a packet trace) gets the same forward-compat tolerance as MessageDecoder."""
     frame = _build_servers_frame_with_unknown_role(role=99)
-    # Default reject mode: raises.
     with pytest.raises(DecodeError, match="role"):
         decode_message(frame)
-    # warn mode: substitute SPARE silently here — log assertion is
-    # covered by the streaming-decoder pin above.
+    # warn substitutes SPARE; the log assertion lives in the streaming-decoder test above.
     result = decode_message(frame, unknown_role_policy="warn")
     assert isinstance(result, ServersResponse)
     assert result.nodes == [NodeInfo(node_id=42, address="10.0.0.1:9001", role=NodeRole.SPARE)]
 
 
 def test_known_role_unchanged_under_all_policies() -> None:
-    """Regression guard: known roles {0,1,2} are unaffected by the
-    policy knob. Default-mode decoder must continue producing the
-    same NodeInfo shape it always has."""
+    """Known roles {0,1,2} are unaffected by the policy knob under every mode."""
     for policy in ("reject", "warn", "accept"):
         decoder = MessageDecoder(unknown_role_policy=policy)
         frame = _build_servers_frame_with_unknown_role(role=0)  # VOTER

@@ -1,15 +1,8 @@
 """Performance regression tests for decode paths.
 
-The body decoders in ``responses.py`` and ``tuples.py`` used to slice
-the body bytes with ``data[offset:]`` inside per-row / per-column
-loops. Each slice copies the tail, producing O(N²) work on messages
-with many small rows. The fix wraps bodies in ``memoryview`` at
-``decode_body`` entry so slicing is O(1), yielding linear-time decode.
-
-These tests use comparative timing (ratio of large/small decode) so
-they are not sensitive to absolute machine speed. Pre-fix, the ratio
-for 10x more rows was ~100x (quadratic). Post-fix, the ratio is
-roughly 10x (linear) with some constant overhead.
+Bodies are wrapped in ``memoryview`` at ``decode_body`` entry so per-row
+slicing is O(1) (was ``data[offset:]`` tail copies, O(N²)). Timing here is
+comparative (large/small ratio) to stay machine-independent.
 """
 
 from __future__ import annotations
@@ -21,7 +14,6 @@ from dqlitewire.messages.responses import RowsResponse
 
 
 def _build_rows(n: int) -> bytes:
-    """Build a RowsResponse body with n integer rows."""
     msg = RowsResponse(
         column_names=["a"],
         column_types=[ValueType.INTEGER],
@@ -32,8 +24,7 @@ def _build_rows(n: int) -> bytes:
 
 
 def _time_decode(body: bytes, max_rows: int) -> float:
-    # max_rows cap triggers at ``>=``, so pass a value
-    # larger than the actual row count.
+    # max_rows cap triggers at ``>=``, so pass a value above the row count.
     start = time.perf_counter()
     RowsResponse.decode_body(body, max_rows=max_rows + 1)
     return time.perf_counter() - start
@@ -43,17 +34,12 @@ class TestRowsDecodePerformance:
     def test_rows_decode_scales_linearly(self) -> None:
         """228: decoding 10x rows should take ~10x time, not ~100x.
 
-        Under the pre-fix quadratic behavior a 10x input produced
-        ~100x work. After switching the body slicing to memoryview
-        (O(1) slicing), the scaling is linear with some constant
-        overhead. We allow a generous 30x ratio to stay robust
-        against CI noise while still catching a regression to O(N²).
+        30x ratio allowed for CI noise while still catching O(N²) regression.
         """
         small = _build_rows(5_000)
         large = _build_rows(50_000)
 
-        # Warm up JIT-like / lazy imports so first-call overhead
-        # doesn't dominate the small measurement.
+        # Warm up lazy imports so first-call overhead doesn't dominate.
         _time_decode(small, max_rows=5_000)
 
         t_small = _time_decode(small, max_rows=5_000)
@@ -72,13 +58,7 @@ class TestRowsDecodePerformance:
         )
 
     def test_rows_decode_many_rows_completes_quickly(self) -> None:
-        """228: sanity — decoding 20k rows must finish under 2 seconds.
-
-        Under the pre-fix quadratic behavior, 20k rows took multiple
-        seconds on a typical laptop. Post-fix, tens of milliseconds.
-        The 2-second threshold is generous for CI variance while still
-        discriminating clearly against a quadratic regression.
-        """
+        """228: sanity — decoding 20k rows must finish under 2 seconds."""
         body = _build_rows(20_000)
         elapsed = _time_decode(body, max_rows=20_000)
         assert elapsed < 2.0, (
@@ -88,17 +68,11 @@ class TestRowsDecodePerformance:
 
 
 class TestDecodeTextLongValues:
-    """Regression guard: ``decode_text`` must support arbitrarily long
-    text values when reading from a memoryview.
-
-    A prior iteration of the fix capped the scan window at 4 KiB, which
-    broke legitimate SQLite TEXT column values (e.g. JSON documents or
-    long prose). The chunked-scan approach now used in ``decode_text``
-    handles arbitrary lengths with bounded per-chunk copy.
+    """``decode_text`` must support arbitrarily long memoryview text values
+    (a prior fix capped the scan window at 4 KiB, breaking long TEXT cells).
     """
 
     def test_decode_text_memoryview_8kib_roundtrips(self) -> None:
-        """An 8 KiB TEXT value (past the chunk boundary) must decode."""
         from dqlitewire.types import decode_text, encode_text
 
         long_text = "x" * 8192
@@ -108,7 +82,6 @@ class TestDecodeTextLongValues:
         assert consumed == len(encoded)
 
     def test_decode_text_memoryview_1mib_roundtrips(self) -> None:
-        """A 1 MiB TEXT value decodes cleanly and quickly from memoryview."""
         from dqlitewire.types import decode_text, encode_text
 
         long_text = "a" * (1024 * 1024)
@@ -124,9 +97,7 @@ class TestDecodeTextLongValues:
         )
 
     def test_rows_response_with_long_text_values_roundtrips(self) -> None:
-        """Full RowsResponse with 8 KiB TEXT values per row decodes via
-        the memoryview path — where the prior 4 KiB cap broke.
-        """
+        """Full RowsResponse with 8 KiB TEXT cells decodes (prior 4 KiB cap broke this)."""
         long_text = "y" * 8192
         msg = RowsResponse(
             column_names=["payload"],

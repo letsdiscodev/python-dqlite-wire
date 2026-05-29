@@ -1,6 +1,4 @@
-"""Pin: ``cap_raw_message`` truncation helper produces deterministic
-output for both client and dbapi callers (single source of truth).
-"""
+"""Pin: ``cap_raw_message`` truncation is deterministic across callers."""
 
 from __future__ import annotations
 
@@ -55,45 +53,35 @@ def test_round_trip_under_cap_no_suffix(max_chars: int) -> None:
 
 @pytest.mark.parametrize("bad_max", [-1, -100, -(2**31)])
 def test_negative_max_chars_rejected(bad_max: int) -> None:
-    """A negative budget has no meaningful semantic; reject so the
-    contributor's typo surfaces at the call site rather than silently
-    producing a one-character drop with a misleading 'overflow' count."""
+    """Reject negative budget so a typo surfaces instead of a misleading overflow count."""
     with pytest.raises(ValueError, match="max_chars must be >= 0"):
         cap_raw_message("hello", bad_max)
 
 
 def test_negative_max_chars_rejects_even_for_none_input() -> None:
-    """Validation fires before the ``raw_message is None`` short-circuit
-    so the contract failure is consistent regardless of input shape."""
+    """Validation fires before the ``raw_message is None`` short-circuit."""
     with pytest.raises(ValueError, match="max_chars must be >= 0"):
         cap_raw_message(None, -1)
 
 
 def test_lf_passes_through_under_cap() -> None:
-    """SECURITY contract: LF survives so wire-level multi-line server
-    diagnostics reach exception-display intact. Log-site consumers must
-    apply ``sanitize_for_log`` themselves."""
+    """SECURITY: LF survives (this is a length cap, not a sanitiser); log sites must sanitise."""
     text = "line1\nline2"
     assert cap_raw_message(text, 100) == text
 
 
 def test_tab_passes_through_under_cap() -> None:
-    """SECURITY contract: Tab survives so the helper stays a pure
-    codepoint-length cap rather than a sanitiser. Mirrors the wire-layer
-    ``sanitize_server_text`` LF/Tab-preserving discipline."""
+    """SECURITY: Tab survives so the helper stays a pure length cap, not a sanitiser."""
     assert cap_raw_message("col1\tcol2", 100) == "col1\tcol2"
 
 
 def test_crlf_passes_through_under_cap() -> None:
-    """SECURITY contract: CR/CRLF survives the cap. Documented as a
-    non-goal in the ``cap_raw_message`` SECURITY NOTE."""
+    """SECURITY: CR/CRLF survives the cap; sanitising is a documented non-goal."""
     assert cap_raw_message("a\r\nb", 100) == "a\r\nb"
 
 
 def test_lf_in_truncated_prefix_survives() -> None:
-    """The truncation prefix preserves LF that fits within the cap; only
-    the overflow tail is dropped. Pins that the cap does not retroactively
-    strip control characters from the kept prefix either."""
+    """The kept prefix preserves LF; only the overflow tail is dropped."""
     text = "a\nb" + ("x" * 200)
     result = cap_raw_message(text, 10)
     assert result is not None
@@ -101,14 +89,5 @@ def test_lf_in_truncated_prefix_survives() -> None:
 
 
 def test_default_max_raw_message_is_4_kib() -> None:
-    """SSOT pin: the canonical raw-message cap is 4 KiB.
-
-    Downstream packages (``dqliteclient.exceptions``,
-    ``dqlitedbapi.exceptions``) import this constant and use it as
-    their default; SA's disconnect classifier depends on the budget
-    being a known constant for failure-text-stability promises. A
-    silent bump propagates to both downstream packages without a
-    deliberate breaking-change decision. Update both the constant and
-    this pin together when changing the budget.
-    """
+    """SSOT pin: the canonical raw-message cap is 4 KiB; downstream packages import it."""
     assert DEFAULT_MAX_RAW_MESSAGE == 4 * 1024 == 4096

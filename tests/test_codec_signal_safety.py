@@ -1,32 +1,12 @@
 """Signal-safety tests for MessageDecoder.
 
-``MessageDecoder.decode()`` and ``decode_continuation()`` both consume
-bytes from the buffer via ``read_message()`` and then parse them via
-``decode_bytes`` / ``RowsResponse.decode_body``. The
-parse step is wrapped in ``try/except Exception`` so that a
-``DecodeError``/``ValueError``/``struct.error`` from the parser
-poisons the buffer before propagating.
+A KeyboardInterrupt (or any BaseException) delivered inside the parser after
+read_message has advanced _pos, but outside the poison handler, escapes without
+poisoning; the caller's retry then reads the next message boundary and silently
+loses one message. The decoder must poison (or cleanly revert) in those windows.
 
-But ``except Exception`` does not catch ``KeyboardInterrupt``,
-``SystemExit``, or any other ``BaseException`` subclass. A signal-
-delivered ``KeyboardInterrupt`` landing inside the parser (after
-``read_message`` has already advanced ``_pos`` past the consumed
-bytes) propagates past the ``except`` block without poisoning. The
-caller catches it at the top level and retries; the retry reads the
-*next* message boundary, silently losing exactly one message.
-
-``MessageDecoder.decode_handshake()`` has an analogous hazard: the
-commit used to be (1) consume bytes, (2) set ``_version``, (3) set
-``_handshake_done``. A signal between (1) and (3) left the bytes
-consumed but state not marked; the retry re-peeked the first 8 bytes
-of the *next* message as a handshake and raised a misleading
-"Unsupported protocol version" error.
-
-These tests use ``sys.settrace`` to inject a ``KeyboardInterrupt`` at
-a specific source line inside a decoder method — the most reliable
-way to exercise CPython's bytecode-boundary async-exception model
-without relying on wallclock timing — and assert the decoder ends up
-in a state the caller can detect and recover from, not silently torn.
+These tests use sys.settrace to inject the exception at a specific source line —
+the reliable way to hit CPython's bytecode-boundary async-exception windows.
 """
 
 from __future__ import annotations
@@ -78,10 +58,8 @@ def _tracer_raising_in_after_call(
     callee_name: str,
     exc: BaseException = _DEFAULT_EXC,
 ) -> Any:
-    """Raise ``exc`` on the first line event in ``func_name`` AFTER a
-    call to ``callee_name`` has returned. Used to target the window
-    between a sub-call and the post-call statements in the caller.
-    """
+    """Raise ``exc`` on the first line in ``func_name`` after ``callee_name`` returns,
+    targeting the window between a sub-call and the caller's post-call statements."""
     state = {"saw_return": False, "raised": False}
 
     def tracer(frame: FrameType, event: str, arg: object) -> Any:
@@ -98,18 +76,11 @@ def _tracer_raising_in_after_call(
 
 
 class TestDecodeSignalSafety:
-    """Regression tests for the consumed-but-unpoisoned window in
-    ``decode()`` / ``decode_continuation()``.
-    """
+    """The consumed-but-unpoisoned window in decode() / decode_continuation()."""
 
     def test_keyboard_interrupt_inside_parse_leaves_decoder_poisoned(self) -> None:
-        """A ``KeyboardInterrupt`` delivered while ``decode_bytes`` is
-        parsing a consumed message used to propagate without
-        poisoning the decoder, because ``except Exception`` does not
-        catch ``BaseException``. The retry read the next message
-        boundary, silently dropping one message. The fix widens to
-        ``except BaseException``.
-        """
+        """A KeyboardInterrupt while decode_bytes parses a consumed message must poison:
+        ``except Exception`` missed BaseException, so the retry silently dropped a message."""
         dec = MessageDecoder(is_request=False)
         dec.feed(_make_db(1) + _make_db(2))
 
@@ -124,20 +95,15 @@ class TestDecodeSignalSafety:
 
         assert dec.is_poisoned, "decode() must poison on injected KeyboardInterrupt"
 
-        # Retry must fail fast with ProtocolError rather than silently
-        # returning the next message from a desynchronized stream.
         with pytest.raises(ProtocolError, match="poisoned"):
             dec.decode()
 
     def test_decode_does_not_poison_on_oversized_header(self) -> None:
-        """Counter-test: an oversized-header DecodeError is raised
-        BEFORE read_message advances _pos, so the bytes are still
-        there and skip_message()/reset recovery works. The fix must
-        not accidentally poison this path.
-        """
+        """Counter-test: an oversized-header DecodeError fires before read_message
+        advances _pos, so skip_message()/reset recovery works — must not poison."""
         dec = MessageDecoder(is_request=False)
         dec._buffer._max_message_size = 128
-        # size_words = 100 → body size = 800 > 128
+        # size_words=100 → 800-byte body > 128
         huge = struct.pack("<IBBH", 100, 0, 0, 0)
         dec.feed(huge)
 
@@ -147,18 +113,10 @@ class TestDecodeSignalSafety:
         assert not dec.is_poisoned
 
     def test_keyboard_interrupt_between_parse_and_flag_set_poisons(self) -> None:
-        """233: a KeyboardInterrupt delivered in ``decode()`` AFTER
-        ``decode_bytes`` returns but BEFORE ``_continuation_expected``
-        is set used to propagate without poisoning, because the flag
-        assignment lived outside the ``except BaseException`` block.
-        The next ``decode()`` call would then read the continuation
-        frame as a top-level message (silent stream desync).
-
-        The fix moves the flag store inside the try/except block, so
-        any exception in that window poisons the buffer.
-        """
-        # Feed any valid message — a DbResponse is fine because the
-        # flag-check line runs before the isinstance() short-circuits.
+        """A KeyboardInterrupt after decode_bytes returns but before _continuation_expected
+        is set must poison: the flag store now lives inside the try/except, else the next
+        decode() would read the continuation frame as a top-level message."""
+        # Any valid message works; the flag-check line runs before isinstance() short-circuits.
         dec = MessageDecoder(is_request=False)
         dec.feed(_make_db(1) + _make_db(2))
 
@@ -176,20 +134,12 @@ class TestDecodeSignalSafety:
             "decode_bytes returns but before the flag store"
         )
 
-        # The retry must fail fast with ProtocolError rather than
-        # silently returning the next message from a desynchronized
-        # stream.
         with pytest.raises(ProtocolError, match="poisoned"):
             dec.decode()
 
     def test_keyboard_interrupt_in_decode_continuation_poisons(self) -> None:
-        """Same hazard as decode(): decode_continuation() also needs
-        BaseException handling.
-        """
-        # Build a minimal ROWS continuation body. We don't actually
-        # reach the parser — the tracer injects the interrupt before
-        # any real parsing runs — so the frame just needs to carry
-        # some bytes past the header check.
+        """Same hazard as decode(): decode_continuation() also needs BaseException handling."""
+        # The frame just needs bytes past the header check; the tracer fires before parsing.
         body = b"\x00" * 8
         header = struct.pack("<IBBH", len(body) // 8, ResponseType.ROWS, 0, 0)
         frame = header + body
@@ -198,8 +148,7 @@ class TestDecodeSignalSafety:
         dec._continuation_expected = True
         dec.feed(frame + frame)
 
-        # Inject inside decode_continuation itself (the wrapper
-        # method), not the parser helper — the try: block opens there.
+        # Inject in decode_continuation itself (where the try: block opens), not the parser.
         tracer = _tracer_raising_in("decode_continuation")
 
         sys.settrace(tracer)
@@ -209,17 +158,12 @@ class TestDecodeSignalSafety:
         finally:
             sys.settrace(None)
 
-        # If the tracer landed after read_message consumed the first
-        # frame, the decoder must be poisoned. If it landed before
-        # any bytes were consumed (e.g. on the very first line), the
-        # test still passes because no harm was done. We check both
-        # outcomes: the decoder is either poisoned OR the buffer is
-        # still at a valid offset.
+        # Either the tracer hit after read_message consumed a frame (must be poisoned)
+        # or before any consume (no harm); accept both.
         if dec.is_poisoned:
             with pytest.raises(ProtocolError, match="poisoned"):
                 dec.decode_continuation()
         else:
-            # Buffer offset must still be sensible.
             assert dec._buffer.available() >= 0
 
 
@@ -243,38 +187,19 @@ def test_db_response_decodes_cleanly_without_interrupt() -> None:
 
 
 class TestDecodeHandshakeSignalSafety:
-    """Regression tests for the single-threaded signal split inside
-    ``decode_handshake``.
+    """Signal split inside decode_handshake.
 
-    The pre-fix ``decode_handshake`` committed via three separate
-    statements:
-
-        self._buffer.read_bytes(8)       # consume bytes
-        self._version = version           # record version
-        self._handshake_done = True       # mark done
-
-    A ``KeyboardInterrupt`` delivered between ``read_bytes(8)`` and
-    the final store left the buffer with the 8 handshake bytes
-    consumed but ``_handshake_done`` still ``False``. On retry,
-    ``decode_handshake`` re-peeked ``peek_bytes(8)`` — but those were
-    now the first 8 bytes of the **next** message, which almost
-    always fail the ``_SUPPORTED_VERSIONS`` check. The caller saw a
-    misleading "Unsupported protocol version" error pointing at what
-    was actually legitimate message data.
-
-    The fix marks ``_handshake_done`` BEFORE consuming the bytes and
-    reverts on failure. An interrupt between the mark and the consume
-    leaves the buffer unconsumed and the state "already completed";
-    the retry raises a deterministic error instead of silently
-    misreading real data.
+    Pre-fix, an interrupt between read_bytes(8) and the final state store left bytes
+    consumed but _handshake_done False; the retry re-peeked the next message as a
+    handshake and raised a misleading "Unsupported protocol version". The fix marks
+    state before consuming and reverts on failure, so the retry is deterministic.
     """
 
     def test_keyboard_interrupt_post_consume_is_not_silently_misleading(
         self,
     ) -> None:
         dec = MessageDecoder(is_request=True)
-        # 8 valid handshake bytes followed by 8 bytes that WOULD fail
-        # the version check if the retry misread them as a handshake.
+        # Valid handshake then 8 bytes that fail the version check if misread as a handshake.
         dec.feed(PROTOCOL_VERSION.to_bytes(8, "little") + b"\xff" * 8)
 
         state = {"raised": False}
@@ -291,9 +216,8 @@ class TestDecodeHandshakeSignalSafety:
                     src_line = f.readlines()[frame.f_lineno - 1]
             except OSError:
                 return tracer
-            # Inject at the `self._version = version` line — it is
-            # present in both the pre-fix and post-fix layouts, and
-            # in the pre-fix source it runs AFTER read_bytes(8).
+            # Inject at `self._version = version`: present in both layouts, and pre-fix
+            # it runs after read_bytes(8).
             if "self._version = version" in src_line:
                 state["raised"] = True
                 raise KeyboardInterrupt("injected mid-commit")
@@ -306,13 +230,9 @@ class TestDecodeHandshakeSignalSafety:
         finally:
             sys.settrace(None)
 
-        # After the torn window, a retry must NOT report
-        # "Unsupported protocol version" for what were actually real
-        # bytes of the next message (0xff*8). Acceptable outcomes:
-        #   1. The fix reverted state — retry succeeds with the
-        #      original 8 handshake bytes still in the buffer.
-        #   2. The fix set _handshake_done before the consume and
-        #      did not revert — retry raises "already completed".
+        # After the torn window the retry must NOT report "Unsupported" for the next
+        # message's bytes. Either the state reverted (retry succeeds) or _handshake_done
+        # was set before the consume (retry raises "already completed").
         retry_err: Exception | None = None
         retry_result: int | None = None
         try:
@@ -329,9 +249,7 @@ class TestDecodeHandshakeSignalSafety:
             assert dec._handshake_done is True
 
     def test_happy_path_handshake_still_works(self) -> None:
-        """Sanity: without any interrupt, decode_handshake completes
-        normally and sets all three state bits.
-        """
+        """Sanity: without an interrupt, decode_handshake sets all three state bits."""
         dec = MessageDecoder(is_request=True)
         dec.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
         version = dec.decode_handshake()
@@ -340,10 +258,7 @@ class TestDecodeHandshakeSignalSafety:
         assert dec._version == PROTOCOL_VERSION
 
     def test_unsupported_version_does_not_consume_bytes(self) -> None:
-        """Counter-test: an unsupported version must leave the 8
-        peeked bytes in the buffer so that retry semantics remain
-        deterministic.
-        """
+        """Counter-test: an unsupported version leaves the 8 peeked bytes in the buffer."""
         dec = MessageDecoder(is_request=True)
         bogus = (0xDEADBEEF).to_bytes(8, "little")
         dec.feed(bogus)
@@ -355,21 +270,9 @@ class TestDecodeHandshakeSignalSafety:
         assert dec._buffer.available() == 8
 
     def test_decode_handshake_reverts_state_on_read_bytes_failure(self) -> None:
-        """Strict pin on the revert contract inside ``decode_handshake``.
-
-        The method commits ``self._version`` and ``self._handshake_done``
-        *before* ``read_bytes(8)`` so an async exception delivered between
-        the commit and the consume cannot leave the buffer advanced
-        while state stays ``False`` (the pre-fix hazard). The ``except
-        BaseException`` block then reverts both state fields and lets
-        the exception propagate; the 8 handshake bytes stay in the
-        buffer, and a retry is deterministic.
-
-        The compound test above is deliberately permissive so either of
-        the two valid fix shapes passes. This test pins the stricter
-        "revert on failure" invariant by monkey-patching
-        ``_buffer.read_bytes`` to raise.
-        """
+        """Strict revert contract: decode_handshake commits _version/_handshake_done before
+        read_bytes(8), and the except BaseException block reverts both on failure, leaving
+        the bytes in the buffer for a deterministic retry."""
         dec = MessageDecoder(is_request=True)
         dec.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
 
@@ -383,13 +286,11 @@ class TestDecodeHandshakeSignalSafety:
         with pytest.raises(KeyboardInterrupt):
             dec.decode_handshake()
 
-        # Revert invariants: both state fields rolled back, no partial
-        # commit.
+        # Both state fields rolled back; no partial commit.
         assert dec._handshake_done is False
         assert dec._version is None
 
-        # The 8 handshake bytes never consumed — retry on the restored
-        # buffer returns PROTOCOL_VERSION.
+        # Bytes never consumed — retry on the restored buffer returns PROTOCOL_VERSION.
         dec._buffer.read_bytes = original_read_bytes
         assert dec._buffer.available() == 8
         assert dec.decode_handshake() == PROTOCOL_VERSION
@@ -397,11 +298,8 @@ class TestDecodeHandshakeSignalSafety:
         assert dec._version == PROTOCOL_VERSION
 
     def test_decode_handshake_reverts_state_on_system_exit(self) -> None:
-        """``except BaseException`` width: ``SystemExit`` — another
-        non-``Exception`` ``BaseException`` subclass — must also trigger
-        the revert. A narrower ``except Exception`` would leak the
-        commit state on shutdown paths.
-        """
+        """except BaseException width: SystemExit must also trigger the revert (a narrower
+        except Exception would leak commit state on shutdown paths)."""
         dec = MessageDecoder(is_request=True)
         dec.feed(PROTOCOL_VERSION.to_bytes(8, "little"))
 

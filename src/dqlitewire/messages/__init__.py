@@ -37,10 +37,8 @@ from dqlitewire.messages.responses import (
 )
 
 __all__ = [
-    # Base
     "Header",
     "Message",
-    # Requests
     "LeaderRequest",
     "ClientRequest",
     "OpenRequest",
@@ -59,7 +57,6 @@ __all__ = [
     "TransferRequest",
     "DescribeRequest",
     "WeightRequest",
-    # Responses
     "FailureResponse",
     "LeaderResponse",
     "WelcomeResponse",

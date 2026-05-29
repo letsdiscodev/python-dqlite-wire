@@ -1,11 +1,5 @@
-"""Pin: ``encode_double`` rejects ``bool`` rather than silently
-coercing ``True`` / ``False`` to ``1.0`` / ``0.0``.
-
-``isinstance(True, int)`` is True; ``float(True) == 1.0``. The
-sibling primitives (``_validate_uint64`` at ``types.py``,
-``encode_int64``, the ``encode_value`` FLOAT arm) all reject
-``bool`` explicitly. ``encode_double`` was the discipline gap.
-"""
+"""``encode_double`` rejects ``bool`` rather than coercing ``True``/``False``
+to ``1.0``/``0.0``, matching the other primitives' explicit bool guards."""
 
 from __future__ import annotations
 
@@ -32,23 +26,15 @@ def test_encode_double_accepts_zero_and_finite_floats() -> None:
 
 
 def test_encode_double_rejects_bare_int() -> None:
-    """Bare ``int`` (not ``bool``) is rejected too.
-
-    ``struct.pack("<d", 42)`` would silently coerce via C-level float
-    promotion, but the same coercion drops bits for ``|x| >= 2**53``
-    and raises ``OverflowError`` (outside ``EncodeError``) for
-    ``|x| >= 2**1024``. Callers wanting int → FLOAT must call
-    ``float(x)`` themselves.
-    """
+    """Bare ``int`` is rejected: ``struct.pack`` coercion drops bits past 2**53
+    and raises OverflowError past 2**1024. Callers must ``float(x)`` themselves."""
     with pytest.raises(EncodeError, match="requires float"):
         encode_double(5)
 
 
 def test_encode_double_rejects_numpy_bool_proxy() -> None:
-    """``numpy.bool_`` is NOT a Python ``bool`` subclass (NumPy reparented
-    it long ago). The bool guard alone leaves it slip through; the
-    float-subclass check is what rejects it. A minimal proxy mirrors
-    the NumPy shape: not a bool subclass, exposes ``__float__``."""
+    """``numpy.bool_`` is not a ``bool`` subclass, so the bool guard misses it
+    and the float-subclass check is what rejects it. Proxy mirrors that shape."""
 
     class FakeNpBool:
         def __init__(self, v: bool) -> None:

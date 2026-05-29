@@ -49,25 +49,11 @@ from dqlitewire.types import (
 
 
 def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> None:
-    """Validate the optional ``_decoded_schema`` round-trip hint shared by
-    ExecRequest / QueryRequest / ExecSqlRequest / QuerySqlRequest.
+    """Validate the optional ``_decoded_schema`` round-trip hint (None|0|1).
 
-    The field is a private hook used to reproduce wire bytes identically
-    on re-encode (mock-server / proxy use cases) — it lets a request
-    carry schema=1 with ≤255 params even though the count heuristic
-    would pick schema=0. ``None`` (auto-select), ``0``, and ``1`` are the
-    only legitimate values; schema=0 caps params at 255 (the V0 tuple
-    format's uint8 count byte) and schema=1 caps params at
-    ``_MAX_PARAM_COUNT`` (SQLite's ``SQLITE_MAX_VARIABLE_NUMBER``
-    engine-side bind cap, see ``tuples.py:_MAX_PARAM_COUNT``; the V1
-    on-wire count field is a uint32, not uint16).
-
-    Both caps are enforced here at construction time so a caller building
-    a malformed request gets an actionable error at the construction
-    site, not deep inside ``encode_params_tuple`` at first encode. The
-    encode-time cap inside ``encode_params_tuple`` is retained as
-    defense-in-depth in case the caller mutates ``_decoded_schema`` or
-    ``params`` after construction.
+    schema=0 caps params at 255 (V0 uint8 count); schema=1 caps at
+    _MAX_PARAM_COUNT. Enforced at construction so callers get an
+    actionable error here, not deep inside encode_params_tuple.
     """
     if decoded_schema is None:
         return
@@ -86,38 +72,12 @@ def _validate_decoded_schema(decoded_schema: int | None, param_count: int) -> No
 
 
 def _validate_decoded_empty_header(decoded_empty_header: bool | None, param_count: int) -> None:
-    """Validate the optional ``_decoded_empty_header`` round-trip hint
-    shared by ExecRequest / QueryRequest / ExecSqlRequest /
-    QuerySqlRequest.
+    """Validate the optional ``_decoded_empty_header`` round-trip hint (None|bool).
 
-    The field is a private hook used to reproduce empty-params wire
-    bytes identically on re-encode. ``None`` (caller-originated → Go-
-    style omission), ``False`` (decoded a Go-style frame, no header
-    bytes consumed), and ``True`` (decoded a C-style frame with an
-    explicit 8-byte zero header) are the only legitimate values, AND
-    ``True`` only makes sense with empty ``params`` — the field's
-    documented contract is "Set by ``decode_body`` only when
-    ``params`` is empty AND the inbound frame had bytes for the
-    tuple". A caller constructing a request with
-    ``_decoded_empty_header=True`` and non-empty params silently
-    produces an internally inconsistent state today (the encoder's
-    ``emit_empty_header=True`` arm is a no-op when ``params`` is
-    non-empty, so the wire bytes look fine, but the field disagrees
-    with the bytes). A future refactor that broadens the
-    ``emit_empty_header=True`` arm to "always emit the 8-byte header"
-    would then produce malformed wire bytes only when this caller
-    misuse pattern occurs. Pin the invariant at construction time so
-    the field stays in sync with the wire-byte semantics it claims to
-    represent. Mirrors ``_validate_decoded_schema``'s discipline.
-
-    The type narrowing uses ``isinstance(x, bool)`` rather than ``x is
-    True`` / ``x is False`` so any non-bool input — ``1``, ``"yes"``,
-    ``object()`` — is rejected explicitly. Without the type check the
-    downstream ``bool(self._decoded_empty_header)`` at ``encode_body``
-    promotes truthy non-bool inputs to the C-style 8-byte empty-header
-    emission silently, contradicting the documented ``None | False |
-    True`` contract that the sibling ``_validate_decoded_schema``
-    pins via membership.
+    True (C-style explicit 8-byte zero header) is only valid with empty
+    params; otherwise the field would disagree with the wire bytes.
+    isinstance(x, bool) is required: a truthy non-bool would silently
+    promote to C-style header emission at encode_body.
     """
     if decoded_empty_header is not None and not isinstance(decoded_empty_header, bool):
         raise EncodeError(
@@ -134,10 +94,7 @@ def _validate_decoded_empty_header(decoded_empty_header: bool | None, param_coun
 @final
 @dataclass
 class LeaderRequest(Message):
-    """Request current cluster leader address.
-
-    Body: uint64 (reserved, unused)
-    """
+    """Request current cluster leader address. Body: uint64 (reserved, unused)."""
 
     MSG_TYPE: ClassVar[int] = RequestType.LEADER
 
@@ -150,10 +107,6 @@ class LeaderRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderRequest":
         if schema != 0:
             raise DecodeError(f"LeaderRequest unsupported schema version {schema}")
-        # Strict decode symmetric with ``encode_body``: the body is
-        # exactly one uint64 reserved word, defined as 0 by upstream.
-        # Reject truncated/extended bodies and non-zero reserved values
-        # rather than silently accepting them.
         if len(data) != 8:
             raise DecodeError(f"LeaderRequest body must be 8 bytes, got {len(data)}")
         reserved = decode_uint64(data)
@@ -165,10 +118,7 @@ class LeaderRequest(Message):
 @final
 @dataclass
 class ClientRequest(Message):
-    """Register as a client.
-
-    Body: uint64 client_id
-    """
+    """Register as a client. Body: uint64 client_id."""
 
     MSG_TYPE: ClassVar[int] = RequestType.CLIENT
 
@@ -194,38 +144,12 @@ class ClientRequest(Message):
 
 @dataclass
 class _HeartbeatRequest(Message):
-    """Send heartbeat to server (private — not a public wire message).
+    """Heartbeat (private). Body: uint64 timestamp, Go-canonical per schema.go.
 
-    .. warning::
-
-        The ``uint64 timestamp`` body shape is **Go-canonical** —
-        ``go-dqlite/internal/protocol/schema.go`` declares
-        ``Heartbeat timestamp:uint64`` and the generated
-        ``EncodeHeartbeat`` / ``DecodeHeartbeat`` helpers serialise
-        that single field. The layout is therefore anchored to the
-        same spec source every other request class in this package
-        cites.
-
-        Upstream C (``protocol.h``) reserves the type code
-        ``DQLITE_REQUEST_HEARTBEAT = 2`` but defines no schema —
-        ``REQUEST__TYPES`` in ``request.h`` omits ``heartbeat``, and
-        ``gateway.c``'s dispatcher falls through to ``DQLITE_PARSE``
-        for this type. The Go client's heartbeat code is also
-        commented out. Because no upstream peer accepts a heartbeat
-        frame, this class is private: it is omitted from the
-        ``REQUEST_TYPES`` registry in ``codec.py`` and from
-        ``messages/__init__.py``'s ``__all__``. It remains in the
-        source tree only for test-mock / golden-byte harnesses that
-        synthesise a type-2 frame for negative-path coverage; callers
-        import it via the private symbol
-        ``dqlitewire.messages.requests._HeartbeatRequest``.
-
-        If upstream evolves the heartbeat handshake (either side), the
-        Go ``schema.go`` directive is the authoritative reference to
-        re-sync against.
-
-    Body: uint64 timestamp (Go-canonical per ``schema.go``; not
-    accepted by the C server).
+    No upstream peer accepts a heartbeat frame (C omits it from
+    REQUEST__TYPES, Go's heartbeat code is commented out), so this is
+    kept out of the codec registry and __all__ — for test/golden-byte
+    harnesses only. schema.go is the layout anchor.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.HEARTBEAT
@@ -253,15 +177,10 @@ class _HeartbeatRequest(Message):
 @final
 @dataclass
 class OpenRequest(Message):
-    """Open a database.
+    """Open a database. Body: text name, uint64 flags, text vfs.
 
-    Body: text name, uint64 flags, text vfs
-
-    Note: the upstream dqlite server (``gateway.c``/``handle_open``)
-    currently IGNORES both ``flags`` and ``vfs`` fields. They are encoded
-    on the wire for protocol compatibility but have no server-side effect.
-    Keep the defaults (flags=0, vfs="") unless you're intentionally
-    exercising a future server version or building a mock server.
+    The upstream server ignores flags and vfs; keep the defaults unless
+    targeting a future server or a mock.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.OPEN
@@ -289,10 +208,7 @@ class OpenRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "OpenRequest":
         if schema != 0:
             raise DecodeError(f"OpenRequest unsupported schema version {schema}")
-        # memoryview wrap so per-slice cost stays O(1) on large bodies
-        # with many embedded text fields, matching the response-side
-        # decoders (RowsResponse, FilesResponse, ServersResponse) that
-        # already use this pattern.
+        # memoryview keeps per-slice cost O(1) on large bodies with many text fields.
         view = memoryview(data)
         name, offset = decode_text(view, max_size=_MAX_FILENAME_SIZE, label="database name")
         flags = decode_uint64(view[offset:], label="OpenRequest.flags")
@@ -307,14 +223,10 @@ class OpenRequest(Message):
 @final
 @dataclass
 class PrepareRequest(Message):
-    """Prepare a SQL statement.
+    """Prepare a SQL statement. Body: uint64 db_id, text sql.
 
-    Body: uint64 db_id, text sql
-
-    Set schema=1 to request V1 response with tail_offset for multi-statement SQL.
-    Note: schema=1 is not used by the canonical Go client (go-dqlite), which
-    always sends schema=0. The tail_offset feature may be supported by the C
-    dqlite server but is not exercised by Go.
+    schema=1 requests a V1 response with tail_offset (multi-statement
+    SQL); the Go client always sends schema=0.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.PREPARE
@@ -336,12 +248,8 @@ class PrepareRequest(Message):
 
     @override
     def encode_body(self) -> bytes:
-        # Pass the same ``max_size`` the decoder uses by default so
-        # encode/decode round-trip is symmetric — without this, an
-        # over-cap SQL string serialises successfully then fails its
-        # own decoder. Mirrors the cap-symmetry pattern already
-        # applied to OpenRequest / DumpRequest / AddRequest /
-        # _ConnectRequest text fields.
+        # Cap symmetric with decode so an over-cap SQL string can't encode
+        # then fail its own decoder.
         return encode_uint64(self.db_id) + encode_text(
             self.sql, max_size=_MAX_TEXT_VALUE_SIZE, label="SQL"
         )
@@ -374,21 +282,12 @@ class ExecRequest(Message):
     db_id: int
     stmt_id: int
     params: Sequence[WireInput] = field(default_factory=list)
-    # Preserves the header schema byte seen on decode so a decode →
-    # re-encode round-trip emits byte-identical output even when the
-    # upstream C client used schema=1 with ≤255 params (which the count
-    # heuristic alone would otherwise downgrade to schema=0). Excluded
-    # from repr/compare so it stays an internal round-trip hint.
+    # Round-trip hint: preserves the decoded schema byte so re-encode is
+    # byte-identical even when C used schema=1 with <=255 params (which
+    # the count heuristic would downgrade to schema=0).
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
-    # Companion round-trip hint to ``_decoded_schema``. Tracks
-    # whether the inbound wire frame carried an explicit empty-params
-    # header (C-style: 8 zero bytes) or omitted the params tuple
-    # entirely (Go-style: 0 bytes). Both shapes are valid for
-    # zero-param requests but produce different wire bytes. Set by
-    # ``decode_body`` only when ``params`` is empty AND the inbound
-    # frame had bytes for the tuple; otherwise ``None`` (caller-
-    # originated default → Go-style omission). Excluded from
-    # repr/compare so it stays an internal round-trip hint.
+    # Round-trip hint: True iff the decoded frame carried an explicit
+    # empty-params header (C-style 8 zero bytes) vs. omitted it (Go-style).
     _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -427,10 +326,6 @@ class ExecRequest(Message):
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"ExecRequest has {len(data) - offset} trailing bytes")
-        # Track whether the inbound frame had an explicit empty-params
-        # header (C-style ``consumed > 0`` for ``params == []``) so a
-        # decode→re-encode round-trip is byte-identical for both
-        # shapes Go and C emit for empty params.
         empty_header = (not params) and consumed > 0
         return cls(
             db_id,
@@ -456,15 +351,7 @@ class QueryRequest(Message):
     stmt_id: int
     params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
-    # Companion round-trip hint to ``_decoded_schema``. Tracks
-    # whether the inbound wire frame carried an explicit empty-params
-    # header (C-style: 8 zero bytes) or omitted the params tuple
-    # entirely (Go-style: 0 bytes). Both shapes are valid for
-    # zero-param requests but produce different wire bytes. Set by
-    # ``decode_body`` only when ``params`` is empty AND the inbound
-    # frame had bytes for the tuple; otherwise ``None`` (caller-
-    # originated default → Go-style omission). Excluded from
-    # repr/compare so it stays an internal round-trip hint.
+    # See ExecRequest._decoded_empty_header.
     _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -561,15 +448,7 @@ class ExecSqlRequest(Message):
     sql: str
     params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
-    # Companion round-trip hint to ``_decoded_schema``. Tracks
-    # whether the inbound wire frame carried an explicit empty-params
-    # header (C-style: 8 zero bytes) or omitted the params tuple
-    # entirely (Go-style: 0 bytes). Both shapes are valid for
-    # zero-param requests but produce different wire bytes. Set by
-    # ``decode_body`` only when ``params`` is empty AND the inbound
-    # frame had bytes for the tuple; otherwise ``None`` (caller-
-    # originated default → Go-style omission). Excluded from
-    # repr/compare so it stays an internal round-trip hint.
+    # See ExecRequest._decoded_empty_header.
     _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -637,15 +516,7 @@ class QuerySqlRequest(Message):
     sql: str
     params: Sequence[WireInput] = field(default_factory=list)
     _decoded_schema: int | None = field(default=None, repr=False, compare=False)
-    # Companion round-trip hint to ``_decoded_schema``. Tracks
-    # whether the inbound wire frame carried an explicit empty-params
-    # header (C-style: 8 zero bytes) or omitted the params tuple
-    # entirely (Go-style: 0 bytes). Both shapes are valid for
-    # zero-param requests but produce different wire bytes. Set by
-    # ``decode_body`` only when ``params`` is empty AND the inbound
-    # frame had bytes for the tuple; otherwise ``None`` (caller-
-    # originated default → Go-style omission). Excluded from
-    # repr/compare so it stays an internal round-trip hint.
+    # See ExecRequest._decoded_empty_header.
     _decoded_empty_header: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -701,17 +572,10 @@ class QuerySqlRequest(Message):
 @final
 @dataclass
 class InterruptRequest(Message):
-    """Interrupt the current operation.
+    """Interrupt the current operation. Body: uint64 db_id (server-ignored).
 
-    Body: uint64 db_id (server-ignored)
-
-    The wire schema includes ``db_id`` for historical reasons but the
-    upstream server's ``handle_interrupt`` (``dqlite-upstream/src/
-    gateway.c``) does not read it — interrupt is per-connection
-    routing, not per-database. Defaulting to 0 keeps the wire
-    encoding stable and matches the Go reference's idiomatic
-    zero-value usage so callers without a meaningful db_id in scope
-    don't have to thread one through.
+    Interrupt is per-connection, not per-database; the server ignores
+    db_id, so it defaults to 0.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.INTERRUPT
@@ -738,31 +602,13 @@ class InterruptRequest(Message):
 
 @dataclass
 class _ConnectRequest(Message):
-    """Establish a Raft transport connection (node-to-node).
+    """CONNECT Raft-transport frame (private). Body: uint64 node_id, text address.
 
-    Body: uint64 node_id, text address
-
-    WARNING: CONNECT (type 11) is a Raft-transport frame, NOT a gateway
-    request. Upstream ``request.h``'s ``REQUEST__TYPES`` macro omits it,
-    and ``gateway.c`` falls through to ``DQLITE_PARSE`` for type-11
-    frames — a real dqlite gateway rejects a CONNECT request sent over
-    the client-server link. The class is exposed with a private name so
-    mock-server / golden-byte harnesses can still synthesise a type-11
-    frame for testing, but it is intentionally absent from the public
-    dispatcher (``REQUEST_TYPES`` in ``codec.py``) and the public
-    ``dqlitewire.messages`` re-export list — mirroring the same
-    treatment applied to ``_HeartbeatRequest``.
-
-    Body-layout anchor (C only): the Raft TCP transport handshake in
-    ``dqlite-upstream/src/raft/uv_tcp_listen.c`` (server side) and
-    ``dqlite-upstream/src/raft/uv_tcp_connect.c`` (dial side) is the
-    canonical reference for the byte shape. Go has no equivalent —
-    ``internal/protocol/schema.go`` contains no Connect directive, and
-    ``go-dqlite`` runs its Raft transport via the embedded raft
-    library rather than re-implementing the wire shape. A maintainer
-    reconciling against a future protocol revision must consult the C
-    transport handshake; the Go schema-directive grep used for every
-    other request class returns nothing here.
+    CONNECT (type 11) is a Raft-transport frame, NOT a gateway request:
+    a real gateway rejects it over the client-server link, so it is kept
+    private and out of the codec registry / __all__ (for test harnesses
+    only). Layout anchor is the C Raft TCP handshake (uv_tcp_listen.c /
+    uv_tcp_connect.c); Go has no equivalent directive.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CONNECT
@@ -801,10 +647,7 @@ class _ConnectRequest(Message):
 @final
 @dataclass
 class AddRequest(Message):
-    """Add a node to the cluster.
-
-    Body: uint64 node_id, text address
-    """
+    """Add a node to the cluster. Body: uint64 node_id, text address."""
 
     MSG_TYPE: ClassVar[int] = RequestType.ADD
 
@@ -840,71 +683,34 @@ class AddRequest(Message):
 class AssignRequest(Message):
     """Assign a role to a node, or promote a node (legacy).
 
-    ASSIGN and PROMOTE share type code 13. They are distinguished by body size:
-    - PROMOTE (legacy): uint64 node_id (1 word)
-    - ASSIGN: uint64 node_id, uint64 role (2 words)
+    ASSIGN and PROMOTE share type code 13, distinguished by body size:
+    PROMOTE (legacy) is 1 word (uint64 node_id); ASSIGN is 2 words
+    (node_id + role).
 
-    **Legacy round-trip asymmetry (intentional).** A peer-emitted
-    1-word PROMOTE body decodes to ``AssignRequest(node_id=N,
-    role=NodeRole.VOTER)`` because PROMOTE upstream-semantically
-    elevates the node to voter. Re-encoding the resulting dataclass
-    via :meth:`encode_body` produces the modern 2-word ASSIGN shape
-    (16 bytes). This is a deliberate one-way upgrade: the legacy
-    PROMOTE wire form has no role field, so on decode we MUST pick
-    one (VOTER per upstream semantics) and on re-encode the modern
-    form is the only safe shape against current servers. Callers
-    that genuinely need to re-emit the legacy 1-word shape (for
-    relaying to an old server or for round-trip-identity tests) must
-    call :meth:`encode_body_legacy` explicitly.
+    Legacy round-trip is a deliberate one-way upgrade: a 1-word PROMOTE
+    decodes to role=VOTER (its upstream semantics) and re-encodes to the
+    modern 2-word ASSIGN. Use encode_body_legacy() to re-emit the 1-word
+    shape.
 
-    **Strict-decode role narrowing diverges from C.** The Python
-    decoder rejects role values outside :class:`NodeRole` with
-    :class:`DecodeError`. Upstream C silently folds unknown roles to
-    ``DQLITE_VOTER`` via the ``default:`` arm of
-    ``translateDqliteRole`` (``dqlite-upstream/src/translate.c``,
-    commented as "For backward compat with clients that don't set a
-    role"). The narrowing is deliberate — silent coercion would mask
-    a future role code (e.g. ``OBSERVER = 3``) added by upstream
-    during a mixed-version rollout. A mock-server / proxy that needs
-    C-style permissiveness can pre-decode the raw uint64 and
-    construct ``AssignRequest`` with ``role=NodeRole.VOTER``
-    explicitly.
+    Role narrowing deliberately diverges from C: unknown roles raise
+    DecodeError rather than being silently folded to VOTER, so a future
+    role code isn't masked during a mixed-version rollout.
 
-    **Construction rejects bare ``role=None``.** ``AssignRequest(node_id=N)``
-    without a role would be silently admitted by the dataclass and
-    fail only at ``encode_body()`` — possibly far from the
-    construction site. The ``__post_init__`` rejects the bare-typo
-    case at construction time. Callers that genuinely need to emit
-    the legacy 1-word PROMOTE shape (relays to old servers,
-    round-trip-identity tests) opt in with
-    ``AssignRequest(node_id=N, role=None, _legacy_intent=True)`` and
-    call :meth:`encode_body_legacy`. The sentinel mirrors the
-    ``_decoded_schema`` / ``_decoded_empty_header`` pattern on
-    ``ExecRequest`` so the wire layer keeps a uniform vocabulary.
+    Bare AssignRequest(node_id=N) (no role) is rejected at construction;
+    the legacy 1-word path requires role=None plus _legacy_intent=True.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.ASSIGN
 
     node_id: int
     role: NodeRole | int | None = None
-    # Round-trip / legacy-emit sentinel. ``True`` opts a caller into
-    # the legacy 1-word PROMOTE encode path (``encode_body_legacy``)
-    # with ``role=None``. ``False`` (the default) makes the bare
-    # ``AssignRequest(node_id=N)`` typo fail at construction rather
-    # than at encode time. Excluded from ``repr`` and equality so two
-    # logically-equal requests compare equal regardless of how they
-    # were built. Mirrors ``ExecRequest._decoded_schema`` and
-    # ``ClusterRequest._decoded``.
+    # True opts into the legacy 1-word PROMOTE encode path with role=None;
+    # the default False makes bare AssignRequest(node_id=N) fail at construction.
     _legacy_intent: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("node_id", self.node_id)
         if self.role is None and not self._legacy_intent:
-            # Reject bare ``AssignRequest(node_id=N)`` at the
-            # construction site rather than at ``encode_body()``. The
-            # encoder-side message is preserved as defense-in-depth for
-            # callers that mutate ``role`` to ``None`` after
-            # construction.
             raise EncodeError(
                 "AssignRequest requires role=NodeRole.VOTER/STANDBY/SPARE for the "
                 "modern ASSIGN body. Bare AssignRequest(node_id=N) is rejected at "
@@ -914,12 +720,7 @@ class AssignRequest(Message):
                 "encode_body_legacy() explicitly."
             )
         if self.role is not None:
-            # Coerce bare ints to the NodeRole enum and reject unknown
-            # values. Mirrors the response-side narrowing on
-            # ``ServersResponse`` so an outbound assign or a
-            # mock-server decode carries a validated role, not an
-            # unknown integer that would silently surface in the
-            # dataclass.
+            # Coerce bare ints to NodeRole and reject unknown values.
             if isinstance(self.role, NodeRole):
                 _validate_uint64("role", int(self.role))
             else:
@@ -928,14 +729,8 @@ class AssignRequest(Message):
                     coerced = NodeRole(self.role)
                 except ValueError as e:
                     raise EncodeError(f"AssignRequest: unknown role {self.role}") from e
-                # ``object.__setattr__`` is the post-init coercion idiom.
-                # If this dataclass is ever flipped to
-                # ``@dataclass(frozen=True)`` (for hashability or
-                # thread-safety), this line raises
-                # ``FrozenInstanceError`` — fold the coercion into a
-                # custom ``__init__`` that writes attributes once at
-                # the end. Sibling ``ServersResponse.NodeInfo`` has the
-                # same shape.
+                # Post-init coercion idiom; raises FrozenInstanceError if this
+                # is ever made frozen=True (then move coercion into __init__).
                 object.__setattr__(self, "role", coerced)
 
     @override
@@ -944,16 +739,8 @@ class AssignRequest(Message):
         if self.role is not None:
             result += encode_uint64(int(self.role))
             return result
-        # Legacy PROMOTE shape (1-word body) is emitted only by very
-        # old dqlite clients. Go-dqlite's canonical EncodeAssign
-        # never produces it; modern servers always expect the
-        # 2-word ASSIGN body. Reject explicitly so a typo like
-        # ``AssignRequest(node_id=42)`` (forgetting role=) doesn't
-        # silently downgrade to the legacy shape and surface as a
-        # cryptic protocol error on the wire. Callers that genuinely
-        # need legacy emission should construct
-        # ``AssignRequest(node_id=42, role=None)`` and call
-        # :meth:`encode_body_legacy` instead.
+        # role=None is rejected here so a forgotten role= doesn't silently
+        # downgrade to the legacy 1-word shape; use encode_body_legacy() for that.
         raise EncodeError(
             "AssignRequest with role=None cannot be encoded via encode_body — "
             "modern dqlite servers and Go-dqlite always send both node_id and role. "
@@ -964,18 +751,9 @@ class AssignRequest(Message):
     def encode_body_legacy(self) -> bytes:
         """Encode as legacy PROMOTE body (1 word: node_id only).
 
-        The legacy wire shape is explicit-opt-in only; ``encode_body``
-        rejects ``role=None`` so accidental omission can't silently
-        downgrade.
-
-        Unlike ``LeaderResponse.encode_body_legacy``, which raises
-        ``EncodeError`` if a non-zero ``node_id`` would be lost in the
-        legacy shape, this method silently drops ``role`` (the legacy
-        PROMOTE body has no role field — the upstream-semantic VOTER
-        elevation is implicit). Callers asking for the legacy shape have
-        already opted into that information loss; the class-level
-        docstring's "Legacy round-trip asymmetry (intentional)" section
-        is the canonical reference.
+        Unlike LeaderResponse.encode_body_legacy, this silently drops
+        role (the legacy body has no role field); the caller opted into
+        that loss.
         """
         return encode_uint64(self.node_id)
 
@@ -984,16 +762,9 @@ class AssignRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "AssignRequest":
         if schema != 0:
             raise DecodeError(f"AssignRequest unsupported schema version {schema}")
-        # Upstream emits bodies of exactly 8 (PROMOTE) or 16 (ASSIGN)
-        # bytes. Reject anything else rather than silently dropping
-        # trailing bytes — parity with the C cursor-cap semantics.
         if len(data) == 8:
-            # Legacy PROMOTE: no role on the wire. Map to
-            # NodeRole.VOTER per the documented upstream semantics
-            # (PROMOTE elevates a non-voter to voter). Without this,
-            # the dataclass would carry role=None which round-trips
-            # to encode_body and raises EncodeError — the legacy
-            # shape would no longer round-trip.
+            # Legacy PROMOTE: no role on the wire, map to VOTER per upstream
+            # semantics (role=None wouldn't round-trip through encode_body).
             node_id = decode_uint64(data)
             return cls(node_id, NodeRole.VOTER)
         if len(data) == 16:
@@ -1012,10 +783,7 @@ class AssignRequest(Message):
 @final
 @dataclass
 class RemoveRequest(Message):
-    """Remove a node from the cluster.
-
-    Body: uint64 node_id
-    """
+    """Remove a node from the cluster. Body: uint64 node_id."""
 
     MSG_TYPE: ClassVar[int] = RequestType.REMOVE
 
@@ -1042,10 +810,7 @@ class RemoveRequest(Message):
 @final
 @dataclass
 class DumpRequest(Message):
-    """Request a database dump.
-
-    Body: text name
-    """
+    """Request a database dump. Body: text name."""
 
     MSG_TYPE: ClassVar[int] = RequestType.DUMP
 
@@ -1057,13 +822,9 @@ class DumpRequest(Message):
 
     @override
     def encode_body(self) -> bytes:
-        # The C gateway's ``handle_dump`` uses a 1024-byte stack
-        # buffer for the WAL filename, leaving 1019 bytes once the
-        # ``-wal`` suffix and NUL terminator are accounted for
-        # (dqlite-upstream ``src/gateway.c::handle_dump``). Cap the
-        # encoder at the C ceiling so a longer name fails fast on
-        # the Python side rather than producing a ``FilesResponse``
-        # whose WAL entry refers to a truncated path.
+        # Cap at the C ceiling: handle_dump's 1024-byte WAL-filename buffer
+        # leaves 1019 bytes after the "-wal" suffix and NUL, so a longer name
+        # would yield a truncated WAL path. Fail fast here instead.
         return encode_text(self.name, max_size=_MAX_DUMP_FILENAME_SIZE, label="database name")
 
     @classmethod
@@ -1071,9 +832,7 @@ class DumpRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "DumpRequest":
         if schema != 0:
             raise DecodeError(f"DumpRequest unsupported schema version {schema}")
-        # Symmetric with ``encode_body`` — refuse a peer-supplied
-        # ``DumpRequest`` whose name exceeds the C ceiling so the
-        # decoder cannot accept a request the encoder would reject.
+        # Symmetric with encode_body: refuse a name exceeding the C ceiling.
         name, consumed = decode_text(data, max_size=_MAX_DUMP_FILENAME_SIZE, label="database name")
         if consumed != len(data):
             raise DecodeError(f"DumpRequest has {len(data) - consumed} trailing bytes")
@@ -1083,44 +842,22 @@ class DumpRequest(Message):
 @final
 @dataclass
 class ClusterRequest(Message):
-    """Request cluster information.
+    """Request cluster information. Body: uint64 format.
 
-    Body: uint64 format
-
-    Note: format=0 (V0: id+address only, no role) IS a valid upstream
-    dqlite wire format. This Python library chooses not to implement it
-    because :class:`ServersResponse` only decodes V1 (id+address+role).
-    Callers that need V0 compatibility should decode :class:`ServersResponse`
-    themselves. Use ``format=1`` for the default path.
-
-    **Decoded V0 round-trip is supported.** A V0 frame decoded via
-    :meth:`decode_body` carries the ``_decoded=True`` sentinel and may
-    be re-encoded byte-identically — proxy / replay / capture-replay
-    tooling can therefore route V0 traffic through the dataclass
-    without manual ``encode_uint64`` plumbing. Fresh construction with
-    ``format=0`` (no sentinel) remains rejected at construction.
+    format=0 (V0, no role) is valid upstream but unsupported here because
+    ServersResponse only decodes V1; fresh construction with format=0 is
+    rejected. A V0 frame decoded via decode_body carries _decoded=True
+    and re-encodes byte-identically for proxy/replay tooling.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.CLUSTER
 
     format: int = 1
-    # Decoded-V0 sentinel. Declared as a regular dataclass field so it
-    # participates in the dataclass-generated ``__init__`` (the
-    # decoder passes ``_decoded=True`` as a constructor kwarg —
-    # uniformly through dataclass machinery, no low-level instance
-    # bypass). ``repr=False`` / ``compare=False`` keep it out of
-    # equality and display. Mirrors the constructor-kwarg sentinel
-    # pattern on the SQL request siblings (``_decoded_schema``,
-    # ``_decoded_empty_header``) and on ``AssignRequest._legacy_intent``.
+    # Decoded-V0 sentinel; True exempts format=0 from the construction-time reject.
     _decoded: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _validate_uint64("format", self.format)
-        # Construction-time rejection still applies to V0 because
-        # this client's outbound shape is V1-only (the matched
-        # ``ServersResponse`` decoder reads the role fields). Upstream
-        # defines only V0=0 and V1=1 (include/dqlite.h); the gateway
-        # rejects anything else with DQLITE_PARSE.
         if self.format == 0 and not self._decoded:
             raise EncodeError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
@@ -1136,13 +873,6 @@ class ClusterRequest(Message):
     @override
     def encode_body(self) -> bytes:
         if self.format == 0 and not self._decoded:
-            # Fresh construction with format=0 is rejected: this client
-            # cannot consume the V0 ServersResponse, so emitting a V0
-            # request would be a wire-shape inconsistency. A decoded V0
-            # instance (``_decoded=True``) is exempt — proxy / replay /
-            # capture-replay tooling can byte-identically round-trip a
-            # captured V0 frame through the dataclass without resorting
-            # to manual ``encode_uint64`` plumbing.
             raise EncodeError(
                 "ClusterRequest format=0 (V0) is valid in upstream dqlite but "
                 "not implemented in this Python library: ServersResponse only "
@@ -1157,12 +887,8 @@ class ClusterRequest(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "ClusterRequest":
         if schema != 0:
             raise DecodeError(f"ClusterRequest unsupported schema version {schema}")
-        # Decode-side accepts V0 so a relaying proxy / mock server /
-        # captured-traffic replay tool can round-trip a V0 frame
-        # without losing the original byte shape. A decoded V0 frame
-        # carries the ``_decoded=True`` sentinel and re-encodes
-        # byte-identically (see ``encode_body``); only *fresh*
-        # ``format=0`` construction is rejected.
+        # Decode accepts V0 so replay tooling can round-trip it; only fresh
+        # format=0 construction is rejected.
         if len(data) != 8:
             raise DecodeError(f"ClusterRequest body must be 8 bytes, got {len(data)}")
         format_val = decode_uint64(data)
@@ -1171,25 +897,13 @@ class ClusterRequest(Message):
                 f"ClusterRequest format must be 0 (V0) or 1 (V1); upstream "
                 f"defines only those two values. Got {format_val}."
             )
-        # Pass ``_decoded=True`` through the dataclass-generated
-        # ``__init__`` so the V0 construction-time gate sees the
-        # sentinel and short-circuits. Going through the public
-        # constructor keeps the decoder uniform with the sibling SQL
-        # request family (which uses the same pattern for
-        # ``_decoded_schema`` / ``_decoded_empty_header``). The
-        # previous implementation used a low-level instance-bypass
-        # path which silently broke under frozen=True / slots=True
-        # flips or new fields without explicit assignment.
         return cls(format=format_val, _decoded=True)
 
 
 @final
 @dataclass
 class TransferRequest(Message):
-    """Request leadership transfer.
-
-    Body: uint64 target_node_id
-    """
+    """Request leadership transfer. Body: uint64 target_node_id."""
 
     MSG_TYPE: ClassVar[int] = RequestType.TRANSFER
 
@@ -1216,35 +930,18 @@ class TransferRequest(Message):
 @final
 @dataclass
 class DescribeRequest(Message):
-    """Request database schema description.
+    """Request database schema description. Body: uint64 format.
 
-    Body: uint64 format
-
-    Upstream defines only ``DQLITE_REQUEST_DESCRIBE_FORMAT_V0 = 0``
-    (``gateway.c`` rejects anything else with ``SQLITE_PROTOCOL``).
-    Reject unknown formats client-side so callers get a local
-    ``EncodeError`` instead of a confusing server failure.
-
-    Decode-side escape: :meth:`decode_body` accepts a ``strict=False``
-    kwarg that admits any uint64 ``format`` for inspection of
-    captured / synthetic traffic (Go's ``DecodeDescribe`` is a bare
-    ``getUint64``). The instance carries ``_decoded=True`` so the
-    construction-time gate short-circuits; re-encoding such an
-    instance succeeds, but a fresh ``DescribeRequest(format=N)`` with
-    ``N != 0`` is still rejected at construction so production
-    outbound emission cannot accidentally synthesise a payload the
-    server would reject.
+    Upstream defines only format=0; fresh construction rejects anything
+    else client-side. decode_body(strict=False) admits any format (with
+    _decoded=True) for inspecting captured/synthetic traffic.
     """
 
     MSG_TYPE: ClassVar[int] = RequestType.DESCRIBE
 
     format: int = 0
-    # Decoded-non-zero sentinel. Mirrors ``ClusterRequest._decoded`` /
-    # ``AssignRequest._legacy_intent`` — set to ``True`` by the
-    # ``strict=False`` decode path so the V0-only construction gate
-    # short-circuits for proxy / replay tooling. Excluded from
-    # equality / repr; ``init=True`` so the decoder can pass it as a
-    # constructor kwarg uniformly through dataclass machinery.
+    # Decoded-non-zero sentinel; set by the strict=False decode path to exempt
+    # the V0-only construction gate.
     _decoded: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -1270,9 +967,6 @@ class DescribeRequest(Message):
         if format_val != 0:
             if strict:
                 raise DecodeError(f"DescribeRequest format must be 0 (V0); got {format_val}")
-            # Non-strict: admit the value so proxy / replay tooling can
-            # round-trip captured traffic from a buggy peer. The
-            # ``_decoded`` sentinel exempts the construction-time gate.
             return cls(format=format_val, _decoded=True)
         return cls(format_val)
 
@@ -1280,10 +974,7 @@ class DescribeRequest(Message):
 @final
 @dataclass
 class WeightRequest(Message):
-    """Set node weight for leader election.
-
-    Body: uint64 weight
-    """
+    """Set node weight for leader election. Body: uint64 weight."""
 
     MSG_TYPE: ClassVar[int] = RequestType.WEIGHT
 

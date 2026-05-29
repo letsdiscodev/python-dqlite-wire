@@ -1,14 +1,5 @@
-"""``WriteBuffer.write`` and ``write_padded`` accept any bytes-like
-input (``bytes``, ``bytearray``, ``memoryview``).
-
-The runtime always supported this via ``bytearray.extend``, but the
-type annotation declared ``data: bytes`` which lied to type-checker
-users. Sibling decoders (``decode_text``, ``decode_blob``) consistently
-typed as ``bytes | memoryview``; align here for consistency.
-
-``MessageDecoder.decode_bytes`` and the module-level ``decode_message``
-helper similarly widened.
-"""
+"""``WriteBuffer.write``/``write_padded`` and ``decode_message`` accept any
+bytes-like input (bytes, bytearray, memoryview)."""
 
 from dqlitewire.buffer import WriteBuffer
 from dqlitewire.codec import decode_message
@@ -30,7 +21,7 @@ def test_write_accepts_memoryview() -> None:
 def test_write_padded_accepts_bytearray() -> None:
     buf = WriteBuffer()
     buf.write_padded(bytearray(b"hi"))
-    assert buf.getvalue() == b"hi" + b"\x00" * 6  # padded to word boundary
+    assert buf.getvalue() == b"hi" + b"\x00" * 6
 
 
 def test_write_padded_accepts_memoryview() -> None:

@@ -1,21 +1,6 @@
-"""Pin: admin-request decoders reject non-zero schema kwarg.
-
-The wire dispatcher (``codec.py``) consults ``_REQUEST_MAX_SCHEMA`` to
-decide whether a given ``msg_type + header.schema`` combination is
-admissible before dispatching to ``decode_body``. That table only
-contains the five params-schema-aware codes (PrepareRequest,
-ExecRequest, QueryRequest, ExecSqlRequest, QuerySqlRequest); admin
-request types fall through to the default ``0``. So the wire path is
-already safe.
-
-The gap pinned here is on the **direct-caller** path: a negative-path
-test, mock-server fixture, captured-traffic replay tool, or fuzz
-harness that calls ``<Class>.decode_body(body, schema=N)`` directly
-must get a ``DecodeError`` for ``N != 0``, mirroring upstream C's
-``INIT_V0`` macro (``gateway.c:109-122``) which rejects
-``req->schema != 0`` for the canonical-INIT_V0 handlers with
-``DQLITE_PARSE`` before calling ``request_##REQ##__decode``.
-"""
+"""Admin-request decoders reject a non-zero schema kwarg on the direct-caller
+path (the wire dispatcher already gates schema before decode_body). Mirrors
+upstream C's INIT_V0 macro (gateway.c) rejecting req->schema != 0."""
 
 from __future__ import annotations
 
@@ -43,10 +28,8 @@ from dqlitewire.messages.requests import (
 )
 from dqlitewire.types import encode_text, encode_uint32, encode_uint64
 
-# (class, body) — each body is a *valid* V0 frame for its class so the
-# only mutation that should cause the decode to fail is the schema
-# kwarg. If the schema gate fires, the length / content checks must
-# never have a chance to fire.
+# Each body is a valid V0 frame so the only thing causing a decode failure
+# is the schema kwarg; the schema gate must fire before length/content checks.
 _ADMIN_CASES = [
     (LeaderRequest, encode_uint64(0)),
     (ClientRequest, encode_uint64(0)),

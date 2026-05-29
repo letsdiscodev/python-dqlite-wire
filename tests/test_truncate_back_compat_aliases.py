@@ -1,13 +1,5 @@
-"""Pin: the underscore-prefixed pre-promotion names continue to work
-for one release cycle so downstream consumers can migrate at their
-own pace.
-
-``_DEFAULT_MAX_RAW_MESSAGE`` and ``_cap_raw_message`` are kept as
-back-compat aliases for the now-public ``DEFAULT_MAX_RAW_MESSAGE``
-and ``cap_raw_message``. The aliases will be removed when the two
-downstream consumers (``dqliteclient.exceptions`` and
-``dqlitedbapi.exceptions``) have migrated.
-"""
+"""The underscore-prefixed _DEFAULT_MAX_RAW_MESSAGE/_cap_raw_message remain as
+back-compat aliases for the now-public names until downstream consumers migrate."""
 
 from __future__ import annotations
 

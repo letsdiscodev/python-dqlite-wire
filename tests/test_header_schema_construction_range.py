@@ -33,12 +33,3 @@ def test_header_construction_rejects_schema_above_uint8() -> None:
 def test_header_construction_rejects_negative_schema() -> None:
     with pytest.raises(EncodeError, match="schema"):
         Header(size_words=1, msg_type=0, schema=-1, reserved=0)
-
-
-def test_header_docstring_documents_uint8_construction_range() -> None:
-    """Pin the docstring shape so a future maintainer doesn't revert
-    the schema field's documentation to the misleading "0 or 1"
-    framing that contradicts __post_init__."""
-    doc = Header.__doc__ or ""
-    assert "uint8" in doc.lower()
-    assert "codec.py" in doc, "Docstring must point to codec.py as the per-type ceiling enforcer"

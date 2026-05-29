@@ -17,24 +17,11 @@ __all__ = [
 @final
 @dataclass(frozen=True, slots=True)
 class Header:
-    """Message header.
+    """Message header (8 bytes, ``<IBBH``): size_words, msg_type, schema, reserved.
 
-    Format (8 bytes):
-    - size: uint32 - Size of message body in words (8-byte units)
-    - type: uint8 - Message type code
-    - schema: uint8 - Schema version. Construction accepts any uint8
-      (0..255); the per-message-type ceiling — keyed by direction in
-      ``codec.py`` as ``_REQUEST_MAX_SCHEMA`` (requests) and
-      ``_RESPONSE_MAX_SCHEMA`` (responses), typically 0 or 1 (V1
-      extends param tuples and StmtResponse) — is enforced at
-      decode-dispatch, not at construction time, to avoid a circular
-      import on the per-type tables. The two dicts are direction-keyed
-      to prevent a type-code collision between ``RequestType`` and
-      ``ResponseType`` from slipping a hostile schema byte past a
-      ceiling meant for the other direction (e.g. ``FILES`` response
-      code 9 vs ``QUERY_SQL`` request code 9).
-    - reserved: uint16 - Reserved (always 0; enforced symmetrically
-      on encode and decode).
+    Construction accepts any uint8 schema; the per-message-type ceiling is
+    enforced at decode-dispatch (in ``codec.py``) to avoid a circular import.
+    ``reserved`` must be 0, enforced symmetrically on encode and decode.
     """
 
     size_words: int
@@ -43,21 +30,13 @@ class Header:
     reserved: int = 0
 
     def __post_init__(self) -> None:
-        # Enforce ``reserved == 0`` symmetrically on encode and decode.
-        # The decoder rejects non-zero ``reserved`` so peer corruption
-        # surfaces as DecodeError; without this construction-time
-        # check, ``Header(reserved=42).encode()`` would produce wire
-        # bytes the same decoder rejects, breaking encode→decode
-        # round-trip identity. Upstream C (message.h) keeps the field
-        # zero in every emit path.
+        # Reject non-zero reserved at construction so it matches the
+        # decoder's check and preserves encode->decode round-trip identity.
         if self.reserved != 0:
             raise EncodeError(f"Header reserved field must be 0, got {self.reserved}")
-        # Range-validate the remaining three fields at construction
-        # time so an invalid value surfaces here (with a precise
-        # field name + observed value) rather than at ``encode()``
-        # time as an opaque ``struct.error → EncodeError`` wrap.
-        # ``bool`` is rejected first because ``True == 1`` would
-        # silently coerce to a valid uint8 and mask caller bugs.
+        # Range-validate at construction for precise errors instead of an
+        # opaque ``struct.error`` at encode. ``bool`` is rejected first
+        # because ``True == 1`` would coerce to a valid uint8.
         if isinstance(self.size_words, bool) or not isinstance(self.size_words, int):
             raise EncodeError(
                 f"Header size_words must be int, got {type(self.size_words).__name__}"
@@ -74,7 +53,6 @@ class Header:
             raise EncodeError(f"Header schema {self.schema} out of range for uint8")
 
     def encode(self) -> bytes:
-        """Encode header to bytes."""
         try:
             return struct.pack(
                 "<IBBH",
@@ -88,40 +66,23 @@ class Header:
 
     @classmethod
     def decode(cls, data: bytes) -> "Header":
-        """Decode header from bytes."""
         if len(data) < HEADER_SIZE:
             raise DecodeError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
         try:
             size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
         except struct.error as e:  # pragma: no cover
-            # Defensive: ``struct.unpack`` of the fixed-size ``<IBBH``
-            # format on a guaranteed-8-byte slice cannot fail with
-            # ``struct.error`` — the length check above ensures the
-            # slice has exactly ``HEADER_SIZE`` bytes. Kept as a
-            # belt-and-braces guard against future format changes.
+            # Defensive: ``<IBBH`` unpack of a guaranteed-8-byte slice
+            # cannot fail; kept as a guard against future format changes.
             raise DecodeError(f"Failed to decode header: {e}") from e
-        # Upstream C (message.h) reserves the trailing uint16 and every
-        # current server writes 0. Reject non-zero values so peer
-        # corruption or a future schema extension surfaces as a clean
-        # DecodeError instead of silently carrying bits we cannot
-        # re-emit. Matches LeaderRequest.decode_body's strict check.
+        # Reject non-zero reserved so peer corruption surfaces as a clean
+        # DecodeError rather than carrying bits we cannot re-emit.
         if reserved != 0:
             raise DecodeError(f"Header reserved field must be 0, got {reserved}")
         return cls(size_words, msg_type, schema, reserved)
 
     @property
     def body_size(self) -> int:
-        """Size of the message body in bytes.
-
-        Canonical accessor for the words-to-bytes conversion.
-        Production decoders (``MessageDecoder.decode_bytes``,
-        ``MessageDecoder.decode_continuation``) and any future code
-        path needing the body size in bytes should consult this
-        property rather than inline ``size_words * WORD_SIZE`` — the
-        SSOT discipline keeps the word size centralised in
-        :data:`dqlitewire.constants.WORD_SIZE` (currently 8,
-        hypothetically revisable by a future protocol revision).
-        """
+        """Message body size in bytes (canonical words-to-bytes accessor)."""
         return self.size_words * WORD_SIZE
 
 
@@ -137,21 +98,14 @@ class Message(ABC):
         ...
 
     def _get_schema(self) -> int:
-        """Return the schema version for the header. Override for per-instance schema."""
+        """Schema version for the header; override for per-instance schema."""
         return self.SCHEMA
 
     def encode(self) -> bytes:
         """Encode complete message with header."""
         body = self.encode_body()
-        # Every built-in Message subclass already emits a word-aligned
-        # body (text / blob / params / tuple encoders all pad
-        # themselves). The previous silent ``body += b"\x00" * pad``
-        # hid subclass bugs by the time the misshapen body reached the
-        # peer. Upstream's C encoder asserts ``len % 8 == 0``
-        # (``dqlite_assert(_n % 8 == 0)`` in ``gateway.c`` SUCCESS /
-        # failure macros); match the invariant at encode time so
-        # regressions fail loudly here rather than surfacing as a
-        # strict-decode rejection at the peer.
+        # Subclass encoders must self-pad to word alignment; fail loudly
+        # here rather than silently padding and masking a subclass bug.
         if len(body) % WORD_SIZE != 0:
             raise EncodeError(
                 f"{type(self).__name__}.encode_body() returned "

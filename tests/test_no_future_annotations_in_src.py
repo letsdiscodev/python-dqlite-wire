@@ -1,13 +1,4 @@
-"""Regression guard: no source file in ``src/dqlitewire/`` carries
-``from __future__ import annotations``.
-
-The workspace floor is Python 3.13; PEP 604 union syntax and PEP 695
-type-alias syntax work natively at runtime. The done item
-``workspace-future-annotations-inconsistent.md`` removed four
-pre-existing such imports across the workspace. ``_truncate.py``
-re-introduced the import in a later commit and was cleaned up
-alongside this test. Prevents future drift.
-"""
+"""Guard: no src/dqlitewire file carries ``from __future__ import annotations`` (3.13 floor)."""
 
 import pathlib
 

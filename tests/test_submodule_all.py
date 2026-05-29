@@ -1,16 +1,5 @@
-"""Each dqlitewire submodule must declare ``__all__`` so
-``from dqlitewire.<sub> import *`` does not leak private helpers.
-
-Mirrors the pattern enforced by ``dqliteclient`` (see
-``test_submodule_all.py`` in that package). Without per-submodule
-``__all__``, ``from dqlitewire.constants import *`` leaks ``IntEnum``,
-``Final``, regex internals, etc., and breaks the discipline of
-declaring the public surface at the source.
-
-Also asserts every name listed in ``dqlitewire.__all__`` is reachable
-from at least one submodule's ``__all__`` (i.e., the parent re-export
-has a single source-of-truth submodule).
-"""
+"""Every dqlitewire submodule declares __all__ (so `import *` leaks no private
+helpers), and every name in dqlitewire.__all__ is reachable from some submodule's."""
 
 from __future__ import annotations
 
@@ -49,9 +38,6 @@ def test_submodule_declares_all(modname: str) -> None:
 
 
 def test_parent_all_is_covered_by_submodules() -> None:
-    """Every name in ``dqlitewire.__all__`` is reachable from at
-    least one submodule's ``__all__`` (modulo package-local names
-    like ``__version__`` and the submodule re-exports themselves)."""
     submodule_names: set[str] = set()
     for modname in _SUBMODULES:
         mod = importlib.import_module(modname)

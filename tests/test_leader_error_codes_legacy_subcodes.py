@@ -1,13 +1,4 @@
-"""Pin: ``LEADER_ERROR_CODES`` carries both modern (40/41) and
-legacy (32/33) sub-code variants so a leader-flip on a pre-3.32.1
-dqlite server is classified as retryable.
-
-Go's ``go-dqlite/driver/driver.go::driverError`` cascades both pairs
-through the same ``ErrBadConn`` arm. Python must match so a mixed
-cluster (one peer on a pre-3.32.1 server, others on the modern
-build) classifies leader-flips uniformly across the dbapi exception
-hierarchy and the SA dialect's ``is_disconnect``.
-"""
+"""LEADER_ERROR_CODES has modern (40/41) and legacy (32/33) sub-codes; old flips stay retryable."""
 
 from __future__ import annotations
 
@@ -29,9 +20,6 @@ def test_modern_codes_are_in_set() -> None:
 
 
 def test_legacy_codes_are_in_set() -> None:
-    """Pre-3.32.1 dqlite servers emit (32<<8) / (33<<8) sub-codes for
-    the same leader-flip conditions. Go classifies both pairs as
-    transient; Python must match."""
     assert SQLITE_IOERR_NOT_LEADER_LEGACY == 8202
     assert SQLITE_IOERR_LEADERSHIP_LOST_LEGACY == 8458
     assert SQLITE_IOERR_NOT_LEADER_LEGACY in LEADER_ERROR_CODES

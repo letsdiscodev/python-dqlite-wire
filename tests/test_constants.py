@@ -112,12 +112,8 @@ class TestRequestTypeValues:
         assert RequestType.WEIGHT == 19
 
     def test_connect_is_11(self) -> None:
-        """C protocol defines DQLITE_REQUEST_CONNECT = 11 for Raft transport connections.
-
-        The Go client omits this (it's a client library, not a cluster node),
-        but the C server defines it and a complete protocol implementation
-        should include it.
-        """
+        """C defines DQLITE_REQUEST_CONNECT = 11 for Raft transport; the Go client omits
+        it (client-only), but a complete implementation includes it."""
         assert RequestType.CONNECT == 11
 
 
@@ -125,11 +121,10 @@ class TestPublicExports:
     """Verify important types are importable from public API paths."""
 
     def test_nodeinfo_importable_from_messages(self) -> None:
-        """NodeInfo should be importable from dqlitewire.messages."""
         from dqlitewire.messages import NodeInfo
 
         assert NodeInfo is not None
-        # Verify it's the same class used by ServersResponse
+        # Same class ServersResponse uses.
         from dqlitewire.messages.responses import NodeInfo as DirectNodeInfo
 
         assert NodeInfo is DirectNodeInfo
@@ -224,11 +219,8 @@ class TestLeaderErrorCodes:
         )
 
         assert isinstance(LEADER_ERROR_CODES, frozenset)
-        # Both modern (40/41) and legacy (32/33) sub-code variants are
-        # in the set so a leader-flip on a pre-3.32.1 dqlite server is
-        # classified as retryable. See companion test
-        # ``test_leader_error_codes_legacy_subcodes.py`` for the Go
-        # parity rationale.
+        # Modern (40/41) and legacy (32/33) sub-codes both present so a leader-flip on
+        # a pre-3.32.1 server stays retryable; see test_leader_error_codes_legacy_subcodes.py.
         assert SQLITE_IOERR_NOT_LEADER in LEADER_ERROR_CODES
         assert SQLITE_IOERR_LEADERSHIP_LOST in LEADER_ERROR_CODES
         assert SQLITE_IOERR_NOT_LEADER_LEGACY in LEADER_ERROR_CODES
@@ -245,10 +237,8 @@ class TestLeaderErrorCodes:
         assert SQLITE_IOERR == 10
         assert SQLITE_IOERR_NOT_LEADER == 10250
         assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
-        # Both modern and legacy variants are in the set; the latter
-        # cover pre-3.32.1 dqlite servers that emit (32/33<<8) sub-
-        # codes for the same leader-flip conditions. See companion
-        # test ``test_leader_error_codes_legacy_subcodes.py``.
+        # Legacy variants cover pre-3.32.1 servers emitting (32/33<<8) for the same
+        # leader-flip conditions; see test_leader_error_codes_legacy_subcodes.py.
         assert {10250, 10506, 8202, 8458} == set(LEADER_ERROR_CODES)
 
 
@@ -303,17 +293,15 @@ class TestPrimarySqliteCode:
     def test_primary_sqlite_code_extracts_auto_rollback_primaries(
         self, primary: int, extended: int
     ) -> None:
-        """Pin extraction for the auto-rollback primary set so a future
-        codec refactor can't silently mishandle one of them."""
+        """Extraction for the auto-rollback primary set, so a refactor can't mishandle one."""
         from dqlitewire.constants import primary_sqlite_code
 
         assert primary_sqlite_code(extended) == primary
 
 
 class TestAutoRollbackPrimaryCodes:
-    """Pin the canonical home for the auto-rollback primary code set
-    that the downstream client tracker uses to clear ``_in_transaction``
-    after a server-side auto-rollback."""
+    """The auto-rollback primary code set the client tracker uses to clear
+    ``_in_transaction`` after a server-side auto-rollback."""
 
     def test_set_matches_documented_values(self) -> None:
         from dqlitewire.constants import TX_AUTO_ROLLBACK_PRIMARY_CODES
@@ -331,10 +319,9 @@ class TestAutoRollbackPrimaryCodes:
         assert 13 in TX_AUTO_ROLLBACK_PRIMARY_CODES
 
     def test_set_includes_sqlite_nomem(self) -> None:
-        """SQLITE_NOMEM (7) is on SQLite's documented auto-rollback list
-        (https://www.sqlite.org/lang_transaction.html). A server-side
-        OOM during step() causes SQLite to tear down the txn; the
-        client must mirror that by clearing tracker state."""
+        """SQLITE_NOMEM (7) is on SQLite's auto-rollback list
+        (sqlite.org/lang_transaction.html): a server-side OOM tears down the txn,
+        so the client must clear tracker state."""
         from dqlitewire.constants import SQLITE_NOMEM, TX_AUTO_ROLLBACK_PRIMARY_CODES
 
         assert SQLITE_NOMEM == 7
@@ -358,12 +345,8 @@ class TestAutoRollbackPrimaryCodes:
 
 
 class TestBareDatabaseErrorPrimaryCodes:
-    """Pin the SQLite primary codes that the SA dialect treats as
-    slot-fatal via the bare-``DatabaseError`` arm of ``is_disconnect``
-    and ``do_ping`` — codes 11 / 24 / 26 (CORRUPT / FORMAT / NOTADB).
-    Hosted in the wire layer alongside the other SQLite primaries so
-    every consumer (SA dialect, dbapi cursor, future tooling) imports
-    one source of truth."""
+    """The SQLite primaries the SA dialect treats as slot-fatal (11/24/26 =
+    CORRUPT/FORMAT/NOTADB), hosted in the wire layer as the single source of truth."""
 
     @pytest.mark.parametrize(
         ("name", "expected"),
@@ -387,40 +370,24 @@ class TestBareDatabaseErrorPrimaryCodes:
 
 
 class TestDqliteErrorCollidesWithSqliteErrorOnWire:
-    """``dqlite-upstream/include/dqlite.h`` defines ``DQLITE_ERROR = 1``,
-    which shares the wire low-byte with ``SQLITE_ERROR = 1``. Upstream
-    emits ``DQLITE_ERROR`` from ``gateway.c::handle_request_transfer``
-    (``failure(req, DQLITE_ERROR, "leadership transfer failed")``) on the
-    ``REQUEST_TRANSFER`` path. The Python client does NOT currently
-    invoke that request type, so the collision is latent — but the
-    architectural shape relies on message-text disambiguation in
-    ``dbapi.connection._is_no_transaction_error``.
-
-    Pin the collision so a future audit cycle finds the breadcrumbs
-    and a future maintainer adding ``REQUEST_TRANSFER`` support sees the
-    risk."""
+    """DQLITE_ERROR = 1 (dqlite.h) shares the wire low-byte with SQLITE_ERROR = 1.
+    Upstream emits it from gateway.c on REQUEST_TRANSFER, which the Python client never
+    sends — so the collision is latent and disambiguated only by message text in
+    dbapi.connection._is_no_transaction_error. Pinned for whoever adds TRANSFER support."""
 
     def test_dqlite_error_value_one_shares_low_byte_with_sqlite_error(self) -> None:
         from dqlitewire.constants import primary_sqlite_code
 
-        # ``DQLITE_ERROR = 1`` is NOT exported as a named constant —
-        # exporting it under the same value as a SQLite primary would
-        # invite a use-site to import the wrong one. Inline the literal
-        # here so the collision is documented at exactly the place a
-        # maintainer would look to disambiguate.
+        # DQLITE_ERROR=1 is deliberately not exported as a named constant: it would
+        # invite importing the wrong one of the two colliding values.
         DQLITE_ERROR_LITERAL = 1
         SQLITE_ERROR_LITERAL = 1
         assert DQLITE_ERROR_LITERAL == SQLITE_ERROR_LITERAL
         assert primary_sqlite_code(DQLITE_ERROR_LITERAL) == 1
 
     def test_dqlite_error_is_not_classified_as_namespace_code(self) -> None:
-        """``is_dqlite_namespace_code`` covers only codes >= 1000
-        that pass through ``primary_sqlite_code`` unchanged.
-        ``DQLITE_ERROR=1`` collides numerically with ``SQLITE_ERROR=1``
-        but must NOT be classified as a namespace code — that would
-        mask the SQLite primary from dispatch. Pin that 1, 2, 3 are
-        outside the namespace range so a regression that widens the
-        range or repurposes the discriminator surfaces here."""
+        """is_dqlite_namespace_code covers only codes >= 1000; 1/2/3 must stay outside it,
+        else a colliding DQLITE_ERROR=1 would mask the SQLite primary from dispatch."""
         from dqlitewire.constants import is_dqlite_namespace_code
 
         assert is_dqlite_namespace_code(1) is False
@@ -429,11 +396,8 @@ class TestDqliteErrorCollidesWithSqliteErrorOnWire:
 
 
 class TestDefaultRowsAndFramesCaps:
-    """The default per-query caps (row count and continuation-frame
-    count) are operational defenses against slow-drip / amplification
-    attacks from a hostile or buggy server. Pin the literal values so
-    a refactor that "factors out" the constants (e.g. divides by
-    1000 by accident) cannot silently change the magnitude."""
+    """The default per-query caps defend against slow-drip / amplification attacks;
+    pin the literal magnitudes so a refactor can't silently change them."""
 
     def test_default_max_total_rows_is_ten_million(self) -> None:
         from dqlitewire import DEFAULT_MAX_TOTAL_ROWS
@@ -447,33 +411,21 @@ class TestDefaultRowsAndFramesCaps:
 
 
 class TestInternalDecodeBoundsPinnedAgainstReadme:
-    """The README's "Internal sanity bounds" section enumerates four
-    decode-time cap constants. Pin each value so a future refactor
-    that bumps a constant without updating the README produces a test
-    failure — exactly the drift this test catches today
-    (``_MAX_COLUMN_COUNT`` was bumped from 10,000 to 32,767 to match
-    SQLite's ``SQLITE_MAX_COLUMN`` ceiling, but the README was not
-    updated)."""
+    """Pin the four decode-time cap constants the README documents, so bumping one
+    without updating the README fails here (as _MAX_COLUMN_COUNT once drifted)."""
 
     def test_max_param_count_matches_sqlite_max_variable_number(self) -> None:
         from dqlitewire.tuples import _MAX_PARAM_COUNT
 
-        # SQLite's standard-build compile-time max for
-        # SQLITE_MAX_VARIABLE_NUMBER (https://www.sqlite.org/limits.html).
-        # The server cannot bind beyond this; tightening the client
-        # cap to match prevents a malicious peer from inflating
-        # intermediate allocations.
+        # SQLITE_MAX_VARIABLE_NUMBER standard-build max (sqlite.org/limits.html); the
+        # server can't bind beyond it, so matching it caps a malicious peer's allocations.
         assert _MAX_PARAM_COUNT == 32_766
 
     def test_max_column_count_matches_sqlite_default(self) -> None:
         from dqlitewire.messages.responses import _MAX_COLUMN_COUNT
 
-        # SQLite's compile-time ``SQLITE_MAX_COLUMN`` default is 2000.
-        # The C server's ``query.c:111-120`` emits the column count
-        # as ``uint64`` without cap; ``STMT__MAX_COLUMNS`` in
-        # ``stmt.c:10`` is defined but never referenced, so the
-        # Python cap is defence-in-depth rather than a wire-protocol
-        # mirror.
+        # SQLITE_MAX_COLUMN default is 2000. The C server emits column count as uncapped
+        # uint64 (STMT__MAX_COLUMNS is defined but unused), so this cap is defence-in-depth.
         assert _MAX_COLUMN_COUNT == 2000
 
     def test_max_file_count_is_one_hundred(self) -> None:
@@ -488,23 +440,12 @@ class TestInternalDecodeBoundsPinnedAgainstReadme:
 
 
 class TestNamedPrimaryCodeValues:
-    """Pin each named SQLite/dqlite primary result code at its
-    upstream-spec value.
+    """Pin each named primary code at its spec value: the FailureResponse round-trip
+    matrix uses the constant on both sides, so a silent value drift stays internally
+    consistent and goes unnoticed without this.
 
-    The named constants are public re-exports on ``dqlitewire``
-    (``SQLITE_BUSY`` etc.) and the wire's ``FailureResponse`` round-
-    trip matrix exercises every one of them. The matrix uses the
-    constant on both encode and decode sides, so a maintainer who
-    silently changes the value (rebase swap, accidental edit) does
-    not break the round-trip — the matrix is internally consistent
-    even when the value has drifted from the spec. This pin closes
-    that gap.
-
-    Reference values:
-      - SQLite primary codes: https://www.sqlite.org/rescode.html
-      - DQLITE_PROTO=1001    : dqlite-upstream/src/protocol.h:9
-      - DQLITE_NOTFOUND=1002 : dqlite-upstream/src/lib/registry.h:13
-      - DQLITE_PARSE=1005    : dqlite-upstream/src/lib/serialize.h:14
+    References: SQLite codes at sqlite.org/rescode.html; DQLITE_PROTO=1001 (protocol.h:9),
+    DQLITE_NOTFOUND=1002 (lib/registry.h:13), DQLITE_PARSE=1005 (lib/serialize.h:14).
     """
 
     @pytest.mark.parametrize(

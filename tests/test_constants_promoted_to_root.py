@@ -1,13 +1,6 @@
-"""Pin: every name in ``dqlitewire.constants.__all__`` is re-exported
-from the package root (``dqlitewire.__all__`` AND ``dqlitewire.<name>``
-is importable).
-
-The previous gap left ``HEADER_SIZE`` / ``WORD_SIZE`` listed at the
-subpackage but absent from the root, breaking the otherwise-uniform
-"promote ``constants.__all__`` to root" pattern. This test guards
-against future drift if a constant is added to the subpackage list
-without a matching root re-export.
-"""
+"""Pin: every name in ``dqlitewire.constants.__all__`` is re-exported from
+the package root, guarding against drift if a constant is added to the
+subpackage list without a matching root re-export."""
 
 from __future__ import annotations
 
@@ -28,15 +21,12 @@ def test_constants_all_attribute_reachable_at_root() -> None:
 
 
 def test_header_size_and_word_size_reachable_at_root() -> None:
-    """Direct regression pin on the two specific names this fix
-    promoted; the broader test above catches future drift."""
     assert dqlitewire.HEADER_SIZE == constants.HEADER_SIZE
     assert dqlitewire.WORD_SIZE == constants.WORD_SIZE
 
 
 def test_row_marker_reachable_at_root() -> None:
-    """``RowMarker`` (defined in ``tuples.py`` and listed in
-    ``tuples.__all__``) is also reachable from the package root."""
+    """``RowMarker`` (from ``tuples.py``) is also reachable from the root."""
     from dqlitewire import tuples
 
     assert dqlitewire.RowMarker is tuples.RowMarker

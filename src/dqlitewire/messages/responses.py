@@ -58,153 +58,57 @@ from dqlitewire.types import (
 
 logger = logging.getLogger(__name__)
 
-# Defense-in-depth upper bound on the column count in
-# ``RowsResponse``. The C server's ``query.c:111-120`` calls
-# ``sqlite3_column_count(stmt)`` and encodes the result as
-# ``uint64`` WITHOUT a wire-protocol cap; the
-# ``STMT__MAX_COLUMNS`` macro in ``stmt.c:10`` is defined but
-# never referenced (verified by grep across the canonical/dqlite
-# C tree). The Python-side cap is therefore defence-in-depth
-# against pathological peer emissions, not a wire-protocol mirror.
-#
-# SQLite's compile-time ``SQLITE_MAX_COLUMN`` default is 2000
-# (raisable to 32767 via build flag); a wide-table SELECT against
-# an analytics / feature-store schema legitimately crosses the
-# prior 255 cap. Cap at SQLite's documented default so legitimate
-# frames decode while still rejecting absurd peer emissions. The
-# per-name cap (``_MAX_COLUMN_NAME_SIZE = 4096``) and the frame-
-# envelope cap (default 64 MiB) already bound memory growth from
-# the N × name allocation.
-#
-# Reference: https://www.sqlite.org/limits.html#max_column.
+# Defence-in-depth cap; the wire field is an uncapped uint64. Matches
+# SQLite's documented SQLITE_MAX_COLUMN default so wide analytics SELECTs
+# still decode. https://www.sqlite.org/limits.html#max_column
 _MAX_COLUMN_COUNT: Final[int] = 2000
 _MAX_FILE_COUNT: Final[int] = 100
-# Defence-in-depth cap on the ServersResponse node count. Upstream
-# (C ``gateway.c::handle_cluster`` reads ``response.n =
-# g->raft->configuration.n``, an ``unsigned``; Go ``getNodes`` in
-# ``internal/protocol/message.go`` accepts any uint64 it receives)
-# imposes no protocol-level limit on the wire field. 10_000 is chosen
-# because Raft consensus latency precludes realistic deployments
-# materially above ~100 nodes; anything beyond that range from a real
-# cluster is hostile or buggy. Tracked distinctly from
-# ``_MAX_COLUMN_COUNT`` (which mirrors SQLite's documented
-# ``SQLITE_MAX_COLUMN`` compile-time default) — neither constant has a
-# C/Go wire-protocol anchor; both are defensive bounds.
+# Defence-in-depth cap; the wire field is an uncapped uint64. Raft latency
+# precludes realistic clusters far above ~100 nodes.
 _MAX_NODE_COUNT: Final[int] = 10_000
 
-# Upper bound on ``StmtResponse.tail_offset``. The field is a byte
-# offset into the prepared-SQL text; a malicious peer could emit an
-# enormous value and Python's slice semantics would silently return
-# ``""`` on ``sql[offset:]``, dropping later statements with no
-# diagnostic. The cap is the bare ``64 MiB`` envelope, NOT
-# ``64 MiB - 64`` like the sibling payload caps (``_MAX_BLOB_SIZE``,
-# ``_MAX_TEXT_VALUE_SIZE``, ``_MAX_FILE_CONTENT_SIZE``): tail_offset
-# is a *position* into the prepared-SQL text, not a payload subject
-# to per-frame framing overhead. The legitimate maximum is bounded
-# transitively by ``_MAX_TEXT_VALUE_SIZE`` (= ``64 MiB - 64``), so
-# the text-cap reject fires first against any over-cap offset; this
-# defensive ceiling matches the envelope rather than the text cap so
-# the cap stays the structural high-water mark, never the
-# load-bearing reject. Anchored to the server's message envelope per
-# ``gateway.c:410`` (``response_v1.offset = (uint64_t)(tail - sql)``)
-# so the value tracks ``DEFAULT_MAX_MESSAGE_SIZE``. Callers who know
-# their SQL is small can lower the per-decoder ``max_message_size``
-# instead.
+# Cap on ``StmtResponse.tail_offset`` (a byte offset into prepared SQL):
+# an enormous value would make ``sql[offset:]`` silently return "",
+# dropping later statements. Matches the message envelope, not the
+# text payload cap, so it stays a structural ceiling above the
+# load-bearing _MAX_TEXT_VALUE_SIZE reject.
 _MAX_TAIL_OFFSET: Final[int] = 64 * 1024 * 1024
 
-# Per-field cap on ``FailureResponse.message``. The frame-size cap
-# in ``buffer.py`` (64 MiB) bounds total bytes, but error messages in
-# practice are short (SQLite's own error strings are under ~200 chars).
-# A peer sending megabytes of text is malicious or broken; cap well
-# above any realistic message so legitimate cases are never clipped.
+# Per-field caps; the 64 MiB frame envelope bounds total bytes, but each
+# variable-length field gets a tighter cap so one hostile entry can't
+# claim the whole budget. Failure messages and identifiers are short in
+# practice.
 _MAX_FAILURE_MESSAGE_SIZE: Final[int] = 64 * 1024
-
-# Per-column-name cap on ``RowsResponse``. SQLite column-name identifiers
-# are short by any realistic standard; 4 KiB is orders of magnitude above
-# legitimate use and well below any memory-exhaustion concern. Same
-# defense-in-depth policy as ``_MAX_FAILURE_MESSAGE_SIZE``.
 _MAX_COLUMN_NAME_SIZE: Final[int] = 4096
-
-# Per-filename cap on ``FilesResponse``. dqlite file entries are the
-# on-disk page-backed database files (``main``, ``wal``, etc.); POSIX
-# PATH_MAX is 4 KiB and mirrors the column-name cap.
 _MAX_FILENAME_SIZE: Final[int] = 4096
 
-# Per-filename cap on ``DumpRequest.name``. The C gateway's
-# ``handle_dump`` (dqlite-upstream ``src/gateway.c::handle_dump``)
-# uses a 1024-byte stack buffer for the WAL filename and reserves
-# room for the ``-wal`` suffix and a NUL terminator
-# (``sizeof(buf) - strlen("-wal") - 1`` = ``1024 - 4 - 1`` = 1019).
-# A longer name encodes valid wire bytes but the C side silently
-# truncates the WAL filename, returning a ``FilesResponse`` whose
-# ``-wal`` entry refers to a different path than the main entry —
-# silent data loss / inconsistent dump output. Cap the encoder /
-# decoder at the C ceiling so the Python surface refuses the
-# request rather than emit a torn dump.
+# Cap on ``DumpRequest.name``: the C gateway's ``handle_dump`` uses a
+# 1024-byte stack buffer and reserves room for the ``-wal`` suffix + NUL
+# (1024 - 4 - 1). A longer name silently truncates the WAL filename C-side,
+# yielding a torn dump whose ``-wal`` entry points at a different path.
 _MAX_DUMP_FILENAME_SIZE: Final[int] = 1019
 
-# Per-file content cap on ``FilesResponse``. The frame envelope (default
-# 64 MiB ``max_message_size``) already bounds total bytes, but the
-# package's discipline pairs every variable-length field with a per-
-# field cap below the envelope so a single hostile entry cannot consume
-# the entire budget. Aligned with ``_MAX_BLOB_SIZE`` (64 MiB minus
-# framing overhead) so the file-content cap matches the BLOB row-cell
-# cap. Legitimate dqlite dumps from a real cluster carry SQLite page
-# files bounded by the raft log-entry-size config; a deployment that
-# expects dumps above 64 MiB must raise ``max_message_size`` AND import
-# this constant to raise the per-field cap at the same time.
+# Aligned with ``_MAX_BLOB_SIZE`` (64 MiB minus framing). Dumps above this
+# require raising both ``max_message_size`` and this constant.
 _MAX_FILE_CONTENT_SIZE: Final[int] = 64 * 1024 * 1024 - 64
 
-# Per-address cap on ``LeaderResponse`` / ``ServersResponse`` (and their
-# legacy variants). Legitimate cluster addresses are small (hostname
-# + port, or IPv6 literal in brackets + port); RFC 1035 sets domain
-# names at ≤253 bytes and 256 leaves margin for the port. A multi-MB
-# "address" is malicious or broken and would amplify through log /
-# exception messages even after ``_sanitize_server_text``.
+# RFC 1035 caps domain names at 253 bytes; 256 leaves room for the port.
+# A multi-MB "address" is hostile and amplifies through log/exception text.
 _MAX_ADDRESS_SIZE: Final[int] = 256
 
-# Default cap on the row count in a single ``RowsResponse`` frame
-# (including the initial frame of a continuation stream). Lifted to
-# module level so the class-attribute alias on ``RowsResponse`` can
-# annotate with ``ClassVar[int]`` AND ``decode_body``'s default-arg
-# can reference a single source. The value is the same defensive
-# cap the ``MessageDecoder.__init__`` ``max_rows`` kwarg defaults to.
+# Default ``RowsResponse`` row cap; mirrors ``MessageDecoder``'s max_rows
+# default. Module-level so both the ClassVar alias and decode_body share it.
 _DEFAULT_MAX_ROWS: Final[int] = 1_000_000
 
-# Sanitize server-supplied text destined for exception messages and
-# logs. The C server promises UTF-8 but makes no promise about terminal
-# escapes or log-injection characters: a malicious or compromised peer
-# can embed ANSI colour/clear sequences, CR/LF to forge log lines, or
-# NUL bytes that upset some log backends. Replace the following with a
-# literal "?":
-#
-# - C0 controls (\x00-\x08, \x0b-\x1f) and DEL (\x7f)
-# - C1 controls (\x80-\x9f) — some terminals still interpret these
-#   as CSI / DCS / OSC sequences
-# - Unicode line / paragraph separators (U+2028, U+2029) — Python
-#   logging and journald treat these as line breaks, so a server
-#   message with U+2028 can inject arbitrary log lines
-# - Unicode bidi formatting controls (U+202A-U+202E, U+2066-U+2069,
-#   U+061C) — the Trojan-Source primitives
-# - Zero-width / invisible characters (U+200B-U+200F, U+FEFF) that
-#   hide content from casual visual inspection while surviving
-#   substring matches
-#
-# Tab (0x09) and LF (0x0A) are left intact so legitimate multi-line
-# server diagnostics render correctly. CR (0x0D) is dropped — it
-# is the log-injection vector alongside LF.
-# Bidi / invisible / format codepoints: spelled as ``\uXXXX`` escapes
-# rather than literal characters so the regex source survives a file
-# load under the wrong encoding (uvicorn-style ``encoding='latin-1'``
-# import hacks, copy-paste through charset-normalising tools) and is
-# greppable for the canonical Unicode codepoints.
+# Replace control / bidi / invisible characters with "?" in server-supplied
+# text. The server promises UTF-8 but not absence of terminal escapes or
+# log-injection chars. Tab and LF are kept so multi-line diagnostics render;
+# CR is dropped (log-injection vector). Codepoints spelled as \uXXXX so the
+# source survives a wrong-encoding file load and stays greppable.
 _CONTROL_CHARS_RE: Final[re.Pattern[str]] = re.compile(
     r"[\x00-\x08\x0b-\x1f\x7f-\x9f"
     r"\u061c"  # Arabic letter mark
-    r"\u1680"  # Ogham space mark - visible blank in some fonts but
-    # treated here as defense-in-depth against log / address-field
-    # whitespace masking. Operators pasting Ogham strings into
-    # display fields will see ``?`` substitution; extreme edge case.
+    r"\u1680"  # Ogham space mark (whitespace-masking defense)
     r"\u180e"  # Mongolian vowel separator (historically zero-width)
     r"\u200b-\u200f"  # zero-width space, ZWNJ, ZWJ, LRM, RLM
     r"\u2028\u2029"  # line / paragraph separator
@@ -220,60 +124,24 @@ _CONTROL_CHARS_RE: Final[re.Pattern[str]] = re.compile(
 def sanitize_server_text(s: str) -> str:
     """Replace control / bidi / invisible characters with '?' in server strings.
 
-    Applied at the decoder boundary for text fields that are
-    **display-only** (``FailureResponse.message``). Address fields
-    (``LeaderResponse.address``, ``ServersResponse.nodes[*].address``)
-    are decoded raw — those values flow into TCP routing and
-    allowlist-policy comparisons, and mangling them at decode time
-    would silently split an operator-configured address set. The
-    client layer (``dqliteclient.cluster``) calls this helper at
-    log / exception format time instead.
-
-    Leaves tab and LF untouched so multi-line server diagnostics
-    render correctly. See the regex above for the full replacement
-    class. For logger output specifically, wrap via
-    :func:`sanitize_for_log` which additionally escapes LF so a
-    hostile server cannot inject fake log lines into syslog /
-    journald via ``\\n`` in a server-supplied field.
-
-    Public symbol — cross-package consumers (python-dqlite-client,
-    sqlalchemy-dqlite) call this directly. The ``_sanitize_server_text``
-    name is preserved as a backwards-compatible alias.
+    Applied only to display-only fields. Address fields are decoded raw
+    (they flow into TCP routing / allowlist comparisons) and sanitised at
+    log/exception format time instead. Leaves tab and LF intact; for log
+    output use :func:`sanitize_for_log`, which also escapes LF.
     """
     return _CONTROL_CHARS_RE.sub("?", s)
 
 
-# Backwards-compatible alias for the underscore-private name. Three
-# downstream packages already imported the function via this name; the
-# alias is kept until those packages migrate.
+# Backwards-compatible alias; kept until downstream packages migrate off it.
 _sanitize_server_text = sanitize_server_text
 
 
 def sanitize_for_log(s: str) -> str:
-    """Render server-supplied text safe for line-oriented log output.
+    """Like :func:`sanitize_server_text` but also escapes LF/tab as ``\\n``/``\\t``.
 
-    Applies :func:`sanitize_server_text` (control / bidi / invisible
-    char replacement) AND escapes LF as the literal two-byte sequence
-    ``\\n`` (backslash + 'n') and tab as ``\\t``. The exception-message
-    rendering keeps raw LF / tab for interactive debugging; this
-    helper is for ``logger.warning`` / ``logger.error`` call sites
-    that interpolate server-derived text into a single log record.
-
-    Without LF escaping, a hostile ``FailureResponse.message``
-    containing a newline would split the log line in syslog /
-    journald and the operator's structured log pipeline would treat
-    the second half as if it came from the dqlite client — a
-    log-injection vector with bounded but real impact. Tab is escaped
-    for the same defense-in-depth reason: TSV-style log parsers,
-    journald ``MESSAGE=`` ad-hoc consumers, and tab-indented JSON
-    pretty-printers treat tabs as field separators, and a server-
-    supplied ``\\t`` would break those downstream pipelines the same
-    way an un-escaped LF would.
-
-    CR is already replaced with ``?`` by ``sanitize_server_text``
-    (it is in the control-chars regex); only LF and tab pass through
-    that helper deliberately, so only those two need the additional
-    escape here.
+    LF and tab pass through ``sanitize_server_text`` intact; escaping them
+    here stops a hostile field from injecting fake log lines or breaking
+    TSV/field-separator-based log parsers. CR is already replaced upstream.
     """
     return sanitize_server_text(s).replace("\n", "\\n").replace("\t", "\\t")
 
@@ -283,14 +151,7 @@ def sanitize_for_log(s: str) -> str:
 class FailureResponse(Message):
     """Operation failed.
 
-    Body: uint64 code, text message
-
-    The ``code`` field contains a SQLite error code (or extended error code).
-    Common values include ``SQLITE_ERROR`` (1), ``SQLITE_BUSY`` (5), and the
-    dqlite-specific extended codes ``SQLITE_IOERR_NOT_LEADER`` (the node is
-    not the cluster leader) and ``SQLITE_IOERR_LEADERSHIP_LOST`` (leadership
-    was lost during the operation). See the `SQLite result codes documentation
-    <https://www.sqlite.org/rescode.html>`_ for the full list.
+    Body: uint64 code (a SQLite or dqlite extended error code), text message.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.FAILURE
@@ -299,15 +160,9 @@ class FailureResponse(Message):
     message: str
 
     def __post_init__(self) -> None:
-        # ``code`` is intentionally NOT rejected when 0. Upstream's gateway
-        # emits ``failure(req, 0, "empty statement")`` from
-        # ``handle_prepare_done_cb`` and ``handle_query_sql_done_cb`` when
-        # the SQL parses to no statement (empty / comment-only / no bound
-        # parameters). The C source even has a ``/* FIXME Should we use a
-        # code other than 0 here? */`` at the emit site. Rejecting code=0
-        # here would poison the streaming decoder buffer on a clean
-        # operational signal and force reconnect for users issuing
-        # ``cursor.execute("-- comment\n")`` against a real cluster.
+        # code=0 is intentionally accepted: upstream emits failure(req, 0,
+        # "empty statement") for comment-only/empty SQL. Rejecting it would
+        # force a reconnect on a clean operational signal.
         _validate_uint64("code", self.code)
 
     @override
@@ -321,14 +176,8 @@ class FailureResponse(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "FailureResponse":
         if schema != 0:
             raise DecodeError(f"FailureResponse unsupported schema version {schema}")
-        # Require at least 9 bytes: 8 for code + 1 minimum for the
-        # null-terminator of an empty message. Without that, an
-        # exactly-8-byte body passes the size check and surfaces a
-        # less-actionable "Failure message not null-terminated"
-        # diagnostic from ``decode_text``. Wire-format alignment pads
-        # bodies to multiples of 8, so the realistic minimum is 16
-        # bytes (8 code + 1 NUL + 7 padding); the < 9 guard catches
-        # the degenerate 8-byte case at the boundary.
+        # 8 for code + >=1 for the message NUL terminator. Catches the
+        # degenerate 8-byte body before decode_text's vaguer diagnostic.
         if len(data) < 9:
             raise DecodeError(
                 f"FailureResponse body too short: a conforming peer "
@@ -344,29 +193,13 @@ class FailureResponse(Message):
         )
         offset = 8 + consumed
         if offset != len(data):
-            # The server appended this failure record after an un-rewound
-            # partial rows-response header. ``query__batch`` writes the
-            # rows header (column count + column names) into the send
-            # buffer before stepping; when a row-returning statement
-            # raises *during* stepping (e.g. integer overflow), the
-            # gateway appends the genuine ``(code, message)`` failure
-            # record without rewinding and frames the whole buffer as one
-            # failure body:
+            # The server appends the genuine failure record after an
+            # un-rewound partial rows header when a row-returning statement
+            # raises mid-step, framing the whole buffer as one failure body:
             #     [col_count][col_name_1 .. col_name_N][code][message]
-            # So ``code``/``message`` decoded above are actually the
-            # column count and the first column name, not the failure.
-            # The genuine diagnostic is the trailing record — recover it.
-            #
-            # Frames are length-delimited (the caller hands us exactly
-            # this body), so trailing bytes are benign content, not a
-            # stream desync: the next frame is read from after this body
-            # regardless. The previous blanket rejection of trailing
-            # bytes therefore masked the real error (e.g. "integer
-            # overflow") behind a misleading "trailing bytes" diagnostic.
-            # The reference Go client reads one record and ignores the
-            # rest; we go one better and surface the real reason, falling
-            # back to that first record if the body does not match this
-            # shape.
+            # So code/message above are really the column count and first
+            # name; the real diagnostic is the trailing record. Frames are
+            # length-delimited, so trailing bytes are benign, not a desync.
             recovered = cls._recover_trailing_failure_record(data, code)
             if recovered is not None:
                 code, message = recovered
@@ -374,35 +207,24 @@ class FailureResponse(Message):
 
     @staticmethod
     def _recover_trailing_failure_record(data: bytes, column_count: int) -> tuple[int, str] | None:
-        """Recover the genuine ``(code, message)`` failure record the
-        server appended after an un-rewound partial rows header.
+        """Skip ``column_count`` names then decode the trailing (code, text)
+        the server appended after an un-rewound partial rows header.
 
-        ``column_count`` is the leading uint64 (the rows header's column
-        count). Skip that many column-name text fields, then decode the
-        trailing ``(code, text)`` record. Returns ``None`` if the body
-        does not match this shape — an implausible column count, a read
-        that would overrun, or a trailing region that does not tile
-        cleanly to the end (e.g. rows were already encoded before a later
-        step raised) — so the caller falls back to the first record,
-        matching the reference Go client.
+        Returns None when the body doesn't match this shape so the caller
+        falls back to the first record, matching the reference Go client.
         """
         if column_count < 0 or column_count > _MAX_COLUMN_COUNT:
             return None
         try:
             offset = 8  # past the leading column-count uint64
             for _ in range(column_count):
-                # Skip each column name using the same per-name cap the
-                # genuine rows decoder enforces, so this recovery scan is
-                # no more permissive than the real header it mirrors.
                 _name, consumed = decode_text(
                     data[offset:],
                     max_size=_MAX_COLUMN_NAME_SIZE,
                     label="column name",
                 )
                 offset += consumed
-            # Same minimum as the top-level body (8 code + >=1 for the
-            # text terminator); too few trailing bytes is not a record.
-            if len(data) - offset < 9:
+            if len(data) - offset < 9:  # 8 code + >=1 terminator
                 return None
             code = decode_uint64(data[offset : offset + 8])
             message, consumed = decode_text(
@@ -415,8 +237,7 @@ class FailureResponse(Message):
             return None
         if offset != len(data):
             return None
-        # Return the raw message; the caller applies ``_sanitize_server_text``
-        # once on the value it surfaces.
+        # Raw message; caller sanitises once on the value it surfaces.
         return code, message
 
 
@@ -438,33 +259,12 @@ class LeaderResponse(Message):
 
     @override
     def encode_body(self) -> bytes:
-        # Raft-leader atomicity invariant (mirrors decode_body's check
-        # below). Upstream ``gateway.c::handle_leader`` only ever
-        # emits ``(0, "")`` or ``(N, addr)`` for ``N >= 1``. The
-        # ``(N, "")`` shape is also reachable on a real follower
-        # after a ``RAFT_NOMEM`` on the leader-update path (see
-        # decode_body's tolerant arm). The ``(0, non-empty)`` shape
-        # is malformed by construction — without this guard,
-        # ``LeaderResponse(node_id=0, address="evil").encode_body()``
-        # would produce bytes the matching decode_body refuses,
-        # leaving mock-server / proxy / golden-byte authors with a
-        # value that round-trips in neither direction.
-        #
-        # Enforced at encode_body (not ``__post_init__``) because
-        # ``decode_body_legacy`` legitimately constructs
-        # ``LeaderResponse(0, addr)`` from the legacy wire shape
-        # (legacy bodies carry only the address; ``node_id`` is
-        # hard-coded 0 on decode). ``encode_body_legacy`` already
-        # rejects non-zero ``node_id`` symmetrically — the modern
-        # encoder now mirrors that "encode-time strict" pattern.
+        # Raft-leader atomicity invariant (mirrors decode_body): (0, "")
+        # means "no leader", (N>=1, addr) a known one; (0, non-empty) is
+        # malformed. Enforced here, not __post_init__, because
+        # decode_body_legacy legitimately builds (0, addr) from legacy bytes.
         if self.node_id == 0 and self.address:
-            # Sanitise + truncate for log-safe diagnostics — the raised
-            # message can land in shared operator logs and the address
-            # is caller-supplied. Mirrors the decode-side reject's
-            # ``sanitize_server_text`` + 64-char cap discipline
-            # (defense in depth against U+2028 / bidi / ZWSP smuggling
-            # through ``!r``, which escapes LF / CR but not the other
-            # line-separator-class glyphs).
+            # Sanitise + truncate: !r escapes LF/CR but not U+2028/bidi/ZWSP.
             sanitised = sanitize_server_text(self.address)
             display_addr = sanitised if len(sanitised) <= 64 else sanitised[:64] + "…"
             raise EncodeError(
@@ -477,17 +277,10 @@ class LeaderResponse(Message):
         )
 
     def encode_body_legacy(self) -> bytes:
-        """Encode as legacy (V0) body: text address only.
+        """Encode as legacy (V0) body: text address only, no node_id.
 
-        Upstream emits this shape via ``SUCCESS_V0(server_legacy,
-        SERVER_LEGACY)`` when the negotiated protocol version is
-        ``PROTOCOL_VERSION_LEGACY``. Mirror of
-        :meth:`decode_body_legacy`. The legacy format does NOT carry
-        ``node_id`` and the decoder hard-codes 0 on the way back. To
-        prevent silent information loss, this method rejects any
-        non-zero ``node_id`` with ``EncodeError`` — callers with a
-        meaningful node_id must use :meth:`encode_body` (modern
-        format) on a non-legacy-version protocol negotiation.
+        Rejects non-zero node_id since the legacy shape can't carry it
+        (the decoder hard-codes 0); use :meth:`encode_body` for that.
         """
         if self.node_id != 0:
             raise EncodeError(
@@ -501,37 +294,16 @@ class LeaderResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "LeaderResponse":
-        """Decode leader response body (modern v1+ format).
+        """Decode the modern (v1+) body: uint64 node_id + text address.
 
-        Modern format: uint64 node_id + text address.
-        For pre-1.0 (legacy) servers that send only text address without
-        node_id, use decode_body_legacy() instead.
-
-        **Version selection is caller-locked.** ``MessageDecoder``
-        chooses between this method and ``decode_body_legacy`` based
-        on its constructor-time ``version`` argument; the decoder
-        does NOT auto-detect the body shape from the bytes themselves.
-        A misaligned encoder/decoder version pair (e.g. encoder set to
-        ``PROTOCOL_VERSION_LEGACY`` so the server replies in legacy
-        shape, but decoder constructed with ``PROTOCOL_VERSION``
-        default) silently misdecodes the legacy body's leading 8
-        bytes of address text as ``node_id`` and returns the address
-        tail past the misaligned cursor — both fields are then
-        garbage and the address routes downstream into a non-
-        existent host. The only safe recovery for a mixed-version
-        cluster is to reconstruct the ``MessageDecoder`` with the
-        constructor ``version`` matching the per-connection
-        negotiated value (the same value the encoder used).
+        Version selection is caller-locked: ``MessageDecoder`` picks this
+        vs ``decode_body_legacy`` by its constructor ``version``, never by
+        sniffing bytes. A version mismatch silently misdecodes a legacy
+        body's address text as node_id and routes garbage downstream.
         """
         if schema != 0:
             raise DecodeError(f"LeaderResponse unsupported schema version {schema}")
-        # Response-layer length guard. Without this, a short body
-        # surfaces as the inner helper's "Need 8 bytes for uint64"
-        # diagnostic which does not identify the response being
-        # decoded. Sibling response decoders (FailureResponse,
-        # WelcomeResponse, MetadataResponse) all emit an explicit
-        # response-level guard for self-describing diagnostics on
-        # malformed-peer paths.
+        # Response-level length guard for a self-describing diagnostic.
         if len(data) < 8:
             raise DecodeError(
                 f"LeaderResponse body too short; need 8 bytes for node_id, got {len(data)}"
@@ -542,39 +314,15 @@ class LeaderResponse(Message):
         )
         offset = 8 + consumed
         if offset != len(data):
-            # Strict-decode parity with sibling decoders: conforming
-            # Go/C servers never emit trailing padding on this body.
             raise DecodeError(
                 f"LeaderResponse has {len(data) - offset} trailing bytes after address"
             )
-        # Cross-field consistency. Upstream ``raft_leader`` in
-        # ``dqlite-upstream/src/gateway.c::handle_leader`` (lines
-        # 269-298) emits ``(id=0, address="")`` for "no leader known"
-        # or ``(id>0, address!="")`` for a known leader. The
-        # ``(0, nonempty)`` shape is malformed by construction — a
-        # peer setting an address but reporting id=0 is hostile or
-        # corrupt — and we reject it here.
-        #
-        # The ``(nonzero, "")`` shape is reachable on a real follower
-        # after a ``RAFT_NOMEM`` from
-        # ``dqlite-upstream/src/raft/recv.c::recvUpdateLeader``: step 1
-        # assigns ``current_leader.id = id``; step 4 mallocs the new
-        # address. If the malloc fails, the follower is left with
-        # ``(id=N, address=NULL)`` until the next AppendEntries
-        # arrival re-tries the update. ``gateway.c::handle_leader``
-        # null-coerces ``address=NULL`` to ``""``, so the on-wire
-        # shape is ``(N, "")``. Treat this as "leader id known,
-        # address not yet propagated" — a recoverable cluster
-        # window. The Go client (``go-dqlite``) and the C client
-        # (``dqlite-upstream/src/client/protocol.c``) both accept
-        # this shape and treat it as "leader unknown". Logging at
-        # WARNING preserves forensic visibility for operators.
+        # (0, "") = no leader; (N>=1, addr) = known. (0, non-empty) is
+        # malformed and rejected. (N, "") is reachable on a follower after
+        # a RAFT_NOMEM on the leader-update path; treat it as "leader
+        # unknown" (matching the Go/C clients) and warn for forensics.
         if node_id == 0 and address:
-            # Sanitise before truncation so a hostile peer cannot smuggle
-            # U+2028 / bidi marks / ZWSP through ``!r`` (``repr`` escapes
-            # LF / CR but not the other line-separator-class control
-            # codepoints). The 64-char cap alone does not help — every
-            # such glyph fits in 1 codepoint.
+            # !r escapes LF/CR but not U+2028/bidi/ZWSP; sanitise first.
             sanitised = sanitize_server_text(address)
             display_addr = sanitised if len(sanitised) <= 64 else sanitised[:64] + "…"
             raise DecodeError(
@@ -589,29 +337,15 @@ class LeaderResponse(Message):
                 "transient on the follower's leader-update path)",
                 node_id,
             )
-        # Address is stored raw — it flows into TCP routing and
-        # allowlist comparisons downstream. Sanitisation happens at
-        # log / exception format time, not at decode.
+        # Address stored raw (feeds TCP routing / allowlist comparisons);
+        # sanitised at log/exception format time, not here.
         return cls(node_id, address)
 
     @classmethod
     def decode_body_legacy(cls, data: bytes) -> "LeaderResponse":
-        """Decode legacy (pre-1.0) leader response body.
-
-        Legacy format: text address only (no node_id). Returns node_id=0.
-        Go reference: DecodeNodeLegacy in internal/protocol/message.go.
-        """
-        # Response-layer length guard. Without this, a short body
-        # surfaces ``decode_text``'s generic "need N bytes" diagnostic
-        # which does not identify the response being decoded. Mirrors
-        # the modern ``decode_body`` guard so operators reading the
-        # failed-decode log line from a pre-1.0 server can tell which
-        # response was malformed. Legacy body is ``decode_text`` only
-        # (no ``node_id`` prefix). ``decode_text`` reads a NUL-
-        # terminated UTF-8 string padded to the 8-byte boundary —
-        # there is NO length prefix on the wire. The 8-byte minimum
-        # is the smallest padded TEXT field: a single NUL terminator
-        # plus 7 bytes of zero-padding.
+        """Decode legacy (pre-1.0) body: text address only; returns node_id=0."""
+        # Response-level guard. 8 is the smallest padded TEXT field (NUL
+        # terminator + 7 padding bytes to the 8-byte boundary).
         if len(data) < 8:
             raise DecodeError(
                 f"LeaderResponse (legacy) body too short; need at least "
@@ -624,7 +358,7 @@ class LeaderResponse(Message):
             raise DecodeError(
                 f"LeaderResponse (legacy) has {len(data) - consumed} trailing bytes after address"
             )
-        # Raw address — see the modern decoder for rationale.
+        # Raw address; see the modern decoder for rationale.
         return cls(node_id=0, address=address)
 
 
@@ -633,25 +367,8 @@ class LeaderResponse(Message):
 class WelcomeResponse(Message):
     """Client registration acknowledgment.
 
-    Body: uint64 heartbeat_timeout
-
-    Attributes:
-        heartbeat_timeout: Server-advertised heartbeat interval, in
-            **milliseconds** (upstream default 15000 = 15 s, set from
-            ``config->heartbeat_timeout`` in ``config.c`` and copied
-            verbatim by ``gateway.c``'s WELCOME handler). The unit is a
-            protocol-level invariant; callers passing this value to
-            seconds-based APIs (``asyncio.wait_for``, ``time.sleep``)
-            must divide by 1000 first. Prefer
-            :attr:`heartbeat_timeout_seconds` to avoid the divisor.
-
-            A value of 0 is accepted (the wire layer does not enforce
-            a minimum) but is semantically ambiguous: upstream
-            ``config.c`` defaults to 15000 and never emits 0, so a 0
-            from the wire is either a misconfigured peer or a non-
-            conforming server. The in-tree client treats it as "no
-            heartbeat-driven timeout extension" — ``trust_server_heartbeat``
-            falls back to the static ``_read_timeout`` floor.
+    Body: uint64 heartbeat_timeout, in MILLISECONDS (upstream default 15000).
+    Prefer :attr:`heartbeat_timeout_seconds` over hand-dividing by 1000.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.WELCOME
@@ -679,15 +396,8 @@ class WelcomeResponse(Message):
             raise DecodeError(f"WelcomeResponse body must be exactly 8 bytes, got {len(data)}")
         heartbeat_timeout = decode_uint64(data)
         if heartbeat_timeout == 0:
-            # Surface the docstring's "misconfigured peer or non-
-            # conforming server" diagnostic content into the log
-            # stream. Upstream ``config.c`` defaults to 15000 and
-            # never emits 0, so a 0 from the wire indicates a peer
-            # bug; downstream consumers (``trust_server_heartbeat``)
-            # fall back to the static read_timeout floor. Aligns
-            # with the ``ServersResponse.decode_body`` warn-mode
-            # precedent below. The permissive-accept contract is
-            # preserved — no DecodeError raised.
+            # Upstream never emits 0, so this signals a peer bug; warn but
+            # accept (downstream falls back to the static read_timeout floor).
             logger.warning(
                 "WelcomeResponse: heartbeat_timeout=0 — peer is "
                 "misconfigured or non-conforming (upstream config.c "
@@ -724,27 +434,9 @@ class DbResponse(Message):
         if len(data) != 8:
             raise DecodeError(f"DbResponse body must be exactly 8 bytes, got {len(data)}")
         db_id = decode_uint32(data)
-        # Read-and-discard the reserved uint32 to match Go's
-        # ``response.getUint32()`` discard at
-        # ``internal/protocol/response.go:140``. The field is
-        # documented as ``__pad__`` in C (response.h:18-20) and
-        # reusing it for a future feature is a forward-compat
-        # concern strictly; we add no defensive value by rejecting
-        # non-zero values here while Go silently accepts.
-        #
-        # Asymmetry vs ``Header.reserved`` / ``LeaderRequest.reserved``
-        # strict-rejection is INTENTIONAL: the header-level reserved
-        # bytes are envelope-framing invariants whose violation
-        # signals a desync that would mis-attribute body bytes; this
-        # body-level pad is a per-message extension slot whose future
-        # repurposing would be silent on the wire either way. The
-        # permissive accept is also test-pinned in
-        # ``TestReservedFieldDiscard`` (mock-server / proxy round-trip
-        # for hypothetical replay tools that captured non-zero pads).
-        # If a future protocol revision uses the field, both decode
-        # and encode paths will need an explicit version gate; the
-        # bare permissive read here is not load-bearing for that
-        # transition.
+        # Read-and-discard the reserved/pad uint32, matching Go. Permissive
+        # accept of non-zero is intentional (unlike the strict header
+        # reserved bytes): this body-level pad is a future extension slot.
         return cls(db_id)
 
 
@@ -754,19 +446,12 @@ class StmtResponse(Message):
     """Statement prepared response.
 
     V0 body: uint32 db_id, uint32 stmt_id, uint64 num_params
-    V1 body: uint32 db_id, uint32 stmt_id, uint64 num_params, uint64 tail_offset
+    V1 body: V0 + uint64 tail_offset
 
-    Schema selection: ``_get_schema()`` derives the header schema byte from
-    ``tail_offset``. ``tail_offset=None`` (default) → schema=0 (V0 body);
-    ``tail_offset`` set to any int (including ``0``) → schema=1 (V1 body).
-    Mock-server authors must match this to the schema byte of the inbound
-    :class:`PrepareRequest`, since upstream dqlite servers dispatch on the
-    request's schema byte, not on any reply-side field.
-
-    Note: V1 tail_offset is not present in the canonical Go client
-    (go-dqlite). The Go EncodePrepare always uses schema=0 and DecodeStmt
-    does not read tail_offset. This feature may be supported by the C
-    dqlite server for multi-statement SQL but is not exercised by Go.
+    Schema is derived from ``tail_offset`` (None -> V0, set -> V1) unless the
+    ``schema`` override is given. Upstream dispatches reply shape on the
+    inbound PrepareRequest's schema byte, so mock servers must match it.
+    The go-dqlite client never uses V1.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.STMT
@@ -775,49 +460,22 @@ class StmtResponse(Message):
     stmt_id: int
     num_params: int
     tail_offset: int | None = None
-    # Optional schema-byte override for mock servers / proxies that
-    # must echo the inbound ``PrepareRequest.schema`` byte
-    # independently of whether ``tail_offset`` is set. Upstream C
-    # dispatches reply shape on the REQUEST's schema byte
-    # (gateway.c::handle_prepare_done_cb): schema=0 emits V0 (16 B,
-    # no tail_offset), schema=1 emits V1 (24 B, with tail_offset).
-    # Without this override, the auto-select cannot emit "V1 with
-    # tail_offset=0" — a valid upstream reply shape. ``None`` keeps
-    # the historical auto-select semantics intact.
+    # Schema-byte override so mock servers can emit "V1 with tail_offset=0"
+    # (a valid upstream shape the auto-select can't reach). None = auto-select.
     schema: int | None = None
 
     def __post_init__(self) -> None:
-        # Range and bool-rejection validation, parity with the sibling
-        # responses (``FailureResponse``, ``LeaderResponse``,
-        # ``WelcomeResponse``). Without this, ``StmtResponse(...)``
-        # silently accepts negative ints, ints exceeding the wire field
-        # width, and bool-as-int (``True`` → 1) — every other Response
-        # rejects these.
         _validate_uint32("db_id", self.db_id)
         _validate_uint32("stmt_id", self.stmt_id)
         _validate_uint64("num_params", self.num_params)
-        # Apply the ``_MAX_PARAM_COUNT`` cap at construction so the
-        # ``encode_body`` and ``decode_body`` caps stay defense-in-depth
-        # rather than the only line of defence. Mirrors
-        # ``ResultResponse.__post_init__``'s ``_MAX_ROWS_AFFECTED`` cap;
-        # closes the same construction-vs-encode asymmetry that the
-        # ``_decoded_schema`` V1 cap closed for ``RowsResponse``.
+        # Cap at construction so the encode/decode caps stay defense-in-depth.
         if self.num_params > _MAX_PARAM_COUNT:
             raise EncodeError(
                 f"StmtResponse num_params {self.num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
             )
         if self.tail_offset is not None:
             _validate_uint64("tail_offset", self.tail_offset)
-            # Construction-time cap mirroring the encode_body / decode_body
-            # caps below. Without this, StmtResponse(schema=1, tail_offset
-            # =_MAX_TAIL_OFFSET+1) constructs cleanly and the cap fires
-            # only at first encode — far from the construction site.
-            # The sibling num_params field on this same dataclass is
-            # already construction-capped (see _MAX_PARAM_COUNT above);
-            # ResultResponse.__post_init__ cites this StmtResponse field
-            # as its precedent for construction-time cap discipline.
-            # Same diagnostic shape as encode_body so an audit grep on
-            # _MAX_TAIL_OFFSET finds both sites with parallel wording.
+            # Construction-time cap mirroring encode/decode_body.
             if self.tail_offset > _MAX_TAIL_OFFSET:
                 raise EncodeError(
                     f"StmtResponse tail_offset {self.tail_offset} exceeds maximum "
@@ -829,23 +487,11 @@ class StmtResponse(Message):
             raise EncodeError(
                 "StmtResponse: schema=0 (V0 body) cannot carry tail_offset; pass schema=1 for V1"
             )
-        # Normalise the V1-implicit-zero form so encode/decode round-
-        # trip preserves dataclass equality. ``StmtResponse(schema=1,
-        # tail_offset=None)`` and ``StmtResponse(schema=1,
-        # tail_offset=0)`` produce identical wire bytes; without this
-        # the decoder reconstructs as the latter and the dataclass
-        # comparison fails. Construction-time normalisation matches
-        # ``AssignRequest.__post_init__``'s int→NodeRole coercion
-        # for the same reason.
+        # Normalise schema=1 + tail_offset=None to 0 so it equals the
+        # schema=1 + tail_offset=0 the decoder reconstructs (same wire bytes).
         if self.schema == 1 and self.tail_offset is None:
-            # ``object.__setattr__`` is the post-init coercion idiom.
-            # If this dataclass is ever flipped to
-            # ``@dataclass(frozen=True)`` (for hashability or
-            # thread-safety), a bare ``self.tail_offset = 0`` raises
-            # ``FrozenInstanceError`` — fold the coercion into a custom
-            # ``__init__`` that writes attributes once at the end.
-            # Sibling ``AssignRequest`` and ``NodeInfo`` carry the same
-            # comment.
+            # object.__setattr__ would need to become a custom __init__ if
+            # this dataclass ever becomes frozen.
             object.__setattr__(self, "tail_offset", 0)
 
     @override
@@ -864,9 +510,7 @@ class StmtResponse(Message):
             encode_uint32(self.db_id) + encode_uint32(self.stmt_id) + encode_uint64(self.num_params)
         )
         if self._get_schema() == 1:
-            # V1: always emit tail_offset (default 0 when None so an
-            # explicit schema=1 without tail_offset still produces a
-            # 24-byte body matching the inbound PrepareRequest.schema).
+            # V1 always emits tail_offset (0 when None) for a 24-byte body.
             tail_offset = self.tail_offset or 0
             if tail_offset > _MAX_TAIL_OFFSET:
                 raise EncodeError(
@@ -878,16 +522,8 @@ class StmtResponse(Message):
     @classmethod
     @override
     def decode_body(cls, data: bytes, schema: int = 0) -> "StmtResponse":
-        # Upstream defines exactly V0=0 and V1=1
-        # (``dqlite-upstream/src/protocol.h``:
-        # ``DQLITE_PREPARE_STMT_SCHEMA_V0`` /
-        # ``DQLITE_PREPARE_STMT_SCHEMA_V1``); ``gateway.c::handle_prepare``
-        # itself rejects any other value. The codec dispatcher at
-        # ``codec.py::_RESPONSE_MAX_SCHEMA`` already caps inbound STMT
-        # schemas at 1, so this guard is defense-in-depth for direct
-        # callers of ``decode_body`` (tests, future refactors). Sibling
-        # decoders (``ExecRequest``, ``QueryRequest``, ``PrepareRequest``,
-        # ``AssignRequest``) use the same exact-match shape.
+        # Upstream defines only V0=0 and V1=1; the codec dispatcher already
+        # caps inbound at 1, so this guards direct decode_body callers.
         if schema not in (0, 1):
             raise DecodeError(f"StmtResponse unsupported schema version {schema}; expected 0 or 1")
         expected = 24 if schema == 1 else 16
@@ -899,45 +535,23 @@ class StmtResponse(Message):
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
-        # Parity with the encoder cap in tuples.py: a server declaring a
-        # prepared-statement parameter count above _MAX_PARAM_COUNT is
-        # either malicious or corrupt. Other count-bearing decode paths
-        # (_MAX_COLUMN_COUNT, _MAX_FILE_COUNT, _MAX_NODE_COUNT) already
-        # enforce their own caps; this closes the matching gap.
         if num_params > _MAX_PARAM_COUNT:
             raise DecodeError(
                 f"StmtResponse num_params {num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
             )
         tail_offset = decode_uint64(data[16:]) if schema == 1 else None
-        # Defense-in-depth cap: ``tail_offset`` is the byte offset of
-        # the unparsed SQL tail; a hostile peer could emit ``2**63`` and
-        # Python's slice semantics would silently return "" on
-        # ``sql[offset:]``, dropping later statements without any
-        # diagnostic. Cap against the outbound SQL size cap so the
-        # ceiling for inbound and outbound stays aligned.
         if tail_offset is not None and tail_offset > _MAX_TAIL_OFFSET:
             raise DecodeError(
                 f"StmtResponse tail_offset {tail_offset} exceeds maximum ({_MAX_TAIL_OFFSET})"
             )
-        # Preserve the incoming header schema byte on the dataclass so
-        # round-trip encode emits exactly what came in. Without this,
-        # a V1 body with ``tail_offset=0`` would round-trip through
-        # ``_get_schema()`` as V0 (``tail_offset is None``) on any
-        # future equality-based manipulation, losing the
-        # "peer advertised V1" signal.
+        # Preserve the incoming schema byte so round-trip encode emits the
+        # same shape (a V1 body with tail_offset=0 would otherwise look V0).
         return cls(db_id, stmt_id, num_params, tail_offset, schema=schema)
 
 
-# Defensive cap on ``rows_affected``. The upstream C server returns
-# ``sqlite3_changes(...)`` which is C ``int`` (``INT_MAX = 2**31 - 1``)
-# before being cast to uint64 on the wire; ``gateway.c:484`` carries
-# a FIXME to migrate to ``sqlite3_changes64`` but has not. A real
-# cluster therefore never emits a value above ``INT_MAX``.
-#
-# Without this cap, a malicious server could emit ``rows_affected =
-# 2**63`` and Python downstream might propagate huge values into
-# application logic. The cap is purely defensive — when the C server
-# moves to ``sqlite3_changes64``, the cap will need raising.
+# Defensive cap on ``rows_affected``. Upstream returns sqlite3_changes
+# (C int), so a real cluster never exceeds INT_MAX; raise this when the
+# server migrates to sqlite3_changes64.
 _MAX_ROWS_AFFECTED: Final[int] = (1 << 31) - 1
 
 
@@ -946,16 +560,9 @@ _MAX_ROWS_AFFECTED: Final[int] = (1 << 31) - 1
 class ResultResponse(Message):
     """Statement execution result.
 
-    Body: uint64 last_insert_id, uint64 rows_affected
-
-    Note on signedness: the wire is uint64 per the dqlite protocol spec.
-    The upstream C server casts ``sqlite3_last_insert_rowid()``
-    (``sqlite3_int64``) through ``(uint64_t)`` before sending, so a
-    negative SQLite rowid arrives here as ``2**64 - abs(rowid)``.
-    The :attr:`last_insert_id_signed` property returns the int64-cast
-    value for downstream layers that want stdlib-sqlite parity
-    (``cursor.lastrowid`` mirrors ``sqlite3.Connection.lastrowid``,
-    a signed value).
+    Body: uint64 last_insert_id, uint64 rows_affected. A negative SQLite
+    rowid arrives as 2**64 - abs(rowid); use :attr:`last_insert_id_signed`
+    for stdlib-sqlite parity.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.RESULT
@@ -966,21 +573,8 @@ class ResultResponse(Message):
     def __post_init__(self) -> None:
         _validate_uint64("last_insert_id", self.last_insert_id)
         _validate_uint64("rows_affected", self.rows_affected)
-        # Symmetric encode-side cap mirroring ``decode_body``'s
-        # ``_MAX_ROWS_AFFECTED`` guard. Without this, a Python
-        # encoder constructing a ResultResponse with rows_affected
-        # above INT_MAX produces bytes that the same Python decoder
-        # then rejects — a confusing self-inflicted asymmetry for
-        # mock-server / proxy authors. Mirrors the
-        # ``StmtResponse._MAX_TAIL_OFFSET`` precedent (encoder +
-        # decoder both enforce the cap). Construction-time so any
-        # ``ResultResponse(...)`` is rejected up front, not just at
-        # ``encode()``.
-        #
-        # When the upstream C server migrates to ``sqlite3_changes64``
-        # (see the ``_MAX_ROWS_AFFECTED`` docstring for the ceiling
-        # rationale), the cap will need raising on BOTH sides — this
-        # construction-time check and the ``decode_body`` check.
+        # Construction-time cap mirroring decode_body so an over-INT_MAX
+        # value can't be built into bytes the same decoder then rejects.
         if self.rows_affected > _MAX_ROWS_AFFECTED:
             raise EncodeError(
                 f"ResultResponse rows_affected {self.rows_affected} exceeds maximum "
@@ -990,14 +584,7 @@ class ResultResponse(Message):
 
     @property
     def last_insert_id_signed(self) -> int:
-        """``last_insert_id`` re-cast as int64.
-
-        The wire field is uint64 by spec; SQLite's ``sqlite3_int64``
-        rowid can be negative, in which case the unsigned wire value
-        is ``2**64 - abs(rowid)``. Downstream layers wanting stdlib
-        parity (``sqlite3.Connection.lastrowid`` is signed) read this
-        property; raw wire users keep the unsigned ``last_insert_id``.
-        """
+        """``last_insert_id`` re-cast as int64 (the wire field is uint64)."""
         signed: int = struct.unpack("<q", struct.pack("<Q", self.last_insert_id))[0]
         return signed
 
@@ -1028,43 +615,18 @@ class ResultResponse(Message):
 class RowsResponse(Message):
     """Query result rows.
 
-    Body: uint64 column_count, text[] column_names, then rows...
-    Each row: header (types) + values, ending with marker
+    Body: uint64 column_count, text[] column_names, then per-row
+    (type header + values), ending with a DONE/PART marker.
 
-    Attributes:
-        column_names: Column names from the query.
-        column_types: Types from the first decoded row's per-column type
-            tag. SQLite uses dynamic typing, so different rows may have
-            different types for the same column — use ``row_types`` for
-            accurate per-row type information. **Empty when the frame
-            carries no rows**; prefer ``column_names`` to detect the
-            column count in that case.
+    ``column_types`` reflects row 0's per-cell type tags (SQLite is
+    dynamically typed; use ``row_types`` for accurate per-row types) and is
+    empty when the frame carries no rows. A NULL in row 0 forces that
+    column's tag to NULL even if a non-NULL type was supplied.
 
-            Caveat: when row 0 contains NULL in column X, the per-row
-            type tag for that cell is encoded as NULL on the wire
-            (Go-parity, see ``encode_body``), so on decode
-            ``column_types[X]`` will be ``ValueType.NULL`` even if the
-            encoder was given an explicit non-NULL ``column_types``.
-            Consumers needing the schema-declared type should not rely
-            on ``column_types[X]`` when row 0 may carry NULL — use a
-            later non-NULL row's ``row_types`` entry, or consult the
-            schema separately.
-        row_types: Per-row type lists, one entry per decoded row.
-        rows: Decoded row values.
-        has_more: True if a PART marker was found (more rows in next message).
-
-    Encode-side type inference: ``encode_body`` consults ``row_types``
-    first, then ``column_types``; if **both are empty** and ``rows`` are
-    supplied, per-cell types are inferred from Python types via
-    ``encode_value``. Inference cannot distinguish the dqlite-specific
-    encodings (UNIXTIME / ISO8601 / BOOLEAN) from the primitives they
-    share a byte layout with (INTEGER / TEXT / INTEGER respectively):
-    a Python ``int`` always encodes as
-    ``ValueType.INTEGER``. Callers building frames for a column with a
-    declared dqlite-specific type (mock servers, golden-byte harnesses)
-    MUST pass ``column_types`` or ``row_types`` explicitly — otherwise
-    re-encoding a round-tripped frame emits the wrong type nibble even
-    though the payload bytes are identical.
+    Encode-side type inference (when both row_types and column_types are
+    empty) cannot distinguish dqlite-specific encodings (UNIXTIME / ISO8601
+    / BOOLEAN) from the primitives they share a layout with, so callers
+    needing those MUST pass column_types or row_types explicitly.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.ROWS
@@ -1077,18 +639,8 @@ class RowsResponse(Message):
     has_more: bool = False
 
     def __repr__(self) -> str:
-        # Custom repr that summarises unbounded ``rows`` and
-        # ``row_types`` rather than enumerating them. Pre-fix the
-        # dataclass-generated ``__repr__`` walked every cell of
-        # every row; a 1M-row response (within ``_DEFAULT_MAX_ROWS``)
-        # produced a multi-megabyte string. No in-tree caller used
-        # ``%r`` on this type today, but the implicit hazard is real:
-        # asyncio task names, SA echo_pool, Sentry breadcrumbs,
-        # pytest pretty-assert and operator-supplied observability
-        # all reach for ``repr`` and a future log site would be
-        # latent loop monopolisation. Mirrors the bounded-``__repr__``
-        # discipline already established on ``DqliteConnection`` /
-        # ``DqliteCursor`` / ``ConnectionPool`` / ``DqliteError``.
+        # Summarise unbounded rows/row_types; the dataclass-generated repr
+        # walked every cell and could produce a multi-MB string.
         return (
             f"{type(self).__name__}("
             f"column_names={self.column_names!r}, "
@@ -1100,26 +652,9 @@ class RowsResponse(Message):
         )
 
     def __post_init__(self) -> None:
-        # Defensive copies. Two sources of aliasing motivate this:
-        #
-        # 1. ``decode_body`` used to store ``column_types = types`` where
-        #    ``types`` was also stored as ``all_row_types[0]``, so
-        #    without a copy ``self.column_types is self.row_types[0]``
-        #    and mutating one silently rewrites the other. The decoder
-        #    now breaks the alias explicitly and constructs the message
-        #    via ``_from_decoded`` (which bypasses this hook), so the
-        #    decoder path no longer relies on this defence.
-        #
-        # 2. User code constructing ``RowsResponse`` directly with a
-        #    list they intend to keep mutating elsewhere. Both outer
-        #    and inner list contents are copied so post-construction
-        #    mutation of the supplied containers cannot bleed in.
-        #
-        # ``row_types`` and ``rows`` are list-of-lists; deep-copy both
-        # the outer container and each inner list. The cost is O(N·M)
-        # on the cell count, which for the decoder hot path (max-cap
-        # frames) was the dominant per-frame post-decode cost — hence
-        # the ``_from_decoded`` bypass for that path.
+        # Defensive deep-copies so caller-held lists can't bleed in and
+        # column_types can't alias row_types[0]. The decoder skips this via
+        # _from_decoded (it owns its lists; the copy was the dominant cost).
         self.column_names = list(self.column_names)
         self.column_types = list(self.column_types)
         self.row_types = [list(t) for t in self.row_types]
@@ -1135,20 +670,10 @@ class RowsResponse(Message):
         rows: list[list[WireValue]],
         has_more: bool,
     ) -> "RowsResponse":
-        """Construct a :class:`RowsResponse` while skipping the
-        ``__post_init__`` defensive deep-copy.
+        """Construct a :class:`RowsResponse` skipping __post_init__'s deep-copy.
 
-        The decoder allocates fresh inner lists for ``row_types`` and
-        ``rows`` per row and owns them by construction — no outside
-        caller can mutate them. The constructor's per-row deep-copy is
-        therefore wasted work on the decoder path and was the dominant
-        post-decode CPU cost for max-cap frames on the event loop.
-
-        The caller is responsible for breaking the legacy aliasing case
-        between ``column_types`` and ``row_types[0]`` before invoking
-        this helper (see ``decode_body``).
-
-        Private API: every call site must own its lists outright.
+        Private: every call site must own its lists outright and must break
+        the column_types/row_types[0] alias itself (see ``decode_body``).
         """
         obj = object.__new__(cls)
         obj.column_names = column_names
@@ -1161,39 +686,20 @@ class RowsResponse(Message):
     def _get_row_types(self, row_idx: int, row: list[WireValue]) -> list[ValueType]:
         """Get types for a row: from row_types, column_types, or inferred.
 
-        The ``column_types`` fallback returns a fresh copy rather than
-        ``self.column_types`` itself, so that a caller who mutates the
-        return value cannot silently rewrite the message's private
-        copy. This preserves the aliasing invariant that
-        ``__post_init__`` establishes.
-
-        None values override the declared type to NULL, matching Go's
-        per-row type header behavior where the nibble reflects the actual
-        value, not the column schema.
+        Returns a fresh list (never aliases self.column_types). None values
+        override the declared type to NULL, matching Go's per-row header.
         """
         if self.row_types and row_idx < len(self.row_types):
             types = list(self.row_types[row_idx])
         elif self.column_types:
             types = list(self.column_types)
         else:
-            # Infer from values via the type-only helper. Previously
-            # this called ``encode_value(v)[1]`` per cell, which ran
-            # the full encode pipeline (length-cap checks, BLOB
-            # materialisation, UTF-8 encoding) and threw the bytes
-            # away — paying the encode cost twice on this fallback
-            # path. ``_infer_value_type`` runs only the isinstance
-            # ladder. Oversize values still surface as ``EncodeError``,
-            # but on the subsequent ``encode_row_values`` pass rather
-            # than the inference pass; the failure point shifts by
-            # one call, the rejection still happens.
+            # Type-only inference (the isinstance ladder), not the full
+            # encode pipeline; oversize values still reject in encode_row_values.
             types = [_infer_value_type(v) for v in row]
 
-        # Override type to NULL for None values, matching Go's behavior.
-        # Applied uniformly across the three type-selection paths above
-        # so the override is not silently load-bearing on
-        # ``_infer_value_type(None) == NULL``: a future helper that
-        # learned a typed-null shape would otherwise drop the override
-        # on the inference path while keeping it on the declared paths.
+        # Override to NULL for None, applied uniformly across all three paths
+        # so it isn't silently load-bearing on _infer_value_type(None)==NULL.
         for i, v in enumerate(row):
             if v is None and i < len(types):
                 types[i] = ValueType.NULL
@@ -1206,30 +712,22 @@ class RowsResponse(Message):
             raise EncodeError(
                 f"RowsResponse column count {col_count} exceeds maximum ({_MAX_COLUMN_COUNT})"
             )
-        # Per-name byte cap is enforced inside encode_text below;
-        # keeping the loop here would re-check against codepoints
-        # rather than UTF-8 bytes (the unit the decoder caps on),
-        # admitting non-ASCII names near the boundary that the
-        # decoder rejects.
+        # Per-name byte cap is enforced inside encode_text (capping here
+        # would check codepoints, not the UTF-8 bytes the decoder caps on).
         if self.column_types and len(self.column_types) != col_count:
             raise EncodeError(
                 f"column_types length ({len(self.column_types)}) != "
                 f"column_names length ({col_count})"
             )
-        # ``row_types`` must either be empty (infer per-row from values /
-        # column_types) or exactly match ``rows`` one-to-one. A shorter
-        # list previously fell through to inference silently for the
-        # trailing rows, contradicting the documented invariant.
+        # row_types must be empty (infer per-row) or match rows one-to-one.
         if self.row_types and len(self.row_types) != len(self.rows):
             raise EncodeError(
                 f"row_types length ({len(self.row_types)}) != "
                 f"rows length ({len(self.rows)}); pass an empty row_types "
                 f"to infer per-row types from the values"
             )
-        # Zero-column rows produce zero bytes per row, so the encoded
-        # output is indistinguishable from a zero-row result set — the
-        # decoder's zero-column fast path returns no rows. Reject at
-        # encode time rather than silently lose row count.
+        # Zero-column rows encode to zero bytes, indistinguishable from a
+        # zero-row set; reject rather than silently lose the row count.
         if col_count == 0 and self.rows:
             raise EncodeError(
                 f"RowsResponse with zero columns cannot carry rows "
@@ -1243,27 +741,19 @@ class RowsResponse(Message):
                     f"row_types[{i}] has {len(self.row_types[i])} types, expected {col_count}"
                 )
 
-        # Accumulate into a ``bytearray`` and materialise to ``bytes``
-        # at the end. ``bytes += bytes`` allocates a fresh buffer and
-        # memcopies the running result on every iteration — Θ(N²) on
-        # the row count for an N-row body. ``bytearray.extend`` mutates
-        # in place at amortised O(1) per append. Mirrors the pattern
-        # already established in ``tuples.encode_params_tuple`` and
-        # ``tuples.encode_row_header``.
+        # bytearray accumulation avoids the O(N^2) memcopy of bytes += bytes.
         result = bytearray()
         result.extend(encode_uint64(col_count))
 
-        # Column names
         for name in self.column_names:
             result.extend(encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="column name"))
 
-        # Rows - each row gets its own type header
+        # Each row carries its own type header.
         for i, row in enumerate(self.rows):
             types = self._get_row_types(i, row)
             result.extend(encode_row_header(types))
             result.extend(encode_row_values(row, types))
 
-        # End marker: full uint64 marker word (matching Go)
         marker = ROW_PART_MARKER if self.has_more else ROW_DONE_MARKER
         result.extend(encode_uint64(marker))
 
@@ -1281,27 +771,18 @@ class RowsResponse(Message):
     ) -> "RowsResponse":
         if schema != 0:
             raise DecodeError(f"RowsResponse unsupported schema version {schema}")
-        # Wrap in memoryview so per-iteration slices are O(1) rather
-        # than O(remaining). Without this, a body with many small rows
-        # triggers quadratic-time decode: each
-        # ``data[offset:]`` allocates a fresh ``bytes`` copy of the
-        # tail. Memoryview slicing is a view, so slicing is free.
+        # memoryview so per-iteration slices are O(1), not O(remaining).
         view = memoryview(data)
         offset = 0
 
-        # Column count
         column_count = decode_uint64(view[offset:])
         offset += 8
 
         if column_count > _MAX_COLUMN_COUNT:
             raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
 
-        # Bounds check: each column name is at least 8 bytes (null +
-        # padding) AND the mandatory 8-byte DONE/PART row-end marker
-        # follows the names (or the row stream). Reserve 8 bytes for
-        # the marker so a ``column_count`` that would consume every
-        # remaining byte fails here with a clear diagnostic rather than
-        # later via "body exhausted without end marker".
+        # Each name is >=8 bytes and an 8-byte marker follows; reserving the
+        # marker gives a clear diagnostic instead of "body exhausted" later.
         remaining = len(view) - offset
         max_columns = max(0, remaining - WORD_SIZE) // 8
         if column_count > max_columns:
@@ -1311,7 +792,6 @@ class RowsResponse(Message):
                 f"bytes for the row end marker)"
             )
 
-        # Column names
         column_names: list[str] = []
         for _ in range(column_count):
             name, consumed = decode_text(
@@ -1320,28 +800,19 @@ class RowsResponse(Message):
             column_names.append(name)
             offset += consumed
 
-        # Rows - each row has its own type header
         rows: list[list[Any]] = []
         all_row_types: list[list[ValueType]] = []
         column_types: list[ValueType] = []
 
-        # Zero-column results cannot have row data (each row would be zero
-        # bytes), so skip the row loop and consume the end marker directly.
-        # Validate the full 8-byte sentinel against DQLITE_RESPONSE_ROWS_DONE
-        # / _PART, matching the non-zero path (which goes through
-        # decode_row_header). A first-byte-only compare would silently accept
-        # torn markers like ``0xff 0x00..``.
+        # Zero-column results carry no row data; skip the loop and validate
+        # the full 8-byte marker (a first-byte compare would accept torn ones).
         if column_count == 0:
             if offset + WORD_SIZE > len(view):
                 raise DecodeError(
                     "RowsResponse body exhausted without end marker (zero-column result)"
                 )
-            # Compare the prefix directly against the pre-built
-            # marker constants — ``memoryview`` supports buffer-protocol
-            # equality against bytes-like objects, so the prior
-            # ``bytes(view[...])`` materialise was unnecessary copy work
-            # on the frame-decode hot path. Only materialise to ``bytes``
-            # in the error arm so the diagnostic hex dump is well-formed.
+            # memoryview supports buffer-protocol equality, so compare the
+            # prefix directly; only materialise to bytes in the error arm.
             marker_view = view[offset : offset + WORD_SIZE]
             if marker_view == _ROW_DONE_MARKER:
                 has_more = False
@@ -1352,9 +823,8 @@ class RowsResponse(Message):
                 raise DecodeError(
                     f"Expected DONE or PART marker for zero-column result, got 0x{got_hex}"
                 )
-            # The zero-column fast path is Python-specific (upstream C never
-            # emits zero-column result sets); enforce buffer exhaustion to
-            # match the strict-decode pattern used by every sibling decoder.
+            # Strict-decode: buffer must be exhausted (Python-specific path;
+            # upstream C never emits zero-column result sets).
             end = offset + WORD_SIZE
             if end != len(view):
                 raise DecodeError(
@@ -1370,34 +840,19 @@ class RowsResponse(Message):
             )
 
         while offset < len(view):
-            # Read row header; markers are detected byte-by-byte inside
             result, consumed = decode_row_header(view[offset:], column_count)
             offset += consumed
 
             if result is RowMarker.DONE or result is RowMarker.PART:
-                # Strict-decode parity with the zero-column fast path
-                # (and with sibling decoders LeaderResponse /
-                # FailureResponse / ServersResponse): trailing bytes
-                # after the DONE/PART marker are malformed. Conforming
-                # servers do not emit them; rejecting catches the
-                # truncation/extension corruption modes a permissive
-                # path would silently consume with the body slice.
+                # Strict-decode: trailing bytes after the marker are malformed.
                 if offset != len(view):
                     raise DecodeError(
                         f"RowsResponse body has {len(view) - offset} trailing bytes "
                         f"after {'DONE' if result is RowMarker.DONE else 'PART'} marker "
                         f"(decoded {len(rows)} rows)"
                     )
-                # Break the legacy alias between ``column_types`` and
-                # ``all_row_types[0]``: the row loop below assigns
-                # ``column_types = types`` on the first row, and that
-                # same ``types`` list is what got appended to
-                # ``all_row_types``. Without this copy, mutating
-                # ``msg.column_types`` would silently rewrite
-                # ``msg.row_types[0]`` and vice versa. The bypass
-                # constructor (``_from_decoded``) does not run the
-                # defensive ``__post_init__``, so the alias must be
-                # broken here.
+                # Break the column_types/row_types[0] alias here, since
+                # _from_decoded bypasses __post_init__'s defensive copy.
                 if all_row_types and column_types is all_row_types[0]:
                     column_types = list(column_types)
                 return cls._from_decoded(
@@ -1415,20 +870,12 @@ class RowsResponse(Message):
             if not column_types:
                 column_types = types
 
-            # Read row values
             values, consumed = decode_row_values(view[offset:], types, text_errors=text_errors)
             rows.append(values)
             offset += consumed
 
             if len(rows) >= max_rows:
-                # The cap is exclusive: row count reaching ``max_rows``
-                # is rejected. Spell that out so an operator setting
-                # ``max_rows=N`` to allow N rows but receiving exactly
-                # N rows can see why the decode failed. Avoid a literal
-                # +1 prescription — actual frame size may be much
-                # larger (decode aborts at the threshold so true row
-                # count is unknown), so a prescriptive bump is
-                # misleading; surface the policy instead.
+                # Cap is exclusive: reaching max_rows is rejected.
                 raise DecodeError(
                     f"Row count {len(rows)} reached limit {max_rows} "
                     f"(cap is exclusive — raise max_rows if larger "
@@ -1462,12 +909,7 @@ class EmptyResponse(Message):
             raise DecodeError(f"EmptyResponse unsupported schema version {schema}")
         if len(data) != 8:
             raise DecodeError(f"EmptyResponse body must be exactly 8 bytes, got {len(data)}")
-        # Read-and-discard the reserved uint64 to match Go's
-        # ``response.getUint64()`` discard at
-        # ``internal/protocol/response.go:186``. The field is
-        # documented as unused; rejecting non-zero values gives no
-        # defensive value while creating a forward-compat hazard if
-        # the field is ever re-used by a future server.
+        # Read-and-discard the reserved uint64, matching Go.
         decode_uint64(data)
         return cls()
 
@@ -1477,12 +919,8 @@ class EmptyResponse(Message):
 class FilesResponse(Message):
     """Database dump files response.
 
-    Body: uint64 count, then repeated (text filename, uint64 size, raw bytes content)
-
-    Note: neither Go nor this implementation pads file content to word
-    boundaries. The C server asserts content is always word-aligned
-    (SQLite pages are multiples of 512), so padding is never needed
-    in practice.
+    Body: uint64 count, then repeated (text filename, uint64 size, raw content).
+    Content is not word-padded; the C server asserts it is always aligned.
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.FILES
@@ -1490,12 +928,7 @@ class FilesResponse(Message):
     files: dict[str, bytes] = field(default_factory=dict, repr=False)
 
     def __repr__(self) -> str:
-        # Summary repr — see ``RowsResponse.__repr__`` for the
-        # rationale. ``files`` can hold up to ``_MAX_FILE_COUNT``
-        # entries with per-entry content up to ``_MAX_FILE_CONTENT_SIZE``
-        # (~64 MiB) — a ``%r`` formatting hazard latent in any
-        # operator-supplied observability path. Truncate the
-        # per-file byte string lengths to a small head sample.
+        # Summary repr (see RowsResponse.__repr__); content can be ~64 MiB.
         head = list(self.files.items())[:3]
         more = len(self.files) - len(head)
         sample = ", ".join(f"{name!r}: <{len(content)} bytes>" for name, content in head)
@@ -1508,20 +941,12 @@ class FilesResponse(Message):
             raise EncodeError(
                 f"FilesResponse count {len(self.files)} exceeds maximum ({_MAX_FILE_COUNT})"
             )
-        # Per-filename byte cap is enforced inside encode_text below.
-        # Accumulate into a ``bytearray`` to avoid the O(N²) memcopy
-        # tax of repeated ``bytes += bytes`` — per-file ``content`` can
-        # reach ``_MAX_FILE_CONTENT_SIZE`` (~64 MiB), so each append
-        # would copy the entire running result on the prior shape.
+        # bytearray accumulation avoids the O(N^2) memcopy of bytes += bytes.
         result = bytearray()
         result.extend(encode_uint64(len(self.files)))
         for name, content in self.files.items():
-            # The upstream C server (gateway.c::dumpFile) asserts
-            # ``len % 8 == 0`` for every file's content, because per-file
-            # entries are written back-to-back with no explicit padding
-            # and SQLite pages are always 8-byte aligned multiples of
-            # 512. Validate here so a Python-encoded mock-server frame
-            # cannot diverge from what a real C peer produces.
+            # Upstream writes entries back-to-back with no padding and asserts
+            # content is 8-byte aligned; match that so frames don't diverge.
             if len(content) % 8 != 0:
                 raise EncodeError(
                     f"FilesResponse content for {name!r} must be 8-byte aligned "
@@ -1529,11 +954,6 @@ class FilesResponse(Message):
                     "per-file padding"
                 )
             # Per-file content cap mirroring the decode-side guard below.
-            # The frame envelope bounds total bytes, but a single
-            # hostile entry could otherwise claim the entire budget;
-            # aligning the cap to ``_MAX_BLOB_SIZE`` (64 MiB minus
-            # framing overhead) keeps the per-field discipline parallel
-            # with the BLOB row-cell cap.
             if len(content) > _MAX_FILE_CONTENT_SIZE:
                 raise EncodeError(
                     f"FilesResponse content for {name!r} length {len(content)} "
@@ -1549,8 +969,7 @@ class FilesResponse(Message):
     def decode_body(cls, data: bytes, schema: int = 0) -> "FilesResponse":
         if schema != 0:
             raise DecodeError(f"FilesResponse unsupported schema version {schema}")
-        # Memoryview for O(1) slicing in the per-file loop.
-        view = memoryview(data)
+        view = memoryview(data)  # O(1) slicing in the per-file loop
         files: dict[str, bytes] = {}
         offset = 0
         count = decode_uint64(view[offset:])
@@ -1571,25 +990,13 @@ class FilesResponse(Message):
             offset += consumed
             size = decode_uint64(view[offset:])
             offset += 8
-            # Mirror of the encode-side invariant: upstream
-            # gateway.c::dumpFile asserts ``len % 8 == 0`` for every
-            # file's content. Reject non-aligned payloads on decode too
-            # so a mock / malicious peer cannot produce bytes the real
-            # C server would not emit.
+            # Mirror the encode-side 8-byte alignment invariant.
             if size % 8 != 0:
                 raise DecodeError(
                     f"FilesResponse content for {name!r} must be 8-byte aligned (got {size} bytes)"
                 )
-            # Per-file content cap mirroring the encode-side guard
-            # above. Defense-in-depth: the outer ``max_message_size``
-            # already bounds total bytes, but a single hostile entry
-            # could otherwise claim the entire 64 MiB envelope for one
-            # file (the count cap of 100 is meaningless if one file
-            # takes the whole budget). Check BEFORE the over-read
-            # bounds-check so an oversize claim is rejected with a
-            # specific diagnostic rather than the generic truncation
-            # message. Cap aligned with ``_MAX_BLOB_SIZE`` so the
-            # per-field discipline matches the BLOB row-cell cap.
+            # Per-file content cap. Checked before the over-read bounds-check
+            # so an oversize claim gets a specific (not "truncated") diagnostic.
             if size > _MAX_FILE_CONTENT_SIZE:
                 raise DecodeError(
                     f"FilesResponse content for {name!r} length {size} "
@@ -1601,21 +1008,13 @@ class FilesResponse(Message):
                     f"at offset {offset}, but only {len(view) - offset} bytes available"
                 )
             content = bytes(view[offset : offset + size])
-            # No padding after content — matches Go's byte-by-byte read.
-            offset += size
-            # Reject duplicate filenames: the wire format is a positional
-            # sequence of N records; silently overwriting via dict would
-            # make ``len(files) < count`` after decode and break
-            # re-encode symmetry. Upstream's ``handle_dump`` only ever
-            # emits distinct names (``main`` and ``main-wal``), so this
-            # catches only malicious or misframed peers.
+            offset += size  # no padding after content
+            # Reject duplicate filenames: overwriting via dict would make
+            # len(files) < count and break re-encode symmetry.
             if name in files:
                 raise DecodeError(f"FilesResponse: duplicate filename {name!r}")
             files[name] = content
-        # Upstream client enforces `cursor.cap == fs[i].size` at each
-        # iteration; on the last file that amounts to "body must be
-        # exhausted." Mirror the strictness so corrupt / malicious
-        # trailing bytes cannot vanish silently.
+        # Strict-decode: body must be fully consumed.
         if offset != len(view):
             raise DecodeError(
                 f"FilesResponse has {len(view) - offset} trailing bytes after last file"
@@ -1626,44 +1025,18 @@ class FilesResponse(Message):
 @final
 @dataclass(frozen=True, slots=True)
 class NodeInfo:
-    """Information about a cluster node.
-
-    Frozen + slotted to match ``dqliteclient.node_store.NodeInfo``. The
-    class holds wire-decoded values that are handed off for routing
-    decisions; mutation would invalidate caller-held references, and
-    hashability lets instances live in sets / dict keys.
-    """
+    """Information about a cluster node (frozen + hashable for set/dict keys)."""
 
     node_id: int
     address: str
     role: NodeRole
 
     def __post_init__(self) -> None:
-        # Validate the wire-encoded fields at construction time so a
-        # caller-built ``NodeInfo`` carrying out-of-range / unknown
-        # values can't reach ``ServersResponse.encode_body`` and
-        # silently emit them onto the wire. The decoder side already
-        # enforces these invariants via ``unknown_role_policy="reject"``
-        # and the uint64-range checks in ``decode_uint64``; the
-        # encoder side now mirrors them. Mirrors the request-side
-        # ``AssignRequest.__post_init__`` which does the same
-        # coercion + validation.
         _validate_uint64("node_id", self.node_id)
-        # Raft-configuration invariant (mirrors ServersResponse.
-        # decode_body's per-entry check). Upstream ``gateway.c::
-        # encodeServer`` populates from ``raft->configuration.servers``,
-        # which the Raft API requires to have ``node_id >= 1`` (id=0 is
-        # the LeaderResponse "no leader" sentinel and never a real
-        # configuration row) and a non-empty address (the ``Add``
-        # request rejects empty addresses upstream). Without this guard,
-        # a caller-built ``NodeInfo(0, "evil", VOTER)`` passed to a
-        # ``ServersResponse`` would encode to bytes the same package's
-        # decoder refuses — values that round-trip in neither direction.
-        # Unlike LeaderResponse, no legacy decoder produces (0, addr)
-        # entries; every NodeInfo construction site uses the legitimate
-        # shape, so the check lives on ``__post_init__`` (cheapest fail-
-        # point at the offending caller frame). Symmetric with the
-        # LeaderResponse.encode_body atomicity check.
+        # Raft-configuration invariant (mirrors ServersResponse.decode_body):
+        # real config rows always have node_id >= 1 (id=0 is the "no leader"
+        # sentinel) and a non-empty address. Validated here so a bad caller-
+        # built NodeInfo can't encode to bytes the decoder then refuses.
         if self.node_id == 0:
             raise EncodeError(
                 f"NodeInfo: node_id must be >= 1 (raft-configuration "
@@ -1676,11 +1049,8 @@ class NodeInfo:
             )
         if isinstance(self.role, NodeRole):
             return
-        # ``IntEnum`` accepts ``NodeRole(0)`` etc. but not
-        # ``NodeRole(999)``; check uint64 range first so a giant int
-        # produces the documented "role exceeds uint64" diagnostic
-        # instead of being absorbed into the enum's "unknown role"
-        # message. Then coerce bare ints into the enum.
+        # Check uint64 range first so a giant int gets the "exceeds uint64"
+        # diagnostic rather than the enum's "unknown role"; then coerce.
         _validate_uint64("role", self.role)
         try:
             coerced = NodeRole(self.role)
@@ -1689,13 +1059,8 @@ class NodeInfo:
                 f"NodeInfo: unknown role {self.role!r}; valid roles are "
                 f"0 (VOTER), 1 (STANDBY), 2 (SPARE)"
             ) from e
-        # ``object.__setattr__`` is the post-init coercion idiom. If
-        # this dataclass is ever flipped to
-        # ``@dataclass(frozen=True)`` (for hashability or
-        # thread-safety), this line raises ``FrozenInstanceError`` —
-        # fold the coercion into a custom ``__init__`` that writes
-        # attributes once at the end. Sibling ``AssignRequest`` has
-        # the same shape.
+        # object.__setattr__ would need a custom __init__ if this dataclass
+        # ever becomes frozen.
         object.__setattr__(self, "role", coerced)
 
 
@@ -1712,11 +1077,7 @@ class ServersResponse(Message):
     nodes: list[NodeInfo] = field(default_factory=list, repr=False)
 
     def __repr__(self) -> str:
-        # Summary repr — see ``RowsResponse.__repr__`` for the
-        # rationale. ``nodes`` is bounded by ``_MAX_NODE_COUNT``
-        # (10_000); the auto-generated dataclass repr would
-        # enumerate every entry. Show the first three plus a
-        # count of the rest.
+        # Summary repr (see RowsResponse.__repr__); nodes can be up to 10_000.
         head_repr = ", ".join(repr(n) for n in self.nodes[:3])
         more = len(self.nodes) - 3
         tail = f", +{more} more" if more > 0 else ""
@@ -1728,12 +1089,7 @@ class ServersResponse(Message):
             raise EncodeError(
                 f"ServersResponse node count {len(self.nodes)} exceeds maximum ({_MAX_NODE_COUNT})"
             )
-        # Bytearray accumulation: same O(N²) avoidance as the sibling
-        # encoders. Node count is bounded by ``_MAX_NODE_COUNT`` (10k),
-        # but uniformity with ``RowsResponse`` / ``FilesResponse``
-        # matters more than the per-encoder cost — leaving even one
-        # encoder on the regressed shape invites future copy-paste
-        # regressions.
+        # bytearray accumulation, same O(N^2) avoidance as the sibling encoders.
         result = bytearray()
         result.extend(encode_uint64(len(self.nodes)))
         for node in self.nodes:
@@ -1753,48 +1109,16 @@ class ServersResponse(Message):
         *,
         unknown_role_policy: str = "reject",
     ) -> "ServersResponse":
-        """Decode the modern V1 cluster body shape (id + address + role).
+        """Decode the modern V1 cluster body (id + address + role per node).
 
-        The decoder unconditionally parses the V1 (3-field-per-node)
-        layout. The upstream C gateway's ``handle_cluster``
-        (``src/gateway.c``) historically supported a V0 cluster
-        request whose response carried only ``id + address`` (no
-        role). Our outbound ``ClusterRequest.__post_init__``
-        (``requests.py``) rejects ``format=0`` so an in-tree client
-        cannot ask for the V0 shape — making the V0 response a
-        contract no in-tree call site triggers.
+        Only V1 is parsed; the legacy V0 (id + address) shape is no longer
+        requestable in-tree, and a V0 body from a hostile peer is caught by
+        the bounds/trailing-bytes checks in the common case.
 
-        For hostile / malformed peer traffic that emits a V0 body
-        anyway, the existing ``count > remaining // 24`` bounds check
-        and the trailing-bytes reject below catch the misalignment in
-        the common case (V0 nodes are 16 bytes; the V1 parser would
-        read 24 and either fall short on the first node or accumulate
-        a trailing-bytes mismatch). The narrow silent-misparse residual
-        — V0 bytes whose layout happens to align with V1's
-        ``id + addr + role`` and yield raw_role values in {0,1,2} — is
-        not addressed here; format-aware decoding would ripple
-        ``format=`` plumbing into the client layer for a shape no
-        in-tree path emits.
-
-        ``unknown_role_policy`` controls forward-compat behaviour for
-        new ``NodeRole`` values that this client predates (e.g. a
-        future server adds a Witness role with raw value 3):
-
-        - ``"reject"`` (default): raise ``DecodeError``. Matches
-          historical behaviour; a known-set client cannot accept
-          unknown roles.
-        - ``"warn"``: emit a ``logger.warning`` and substitute
-          ``NodeRole.SPARE`` (the most-conservative safe default — a
-          spare cannot serve writes and won't be probed for
-          leadership). The raw int is logged for diagnostics.
-        - ``"accept"``: silently substitute ``NodeRole.SPARE``. Use
-          only when the caller has independent confidence the new
-          role is benign.
-
-        Go's ``getNodes`` (``message.go:372-383``) silently accepts
-        any uint64 as ``NodeRole``; downstream ``String()`` returns
-        ``"unknown role"``. Python's ``"warn"`` / ``"accept"`` modes
-        approach that posture; ``"reject"`` keeps the strict default.
+        ``unknown_role_policy`` handles roles this client predates:
+        - "reject" (default): raise DecodeError.
+        - "warn": substitute NodeRole.SPARE (safe default) and log.
+        - "accept": substitute SPARE silently.
         """
         if schema != 0:
             raise DecodeError(f"ServersResponse unsupported schema version {schema}")
@@ -1803,8 +1127,7 @@ class ServersResponse(Message):
                 "unknown_role_policy must be 'reject', 'warn', or "
                 f"'accept'; got {unknown_role_policy!r}"
             )
-        # Memoryview for O(1) slicing in the per-node loop.
-        view = memoryview(data)
+        view = memoryview(data)  # O(1) slicing in the per-node loop
         nodes: list[NodeInfo] = []
         offset = 0
         count = decode_uint64(view[offset:])
@@ -1818,22 +1141,11 @@ class ServersResponse(Message):
                 f"Node count {count} exceeds maximum possible in "
                 f"{remaining} bytes of remaining data"
             )
-        # Aggregate unknown roles seen this call so warn-mode emits ONE
-        # WARNING per response rather than one per node. A
-        # ``cluster_info()`` poll over an N-node cluster after a server
-        # upgrade with a new role would otherwise produce N WARNINGs
-        # per poll (continuous flow on operator dashboards). The role
-        # int domain is finite and small, so deduping by raw value
-        # keeps the message compact regardless of node count.
+        # Collect unknown roles so warn-mode emits one WARNING per response,
+        # not one per node.
         unknown_seen: list[int] = []
-        # Strict-decode: reject duplicate ``node_id`` mid-stream.
-        # Mirror the symmetric ``FilesResponse`` rejection of duplicate
-        # filenames. Conforming C/Go servers populate this response
-        # from the Raft log which guarantees unique IDs by construction;
-        # a duplicate would only surface from a misframed or hostile
-        # peer. Detecting it here keeps the strictness uniform with the
-        # sibling decoder and prevents downstream consumers from
-        # silently overwriting a prior entry when keying by node_id.
+        # Strict-decode: reject duplicate node_id (would let consumers keying
+        # by id silently overwrite a prior entry).
         seen_ids: set[int] = set()
         for _ in range(count):
             node_id = decode_uint64(view[offset:])
@@ -1841,28 +1153,13 @@ class ServersResponse(Message):
             address, consumed = decode_text(
                 view[offset:], max_size=_MAX_ADDRESS_SIZE, label="server address"
             )
-            # Raw address — sanitisation happens at log / exception
-            # format time so the value used for TCP routing and
-            # allowlist comparisons stays authentic. See
-            # ``LeaderResponse.decode_body`` for rationale.
+            # Raw address (feeds TCP routing / allowlist comparisons);
+            # sanitised at format time. See LeaderResponse.decode_body.
             offset += consumed
-            # Reject any entry that's not a legitimate raft
-            # configuration row. Upstream
-            # ``gateway.c::encodeServer`` populates entries from
-            # ``raft->configuration.servers`` which always have
-            # ``node_id >= 1`` (id=0 is reserved for the
-            # ``LeaderResponse`` "no leader" sentinel) and a
-            # non-empty address (``Add`` requests reject empty
-            # addresses upstream). The only legitimate shape is
-            # ``(>=1, non-empty)``. A peer (mock / proxy / hostile
-            # fork) emitting ``(0, *)`` or ``(>=1, "")`` would
-            # silently propagate phantom nodes or routeless ids
-            # into ``dqliteclient.cluster.NodeInfo`` and the
-            # SQLAlchemy slot cache; rejecting at the wire boundary
-            # keeps downstream invariants honest.
+            # Raft-config invariant: only (id>=1, non-empty) is legitimate.
+            # (0, *) or (>=1, "") would propagate phantom/routeless nodes.
             if node_id == 0 or not address:
-                # Sanitise before truncation; see ``LeaderResponse``
-                # sibling for the U+2028 / bidi-class rationale.
+                # !r escapes LF/CR but not U+2028/bidi/ZWSP; sanitise first.
                 sanitised = sanitize_server_text(address)
                 display_addr = sanitised if len(sanitised) <= 64 else sanitised[:64] + "…"
                 raise DecodeError(
@@ -1885,8 +1182,7 @@ class ServersResponse(Message):
                         f"Invalid node role {raw_role} at offset {offset - 8}; "
                         f"expected one of {valid}"
                     ) from exc
-                # warn / accept: substitute SPARE (safe default — won't
-                # be probed for leadership, can't serve writes).
+                # warn / accept: substitute SPARE (safe default).
                 if unknown_role_policy == "warn":
                     unknown_seen.append(raw_role)
                 role = NodeRole.SPARE
@@ -1900,9 +1196,6 @@ class ServersResponse(Message):
                 unique_roles,
             )
         if offset != len(view):
-            # Strict-decode parity with sibling variable-length
-            # decoders: conforming Go/C servers never emit trailing
-            # padding on this response.
             raise DecodeError(
                 f"ServersResponse has {len(view) - offset} trailing bytes after {count} nodes"
             )
@@ -1912,10 +1205,7 @@ class ServersResponse(Message):
 @final
 @dataclass(frozen=True, slots=True)
 class MetadataResponse(Message):
-    """Node metadata response (failure domain and weight).
-
-    Returned in response to a DescribeRequest. Contains the node's
-    failure domain and weight, used for cluster topology decisions.
+    """Node metadata response (reply to a DescribeRequest).
 
     Body: uint64 failure_domain, uint64 weight
     """
