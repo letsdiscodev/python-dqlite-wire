@@ -254,7 +254,6 @@ def decode_text(
 ) -> tuple[str, int]:
     """Decode NUL-terminated UTF-8 text; return (text, bytes_consumed).
 
-    ``max_size`` caps decoded length; ``label`` names the field in errors.
     ``errors="replace"``/``"surrogateescape"`` yield codepoints the log
     sanitiser misses and that break encode_text round-trip. Embedded NULs in
     server data read back truncated at the first NUL (no length prefix).
