@@ -251,8 +251,7 @@ def decode_row_header(
                 ValueType(nibble)
             except ValueError as e:
                 raise DecodeError(f"Invalid value type code {nibble} at column index {i}") from e
-            # Unreachable: a nibble rejected above is exactly one ValueType() rejects.
-            raise DecodeError(f"Invalid value type code {nibble} at column index {i}")
+            raise AssertionError(f"unreachable: nibble {nibble} accepted by ValueType")
         types.append(vt)
 
     return types, header_size

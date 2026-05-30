@@ -719,19 +719,17 @@ class AssignRequest(Message):
                 "PROMOTE shape must pass _legacy_intent=True and call "
                 "encode_body_legacy() explicitly."
             )
-        if self.role is not None:
-            # Coerce bare ints to NodeRole and reject unknown values.
-            if isinstance(self.role, NodeRole):
-                _validate_uint64("role", int(self.role))
-            else:
-                _validate_uint64("role", self.role)
-                try:
-                    coerced = NodeRole(self.role)
-                except ValueError as e:
-                    raise EncodeError(f"AssignRequest: unknown role {self.role}") from e
-                # Post-init coercion idiom; raises FrozenInstanceError if this
-                # is ever made frozen=True (then move coercion into __init__).
-                object.__setattr__(self, "role", coerced)
+        if self.role is not None and not isinstance(self.role, NodeRole):
+            # Coerce bare ints to NodeRole and reject unknown values; an existing
+            # NodeRole is already a valid uint64 so it needs no validation.
+            _validate_uint64("role", self.role)
+            try:
+                coerced = NodeRole(self.role)
+            except ValueError as e:
+                raise EncodeError(f"AssignRequest: unknown role {self.role}") from e
+            # Post-init coercion idiom; raises FrozenInstanceError if this
+            # is ever made frozen=True (then move coercion into __init__).
+            object.__setattr__(self, "role", coerced)
 
     @override
     def encode_body(self) -> bytes:

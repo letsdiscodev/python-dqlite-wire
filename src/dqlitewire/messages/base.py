@@ -7,6 +7,7 @@ from typing import ClassVar, final
 
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.types import _is_int_not_bool
 
 __all__ = [
     "Header",
@@ -37,17 +38,17 @@ class Header:
         # Range-validate at construction for precise errors instead of an
         # opaque ``struct.error`` at encode. ``bool`` is rejected first
         # because ``True == 1`` would coerce to a valid uint8.
-        if isinstance(self.size_words, bool) or not isinstance(self.size_words, int):
+        if not _is_int_not_bool(self.size_words):
             raise EncodeError(
                 f"Header size_words must be int, got {type(self.size_words).__name__}"
             )
         if not 0 <= self.size_words < 2**32:
             raise EncodeError(f"Header size_words {self.size_words} out of range for uint32")
-        if isinstance(self.msg_type, bool) or not isinstance(self.msg_type, int):
+        if not _is_int_not_bool(self.msg_type):
             raise EncodeError(f"Header msg_type must be int, got {type(self.msg_type).__name__}")
         if not 0 <= self.msg_type < 2**8:
             raise EncodeError(f"Header msg_type {self.msg_type} out of range for uint8")
-        if isinstance(self.schema, bool) or not isinstance(self.schema, int):
+        if not _is_int_not_bool(self.schema):
             raise EncodeError(f"Header schema must be int, got {type(self.schema).__name__}")
         if not 0 <= self.schema < 2**8:
             raise EncodeError(f"Header schema {self.schema} out of range for uint8")
@@ -68,12 +69,7 @@ class Header:
     def decode(cls, data: bytes) -> "Header":
         if len(data) < HEADER_SIZE:
             raise DecodeError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
-        try:
-            size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
-        except struct.error as e:  # pragma: no cover
-            # Defensive: ``<IBBH`` unpack of a guaranteed-8-byte slice
-            # cannot fail; kept as a guard against future format changes.
-            raise DecodeError(f"Failed to decode header: {e}") from e
+        size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
         # Reject non-zero reserved so peer corruption surfaces as a clean
         # DecodeError rather than carrying bits we cannot re-emit.
         if reserved != 0:

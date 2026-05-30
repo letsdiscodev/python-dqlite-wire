@@ -95,9 +95,14 @@ def _reject_non_byte_format_memoryview(value: memoryview) -> None:
         )
 
 
+def _is_int_not_bool(value: object) -> bool:
+    """True if ``value`` is an int but not a bool (bool is an int subclass)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _validate_uint64(name: str, value: int) -> None:
     """Validate ``value`` is an int (not bool) in the uint64 range."""
-    if isinstance(value, bool) or not isinstance(value, int):
+    if not _is_int_not_bool(value):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not 0 <= value < 2**64:
         raise EncodeError(
@@ -107,7 +112,7 @@ def _validate_uint64(name: str, value: int) -> None:
 
 def _validate_uint32(name: str, value: int) -> None:
     """Validate ``value`` is an int (not bool) in the uint32 range."""
-    if isinstance(value, bool) or not isinstance(value, int):
+    if not _is_int_not_bool(value):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not 0 <= value < 2**32:
         raise EncodeError(
@@ -117,7 +122,7 @@ def _validate_uint32(name: str, value: int) -> None:
 
 def _validate_int64(name: str, value: int) -> None:
     """Validate ``value`` is an int (not bool) in the signed int64 range."""
-    if isinstance(value, bool) or not isinstance(value, int):
+    if not _is_int_not_bool(value):
         raise EncodeError(f"{name} must be int, got {type(value).__name__}")
     if not -(2**63) <= value < 2**63:
         raise EncodeError(f"Value {_bounded_repr(value)} out of range for int64")
