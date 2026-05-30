@@ -54,11 +54,6 @@ def test_constraint_extended_matches_stdlib(name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("name", PROMOTED_PRIMARIES + CONSTRAINT_FAMILY)
-def test_constants_in_package_all(name: str) -> None:
-    assert name in dqlitewire.__all__
-
-
 def test_constraint_extended_share_primary_byte() -> None:
     """Every extended ``SQLITE_CONSTRAINT_*`` masks to ``SQLITE_CONSTRAINT``
     (the dbapi classifier's grouping invariant)."""

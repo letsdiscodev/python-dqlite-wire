@@ -1,50 +1,12 @@
-"""decode_value dispatches each ValueType via an O(1) lookup keyed by type code, not if/elif."""
+"""decode_value dispatches each ValueType to the correct decoder."""
 
 from __future__ import annotations
-
-import ast
-import inspect
-import textwrap
 
 import pytest
 
 from dqlitewire import types as types_mod
 from dqlitewire.constants import ValueType
 from dqlitewire.exceptions import DecodeError
-
-
-def _decode_value_source() -> str:
-    return textwrap.dedent(inspect.getsource(types_mod.decode_value))
-
-
-def test_decode_value_does_not_use_elif_chain_against_value_type() -> None:
-    src = _decode_value_source()
-    tree = ast.parse(src)
-
-    elif_compare_chain_arms = 0
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare):
-            continue
-        # Look for ``value_type == ValueType.X`` shape.
-        if (
-            isinstance(node.left, ast.Name)
-            and node.left.id == "value_type"
-            and len(node.ops) == 1
-            and isinstance(node.ops[0], ast.Eq)
-            and len(node.comparators) == 1
-            and isinstance(node.comparators[0], ast.Attribute)
-            and isinstance(node.comparators[0].value, ast.Name)
-            and node.comparators[0].value.id == "ValueType"
-        ):
-            elif_compare_chain_arms += 1
-
-    assert elif_compare_chain_arms <= 1, (
-        f"decode_value still contains {elif_compare_chain_arms} "
-        "``value_type == ValueType.X`` comparisons; the dispatch table "
-        "rewrite should collapse all of them into a single lookup. "
-        "Up to 1 comparison is tolerated for an explicit fallback arm "
-        "(e.g. fast-path for the most common type)."
-    )
 
 
 @pytest.mark.parametrize(

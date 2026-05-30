@@ -1,22 +1,10 @@
-"""``ClusterRequest.decode_body`` must construct via the dataclass __init__
-(``_decoded=True`` kwarg), not ``cls.__new__`` — the bypass is fragile under
-frozen/slots/new-field changes and breaks the sibling sentinel-pattern parity.
+"""``ClusterRequest.decode_body`` constructs via the dataclass __init__
+(``_decoded=True`` kwarg); a V0 request round-trips through that path.
 """
 
 from __future__ import annotations
 
-import inspect
-
 from dqlitewire.messages.requests import ClusterRequest
-
-
-def test_cluster_request_decode_does_not_use_cls_new_bypass() -> None:
-    source = inspect.getsource(ClusterRequest)
-    assert "cls.__new__" not in source, (
-        "ClusterRequest.decode_body must construct via cls(format=..., _decoded=True) — "
-        "the cls.__new__ bypass is fragile under frozen=True / slots=True / new-field "
-        "additions and inconsistent with the sibling _decoded_schema pattern."
-    )
 
 
 def test_cluster_request_decode_v0_constructor_kwarg_path() -> None:

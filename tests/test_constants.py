@@ -11,40 +11,24 @@ class TestResponseTypeValues:
     Reference: github.com/canonical/go-dqlite internal/protocol/constants.go
     """
 
-    def test_failure_is_0(self) -> None:
-        assert ResponseType.FAILURE == 0
-
-    def test_node_is_1(self) -> None:
-        assert ResponseType.LEADER == 1
-
-    def test_welcome_is_2(self) -> None:
-        assert ResponseType.WELCOME == 2
-
-    def test_nodes_is_3(self) -> None:
-        """Go: ResponseNodes = 3 (cluster server listing)."""
-        assert ResponseType.SERVERS == 3
-
-    def test_db_is_4(self) -> None:
-        assert ResponseType.DB == 4
-
-    def test_stmt_is_5(self) -> None:
-        assert ResponseType.STMT == 5
-
-    def test_result_is_6(self) -> None:
-        assert ResponseType.RESULT == 6
-
-    def test_rows_is_7(self) -> None:
-        assert ResponseType.ROWS == 7
-
-    def test_empty_is_8(self) -> None:
-        assert ResponseType.EMPTY == 8
-
-    def test_files_is_9(self) -> None:
-        assert ResponseType.FILES == 9
-
-    def test_metadata_is_10(self) -> None:
-        """Go: ResponseMetadata = 10."""
-        assert ResponseType.METADATA == 10
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("FAILURE", 0),
+            ("LEADER", 1),
+            ("WELCOME", 2),
+            ("SERVERS", 3),  # Go: ResponseNodes = 3 (cluster server listing)
+            ("DB", 4),
+            ("STMT", 5),
+            ("RESULT", 6),
+            ("ROWS", 7),
+            ("EMPTY", 8),
+            ("FILES", 9),
+            ("METADATA", 10),  # Go: ResponseMetadata = 10
+        ],
+    )
+    def test_response_type_value(self, name: str, value: int) -> None:
+        assert getattr(ResponseType, name) == value
 
     def test_no_node_legacy_as_separate_type(self) -> None:
         """NODE_LEGACY should not exist as a separate type code.
@@ -57,64 +41,34 @@ class TestResponseTypeValues:
 class TestRequestTypeValues:
     """Verify RequestType enum matches go-dqlite constants.go."""
 
-    def test_leader_is_0(self) -> None:
-        assert RequestType.LEADER == 0
-
-    def test_client_is_1(self) -> None:
-        assert RequestType.CLIENT == 1
-
-    def test_open_is_3(self) -> None:
-        assert RequestType.OPEN == 3
-
-    def test_prepare_is_4(self) -> None:
-        assert RequestType.PREPARE == 4
-
-    def test_exec_is_5(self) -> None:
-        assert RequestType.EXEC == 5
-
-    def test_query_is_6(self) -> None:
-        assert RequestType.QUERY == 6
-
-    def test_finalize_is_7(self) -> None:
-        assert RequestType.FINALIZE == 7
-
-    def test_exec_sql_is_8(self) -> None:
-        assert RequestType.EXEC_SQL == 8
-
-    def test_query_sql_is_9(self) -> None:
-        assert RequestType.QUERY_SQL == 9
-
-    def test_interrupt_is_10(self) -> None:
-        assert RequestType.INTERRUPT == 10
-
-    def test_add_is_12(self) -> None:
-        assert RequestType.ADD == 12
-
-    def test_assign_is_13(self) -> None:
-        assert RequestType.ASSIGN == 13
-
-    def test_remove_is_14(self) -> None:
-        assert RequestType.REMOVE == 14
-
-    def test_dump_is_15(self) -> None:
-        assert RequestType.DUMP == 15
-
-    def test_cluster_is_16(self) -> None:
-        assert RequestType.CLUSTER == 16
-
-    def test_transfer_is_17(self) -> None:
-        assert RequestType.TRANSFER == 17
-
-    def test_describe_is_18(self) -> None:
-        assert RequestType.DESCRIBE == 18
-
-    def test_weight_is_19(self) -> None:
-        assert RequestType.WEIGHT == 19
-
-    def test_connect_is_11(self) -> None:
-        """C defines DQLITE_REQUEST_CONNECT = 11 for Raft transport; the Go client omits
-        it (client-only), but a complete implementation includes it."""
-        assert RequestType.CONNECT == 11
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("LEADER", 0),
+            ("CLIENT", 1),
+            ("OPEN", 3),
+            ("PREPARE", 4),
+            ("EXEC", 5),
+            ("QUERY", 6),
+            ("FINALIZE", 7),
+            ("EXEC_SQL", 8),
+            ("QUERY_SQL", 9),
+            ("INTERRUPT", 10),
+            # C defines DQLITE_REQUEST_CONNECT = 11 for Raft transport; the Go
+            # client omits it (client-only), but a complete implementation includes it.
+            ("CONNECT", 11),
+            ("ADD", 12),
+            ("ASSIGN", 13),
+            ("REMOVE", 14),
+            ("DUMP", 15),
+            ("CLUSTER", 16),
+            ("TRANSFER", 17),
+            ("DESCRIBE", 18),
+            ("WEIGHT", 19),
+        ],
+    )
+    def test_request_type_value(self, name: str, value: int) -> None:
+        assert getattr(RequestType, name) == value
 
 
 class TestPublicExports:

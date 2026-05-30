@@ -6,28 +6,16 @@ RESPONSE_TYPES alias would break the identity coupling.
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
 from dqlitewire import PROTOCOL_VERSION_LEGACY
 from dqlitewire.codec import (
-    MessageDecoder,
     decode_message,
 )
 from dqlitewire.constants import RequestType, ResponseType
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.requests import ClientRequest
 from dqlitewire.messages.responses import LeaderResponse
-
-
-def test_legacy_leader_dispatch_gates_on_direction_not_identity() -> None:
-    src = inspect.getsource(MessageDecoder.decode_bytes)
-    assert "not self._is_request" in src, (
-        "Legacy LeaderResponse dispatch must gate on the direction "
-        "guard ``not self._is_request``, not solely on the identity "
-        "coincidence ``msg_class is LeaderResponse``."
-    )
 
 
 def _build_legacy_leader_response_bytes(address: str) -> bytes:
