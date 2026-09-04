@@ -114,7 +114,7 @@ from dqlitewire.truncate import DEFAULT_MAX_RAW_MESSAGE, cap_raw_message
 from dqlitewire.tuples import RowMarker
 from dqlitewire.types import WireInput, WireValue
 
-__version__: _Final[str] = "0.3.0"
+__version__: _Final[str] = "0.4.0"
 
 __all__ = [
     "BARE_DATABASE_ERROR_CODES",
