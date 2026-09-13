@@ -1,8 +1,40 @@
-"""Tests for protocol constants matching Go reference implementation."""
+"""Tests for protocol constants and error-code tables."""
+
+from __future__ import annotations
+
+import sqlite3
 
 import pytest
 
-from dqlitewire.constants import RequestType, ResponseType
+import dqlitewire
+from dqlitewire import (
+    BARE_DATABASE_ERROR_CODES,
+    LEADER_ERROR_CODES,
+    LEADER_LOST_DB_LOOKUP_SUBSTRING,
+    SQLITE_CORRUPT,
+    SQLITE_FORMAT,
+    SQLITE_NOTADB,
+    WIRE_DECODE_FAILED_PREFIX,
+)
+from dqlitewire.constants import (
+    DQLITE_NOTFOUND,
+    DQLITE_PARSE,
+    DQLITE_PROTO,
+    SQLITE_BUSY,
+    SQLITE_ERROR,
+    SQLITE_IOERR,
+    SQLITE_IOERR_LEADERSHIP_LOST,
+    SQLITE_IOERR_LEADERSHIP_LOST_LEGACY,
+    SQLITE_IOERR_NOT_LEADER,
+    SQLITE_IOERR_NOT_LEADER_LEGACY,
+    SQLITE_NOTFOUND,
+    SQLITE_PROTOCOL,
+    TX_AUTO_ROLLBACK_PRIMARY_CODES,
+    RequestType,
+    ResponseType,
+    is_dqlite_namespace_code,
+    primary_sqlite_code,
+)
 
 
 class TestResponseTypeValues:
@@ -366,29 +398,29 @@ class TestDefaultRowsAndFramesCaps:
 
 class TestInternalDecodeBoundsPinnedAgainstReadme:
     """Pin the four decode-time cap constants the README documents, so bumping one
-    without updating the README fails here (as _MAX_COLUMN_COUNT once drifted)."""
+    without updating the README fails here (as MAX_COLUMN_COUNT once drifted)."""
 
     def test_max_param_count_matches_sqlite_max_variable_number(self) -> None:
-        from dqlitewire.tuples import _MAX_PARAM_COUNT
+        from dqlitewire.limits import MAX_PARAM_COUNT
 
         # SQLITE_MAX_VARIABLE_NUMBER standard-build max (sqlite.org/limits.html); the
         # server can't bind beyond it, so matching it caps a malicious peer's allocations.
-        assert _MAX_PARAM_COUNT == 32_766
+        assert MAX_PARAM_COUNT == 32_766
 
     def test_max_column_count_matches_sqlite_default(self) -> None:
-        from dqlitewire.messages.responses import _MAX_COLUMN_COUNT
+        from dqlitewire.limits import MAX_COLUMN_COUNT
 
         # SQLITE_MAX_COLUMN default is 2000. The C server emits column count as uncapped
         # uint64 (STMT__MAX_COLUMNS is defined but unused), so this cap is defence-in-depth.
-        assert _MAX_COLUMN_COUNT == 2000
+        assert MAX_COLUMN_COUNT == 2000
 
     def test_max_file_count_is_one_hundred(self) -> None:
-        from dqlitewire.messages.responses import _MAX_FILE_COUNT
+        from dqlitewire.limits import MAX_FILE_COUNT
 
-        assert _MAX_FILE_COUNT == 100
+        assert MAX_FILE_COUNT == 100
 
     def test_max_node_count_is_ten_thousand(self) -> None:
-        from dqlitewire.messages.responses import MAX_NODE_COUNT
+        from dqlitewire.limits import MAX_NODE_COUNT
 
         assert MAX_NODE_COUNT == 10_000
 
@@ -431,3 +463,289 @@ class TestNamedPrimaryCodeValues:
             f"that silently changes the value breaks every cross-driver "
             f"classifier; pin the value here."
         )
+
+
+# ---- merged from test_constants_bare_database_error_codes.py ----
+# Pin ``BARE_DATABASE_ERROR_CODES``: the SSOT cross-package contract (SA
+# derives its slot-fatal disconnect codes from it), so pin membership and
+# frozenset shape against silent drift.
+
+
+def test_bare_database_error_codes_membership() -> None:
+    assert (
+        frozenset(
+            {
+                SQLITE_CORRUPT,  # 11
+                SQLITE_FORMAT,  # 24
+                SQLITE_NOTADB,  # 26
+            }
+        )
+        == BARE_DATABASE_ERROR_CODES
+    )
+
+
+def test_bare_database_error_codes_numeric_values() -> None:
+    """Pin absolute numeric codes so a future ``SQLITE_*`` alias rename can't
+    silently change the contract."""
+    assert frozenset({11, 24, 26}) == BARE_DATABASE_ERROR_CODES
+
+
+def test_bare_database_error_codes_is_frozenset() -> None:
+    """Pin frozenset shape: SA uses the constant as a dict key / in subset
+    comparisons, which a regression to plain ``set`` would break."""
+    assert isinstance(BARE_DATABASE_ERROR_CODES, frozenset)
+
+
+# ---- merged from test_dqlite_namespace_range.py ----
+# ``is_dqlite_namespace_code`` uses the numeric range ``[1000, 1024)`` rather
+# than a hard-coded set, so a future dqlite code is auto-included instead of
+# masking through ``primary_sqlite_code(code & 0xFF)`` to a phantom primary.
+# Extended SQLite codes (e.g. ``SQLITE_IOERR_NOT_LEADER = 10250``) sit outside
+# the range and keep masking correctly.
+
+
+@pytest.mark.parametrize("code", [DQLITE_PROTO, DQLITE_NOTFOUND, DQLITE_PARSE])
+def test_known_namespace_codes_passthrough(code: int) -> None:
+    assert is_dqlite_namespace_code(code) is True
+    assert primary_sqlite_code(code) == code
+
+
+def test_hypothetical_future_namespace_code_passthrough() -> None:
+    """A code added upstream later (e.g. 1010) must pass through unchanged
+    instead of masking to 0xF2 = 242."""
+    future_code = 1010
+    assert is_dqlite_namespace_code(future_code) is True
+    assert primary_sqlite_code(future_code) == future_code
+
+
+def test_entire_namespace_range_treated_as_namespace() -> None:
+    for code in range(1000, 1024):
+        assert is_dqlite_namespace_code(code) is True
+        assert primary_sqlite_code(code) == code
+
+
+def test_below_namespace_range_is_not_namespace() -> None:
+    """999 is just below the range and must be excluded from namespace
+    handling."""
+    assert is_dqlite_namespace_code(999) is False
+
+
+def test_at_or_above_namespace_range_is_not_namespace() -> None:
+    """1024 and above are not namespace; ``SQLITE_IOERR_NOT_LEADER = 10250`` is
+    a real extended code that must still mask to SQLITE_IOERR (10)."""
+    assert is_dqlite_namespace_code(1024) is False
+    assert is_dqlite_namespace_code(10250) is False
+    assert primary_sqlite_code(10250) == 10
+
+
+# ---- merged from test_leader_error_codes_legacy_subcodes.py ----
+# LEADER_ERROR_CODES has modern (40/41) and legacy (32/33) sub-codes; old flips stay retryable.
+
+
+def test_modern_codes_are_in_set() -> None:
+    assert SQLITE_IOERR_NOT_LEADER == 10250
+    assert SQLITE_IOERR_LEADERSHIP_LOST == 10506
+    assert SQLITE_IOERR_NOT_LEADER in LEADER_ERROR_CODES
+    assert SQLITE_IOERR_LEADERSHIP_LOST in LEADER_ERROR_CODES
+
+
+def test_legacy_codes_are_in_set() -> None:
+    assert SQLITE_IOERR_NOT_LEADER_LEGACY == 8202
+    assert SQLITE_IOERR_LEADERSHIP_LOST_LEGACY == 8458
+    assert SQLITE_IOERR_NOT_LEADER_LEGACY in LEADER_ERROR_CODES
+    assert SQLITE_IOERR_LEADERSHIP_LOST_LEGACY in LEADER_ERROR_CODES
+
+
+def test_set_contains_exactly_the_four_codes() -> None:
+    """Cardinality pin so a future revert that drops the legacy pair
+    fails deterministically."""
+    assert len(LEADER_ERROR_CODES) == 4
+    assert SQLITE_IOERR_NOT_LEADER in LEADER_ERROR_CODES
+    assert SQLITE_IOERR_LEADERSHIP_LOST in LEADER_ERROR_CODES
+    assert SQLITE_IOERR_NOT_LEADER_LEGACY in LEADER_ERROR_CODES
+    assert SQLITE_IOERR_LEADERSHIP_LOST_LEGACY in LEADER_ERROR_CODES
+
+
+def test_legacy_codes_compute_from_byte_shift() -> None:
+    """Tie the constants to the byte-shift formula so a future
+    refactor that re-derives the values can be sanity-checked."""
+    assert SQLITE_IOERR_NOT_LEADER_LEGACY == SQLITE_IOERR | (32 << 8)
+    assert SQLITE_IOERR_LEADERSHIP_LOST_LEGACY == SQLITE_IOERR | (33 << 8)
+
+
+# ---- merged from test_leader_lost_db_lookup_substring_constant.py ----
+# Pin: ``LEADER_LOST_DB_LOOKUP_SUBSTRING`` is the canonical wording
+# gateway.c emits when ``g->leader == NULL`` after a Raft demotion.
+#
+# Paired with ``SQLITE_NOTFOUND`` (=12) and substring-matched on the
+# server-supplied ``raw_message``, this is the wire-side
+# mark-this-connection-dead signal that the client and SA layers
+# dispatch on. Mirrors Go's ``driverError`` ``errNotFound → ErrBadConn``
+# arm with the "potentially after leadership loss" comment.
+#
+# The constant lives at the wire layer so the four-way disconnect-
+# classification chain (wire → client.connection → dbapi → SA) stays
+# in lockstep on rename.
+#
+# The existing ``LEADER_ERROR_CODES`` cardinality pin in
+# ``test_leader_error_codes_legacy_subcodes.py`` stays at 4: code 12
+# is overloaded between LOOKUP_DB (leader flip — invalidate) and
+# LOOKUP_STMT (server-side state bug — do not invalidate), so the
+# discriminator is the substring not the numeric code.
+
+
+def test_leader_lost_db_lookup_substring_value() -> None:
+    """Exact value pinned against upstream gateway.c
+    ``LOOKUP_DB`` macro emission text."""
+    assert LEADER_LOST_DB_LOOKUP_SUBSTRING == "no database opened"
+
+
+def test_leader_lost_db_lookup_substring_is_str_final() -> None:
+    """Same shape as the sibling ``NO_TRANSACTION_MESSAGE_SUBSTRINGS``
+    and ``WIRE_DECODE_FAILED_PREFIX`` — module-level ``Final[str]``."""
+    assert isinstance(LEADER_LOST_DB_LOOKUP_SUBSTRING, str)
+    from dqlitewire import LEADER_LOST_DB_LOOKUP_SUBSTRING as again
+
+    assert again is LEADER_LOST_DB_LOOKUP_SUBSTRING
+
+
+# ---- merged from test_primary_sqlite_code_dqlite_namespace_passthrough.py ----
+# Pin: ``primary_sqlite_code`` passes dqlite-namespace codes (>= 1000)
+# through unchanged (masking with 0xFF would yield a meaningless byte).
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        DQLITE_PROTO,  # 1001
+        DQLITE_NOTFOUND,  # 1002
+        DQLITE_PARSE,  # 1005
+    ],
+)
+def test_primary_sqlite_code_dqlite_namespace_passthrough(code: int) -> None:
+    assert primary_sqlite_code(code) == code
+
+
+def test_primary_sqlite_code_extended_sqlite_code_still_masked() -> None:
+    """Extended SQLite codes still mask to their primary (2067 -> 19)."""
+    assert primary_sqlite_code(2067) == 19
+
+
+# ---- merged from test_promoted_sqlite_constants.py ----
+# Pin: the 10 promoted SQLite primary codes and the 11 extended
+# ``SQLITE_CONSTRAINT_*`` codes match stdlib ``sqlite3`` bit-for-bit
+# and are reachable via the wire package's top-level surface.
+
+PROMOTED_PRIMARIES = [
+    "SQLITE_INTERNAL",
+    "SQLITE_TOOBIG",
+    "SQLITE_CONSTRAINT",
+    "SQLITE_MISMATCH",
+    "SQLITE_MISUSE",
+    "SQLITE_NOLFS",
+    "SQLITE_AUTH",
+    "SQLITE_RANGE",
+    "SQLITE_NOTICE",
+    "SQLITE_WARNING",
+]
+
+CONSTRAINT_FAMILY = [
+    "SQLITE_CONSTRAINT_CHECK",
+    "SQLITE_CONSTRAINT_COMMITHOOK",
+    "SQLITE_CONSTRAINT_FOREIGNKEY",
+    "SQLITE_CONSTRAINT_FUNCTION",
+    "SQLITE_CONSTRAINT_NOTNULL",
+    "SQLITE_CONSTRAINT_PRIMARYKEY",
+    "SQLITE_CONSTRAINT_TRIGGER",
+    "SQLITE_CONSTRAINT_UNIQUE",
+    "SQLITE_CONSTRAINT_VTAB",
+    "SQLITE_CONSTRAINT_ROWID",
+    "SQLITE_CONSTRAINT_PINNED",
+]
+
+
+@pytest.mark.parametrize("name", PROMOTED_PRIMARIES)
+def test_promoted_primary_matches_stdlib(name: str) -> None:
+    assert getattr(dqlitewire, name) == getattr(sqlite3, name), (
+        f"{name} drift: dqlitewire={getattr(dqlitewire, name)} "
+        f"vs stdlib sqlite3={getattr(sqlite3, name)}"
+    )
+
+
+@pytest.mark.parametrize("name", CONSTRAINT_FAMILY)
+def test_constraint_extended_matches_stdlib(name: str) -> None:
+    assert getattr(dqlitewire, name) == getattr(sqlite3, name), (
+        f"{name} drift: dqlitewire={getattr(dqlitewire, name)} "
+        f"vs stdlib sqlite3={getattr(sqlite3, name)}"
+    )
+
+
+def test_constraint_extended_share_primary_byte() -> None:
+    """Every extended ``SQLITE_CONSTRAINT_*`` masks to ``SQLITE_CONSTRAINT``
+    (the dbapi classifier's grouping invariant)."""
+    for name in CONSTRAINT_FAMILY:
+        value = getattr(dqlitewire, name)
+        assert value & 0xFF == dqlitewire.SQLITE_CONSTRAINT, (
+            f"{name}={value} primary-byte differs from "
+            f"SQLITE_CONSTRAINT={dqlitewire.SQLITE_CONSTRAINT}"
+        )
+
+
+# ---- merged from test_tx_auto_rollback_codes_negative.py ----
+# Negative pin: codes upstream emits via ``failure(req, ...)`` that
+# must NOT trigger the client's auto-rollback tracker clear.
+#
+# The positive set (ABORT/NOMEM/INTERRUPT/IOERR/CORRUPT/FULL) is
+# already pinned. This file pins the negative space — adding a code
+# to the auto-rollback set without flipping the parametrize here will
+# trip the test, forcing a deliberate review.
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        SQLITE_ERROR,  # gateway.c emits for nonempty statement tail, etc.
+        SQLITE_BUSY,  # engine-side OR Raft-side; carved out at client layer
+        SQLITE_NOTFOUND,  # gateway.c LOOKUP_DB / LOOKUP_STMT
+        SQLITE_PROTOCOL,  # bad format version
+        19,  # SQLITE_CONSTRAINT — CHECK on plain INSERT does NOT auto-rollback
+        21,  # SQLITE_MISUSE
+        DQLITE_NOTFOUND,
+        DQLITE_PARSE,
+    ],
+)
+def test_code_not_in_auto_rollback_set(code: int) -> None:
+    """Pin: the listed codes are NOT in TX_AUTO_ROLLBACK_PRIMARY_CODES.
+    A maintainer adding a code to the auto-rollback set must
+    explicitly remove it from this matrix."""
+    assert code not in TX_AUTO_ROLLBACK_PRIMARY_CODES
+
+
+# ---- merged from test_wire_decode_failed_prefix_constant_load_bearing.py ----
+# Pin: ``WIRE_DECODE_FAILED_PREFIX`` is the canonical phrase the
+# disconnect-classification chain (wire → client.ProtocolError →
+# dbapi.OperationalError(code=None) → SA's
+# ``_dqlite_disconnect_messages`` substring scan) depends on.
+#
+# The constant exists as the single source of truth so a rename
+# ripples through grep. This test pins the canonical value so a future
+# rename has to update the constant deliberately.
+
+
+def test_wire_decode_failed_prefix_value_is_canonical() -> None:
+    """The exact lowercase phrase ``"wire decode failed"``. SA's
+    substring scan lowercases the rendered exception text before
+    matching, so emission sites can use any casing — but the
+    constant's value is the canonical lowercase form that SA looks
+    for."""
+    assert WIRE_DECODE_FAILED_PREFIX == "wire decode failed"
+
+
+def test_wire_decode_failed_prefix_is_str_final() -> None:
+    """Typed ``Final[str]`` so a mypy-checked rebind is a typing
+    error, mirroring the rest of the wire-constant family."""
+    assert isinstance(WIRE_DECODE_FAILED_PREFIX, str)
+    # Module-level Final[str] — re-import asserts identity.
+    from dqlitewire import WIRE_DECODE_FAILED_PREFIX as again
+
+    assert again is WIRE_DECODE_FAILED_PREFIX

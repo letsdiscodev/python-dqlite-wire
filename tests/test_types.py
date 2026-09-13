@@ -1,15 +1,22 @@
-"""Tests for primitive type encoding/decoding."""
+"""Tests for primitive type encoding/decoding (ints, doubles, booleans, ISO8601, value dispatch)."""
 
+from __future__ import annotations
+
+import datetime
 import struct
 import sys
 from datetime import UTC
+from decimal import Decimal
+from fractions import Fraction
 
 import pytest
 
+from dqlitewire import types as types_mod
 from dqlitewire.constants import ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.limits import MAX_BLOB_SIZE
+from dqlitewire.messages.requests import OpenRequest
 from dqlitewire.types import (
-    _MAX_BLOB_SIZE,
     decode_blob,
     decode_double,
     decode_int64,
@@ -414,7 +421,7 @@ class TestBlob:
         """Crafted buffer claiming a length beyond the per-field cap must be
         rejected before the decoder allocates or does total-size arithmetic
         with the attacker-controlled length."""
-        oversized = _MAX_BLOB_SIZE + 1
+        oversized = MAX_BLOB_SIZE + 1
         data = encode_uint64(oversized)
         with pytest.raises(DecodeError, match="exceeds maximum"):
             decode_blob(data)
@@ -424,7 +431,7 @@ class TestBlob:
         what fires on a truncated buffer."""
         # Claim exactly the cap but provide a short buffer. The cap check
         # must pass; the later "not enough data" check is what rejects.
-        data = encode_uint64(_MAX_BLOB_SIZE) + b"\x00" * 8
+        data = encode_uint64(MAX_BLOB_SIZE) + b"\x00" * 8
         with pytest.raises(DecodeError, match="Not enough data for blob"):
             decode_blob(data)
 
@@ -432,7 +439,7 @@ class TestBlob:
         """encode_blob mirrors the decode cap so callers fail fast on an
         accidental giant bytes input instead of burning allocations."""
         with pytest.raises(EncodeError, match="exceeds maximum"):
-            encode_blob(b"\x00" * (_MAX_BLOB_SIZE + 1))
+            encode_blob(b"\x00" * (MAX_BLOB_SIZE + 1))
 
 
 class TestValue:
@@ -1125,3 +1132,447 @@ class TestWireTypeAliases:
         return_args = typing.get_args(hints["return"])
         assert return_args[0] is WireValue
         assert return_args[1] is int
+
+
+# ---- merged from test_boolean_encode_numeric_proxy_rejection.py ----
+# ``encode_value(..., BOOLEAN)`` rejects numeric proxies (numpy.int64,
+# Decimal, Fraction) that expose ``__int__``/``__index__`` but don't subclass
+# ``int``; accepting them would collapse the value through ``True``. Int
+# subclasses (IntEnum) are still admitted.
+
+
+class _NumericProxy:
+    """Stand-in for ``numpy.int64``: numeric dunders but not an ``int`` subclass."""
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+
+    def __int__(self) -> int:
+        return self._value
+
+    def __index__(self) -> int:
+        return self._value
+
+    def __bool__(self) -> bool:
+        return bool(self._value)
+
+    def __repr__(self) -> str:
+        return f"numpy.int64({self._value})"
+
+
+def test_boolean_rejects_numeric_proxy_zero() -> None:
+    """A proxy holding 0 passes ``value in (0, 1)`` via ``__eq__`` but is rejected."""
+    proxy = _NumericProxy(0)
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(proxy, ValueType.BOOLEAN)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    assert "Numeric proxies" in msg or "numeric prox" in msg.lower()
+    assert "int(x)" in msg or "bool(x)" in msg
+
+
+def test_boolean_rejects_numeric_proxy_one() -> None:
+    proxy = _NumericProxy(1)
+    with pytest.raises(EncodeError, match=r"BOOLEAN requires"):
+        encode_value(proxy, ValueType.BOOLEAN)  # type: ignore[arg-type]
+
+
+def test_boolean_rejects_decimal() -> None:
+    with pytest.raises(EncodeError, match=r"BOOLEAN requires"):
+        encode_value(Decimal(0), ValueType.BOOLEAN)  # type: ignore[arg-type]
+
+
+def test_boolean_rejects_fraction() -> None:
+    with pytest.raises(EncodeError, match=r"BOOLEAN requires"):
+        encode_value(Fraction(0, 1), ValueType.BOOLEAN)  # type: ignore[arg-type]
+
+
+def test_boolean_accepts_explicit_int_coercion_of_proxy() -> None:
+    """Coercing the proxy via ``int(x)`` yields a real int the escape hatch admits."""
+    proxy = _NumericProxy(0)
+    encoded, vtype = encode_value(int(proxy), ValueType.BOOLEAN)
+    assert vtype == ValueType.BOOLEAN
+    assert encoded == b"\x00" * 8
+
+
+def test_boolean_accepts_int_subclass_via_intenum() -> None:
+    """Int subclasses (``enum.IntEnum``) are admitted; rejection targets only proxies."""
+    import enum
+
+    class Flag(enum.IntEnum):
+        OFF = 0
+        ON = 1
+
+    encoded, vtype = encode_value(Flag.ON, ValueType.BOOLEAN)
+    assert vtype == ValueType.BOOLEAN
+
+
+# ---- merged from test_boolean_encode_strict_vs_c_bind.py ----
+# Intentional asymmetry vs. C ``bind.c::DQLITE_BOOLEAN``: encode rejects
+# non-``{0,1}`` ints (catching caller bugs), but decode reads any uint64 as
+# truthy. Decode->re-encode of an out-of-range raw BOOLEAN is lossy by design.
+
+
+def test_encode_boolean_rejects_arbitrary_int() -> None:
+    with pytest.raises(EncodeError, match=r"BOOLEAN requires"):
+        encode_value(5, ValueType.BOOLEAN)
+
+
+def test_decode_boolean_accepts_raw_5_as_truthy() -> None:
+    """A raw=5 BOOLEAN cell decodes to ``True`` (permissive, matching C)."""
+    cell = encode_uint64(5)
+    value, consumed = decode_value(cell, ValueType.BOOLEAN)
+    assert value is True
+    assert consumed == 8
+
+
+def test_round_trip_true_does_not_recover_raw_5() -> None:
+    """Re-encoding the decoded True writes raw 1, not the original 5 (lossy by design)."""
+    cell_raw5 = encode_uint64(5)
+    value, _ = decode_value(cell_raw5, ValueType.BOOLEAN)
+    assert value is True
+
+    re_encoded, _ = encode_value(value, ValueType.BOOLEAN)
+    assert re_encoded == encode_uint64(1)
+    assert re_encoded != cell_raw5
+
+
+# ---- merged from test_decode_uint64_label_kwarg.py ----
+# decode_uint64 accepts a label= kwarg that interpolates into the truncation diagnostic.
+
+
+def test_decode_uint64_default_label_preserves_historical_message() -> None:
+    with pytest.raises(DecodeError, match="Need 8 bytes for uint64, got 3"):
+        decode_uint64(b"abc")
+
+
+def test_decode_uint64_label_kwarg_appears_in_diagnostic() -> None:
+    with pytest.raises(DecodeError, match=r"Need 8 bytes for OpenRequest\.flags, got 3"):
+        decode_uint64(b"abc", label="OpenRequest.flags")
+
+
+def test_open_request_truncated_flags_diagnostic_names_field() -> None:
+    """Body decodes db name then truncates inside flags; error must name both class and field."""
+    from dqlitewire.types import encode_text
+
+    body = encode_text("test.db") + b"\x00\x00\x00"
+    with pytest.raises(DecodeError, match="OpenRequest.flags"):
+        OpenRequest.decode_body(body)
+
+
+# ---- merged from test_decode_value_dispatch_table.py ----
+# decode_value dispatches each ValueType to the correct decoder.
+
+
+@pytest.mark.parametrize(
+    "value_type, payload, expected_value, expected_consumed",
+    [
+        (ValueType.NULL, b"\x00" * 8, None, 8),
+        (ValueType.INTEGER, (42).to_bytes(8, "little", signed=True), 42, 8),
+        (ValueType.INTEGER, (-1).to_bytes(8, "little", signed=True), -1, 8),
+        (ValueType.UNIXTIME, (1_700_000_000).to_bytes(8, "little", signed=True), 1_700_000_000, 8),
+        (ValueType.BOOLEAN, (1).to_bytes(8, "little", signed=False), True, 8),
+        (ValueType.BOOLEAN, (0).to_bytes(8, "little", signed=False), False, 8),
+    ],
+)
+def test_decode_value_primitives_round_trip(
+    value_type: ValueType,
+    payload: bytes,
+    expected_value: object,
+    expected_consumed: int,
+) -> None:
+    value, consumed = types_mod.decode_value(payload, value_type)
+    assert value == expected_value
+    assert consumed == expected_consumed
+
+
+def test_decode_value_text_arm_uses_value_type_name_in_label() -> None:
+    """TEXT and ISO8601 share the arm forwarding value_type.name as the decode_text label."""
+    text = "hello"
+    encoded = types_mod.encode_text(text, label="TEXT", max_size=64)
+    value, _ = types_mod.decode_value(encoded, ValueType.TEXT)
+    assert value == text
+
+    iso = "2026-05-27T10:00:00"
+    encoded = types_mod.encode_text(iso, label="ISO8601", max_size=64)
+    value, _ = types_mod.decode_value(encoded, ValueType.ISO8601)
+    assert value == iso
+
+
+def test_decode_value_blob_arm_round_trips() -> None:
+    payload = b"\x01\x02\x03\x04"
+    encoded = types_mod.encode_blob(payload)
+    value, _ = types_mod.decode_value(encoded, ValueType.BLOB)
+    assert value == payload
+
+
+def test_decode_value_float_arm_round_trips() -> None:
+    encoded = types_mod.encode_double(1.5)
+    value, _ = types_mod.decode_value(encoded, ValueType.FLOAT)
+    assert value == 1.5
+
+
+def test_decode_value_rejects_unknown_type_code() -> None:
+    """A value_type code with no decoder entry surfaces as DecodeError("Unknown value type")."""
+
+    class _FakeType(int):
+        pass
+
+    # Type code 0 is unused in the enum.
+    fake = _FakeType(0)
+    with pytest.raises(DecodeError, match="Unknown value type"):
+        types_mod.decode_value(b"\x00" * 8, fake)  # type: ignore[arg-type]
+
+
+def test_decode_value_handles_text_errors_kwarg() -> None:
+    """The text_errors kwarg flows through to decode_text for both TEXT and ISO8601 arms."""
+    invalid_utf8 = b"\xff\x00" + b"\x00" * 6
+    with pytest.raises(DecodeError):
+        types_mod.decode_value(invalid_utf8, ValueType.TEXT, text_errors="strict")
+    value, _ = types_mod.decode_value(invalid_utf8, ValueType.TEXT, text_errors="replace")
+    assert isinstance(value, str)
+
+
+# ---- merged from test_decode_value_short_read_wording.py ----
+# decode_value short-read diagnostics name the wire type asked for, not the primitive.
+
+
+@pytest.mark.parametrize(
+    "value_type,expected_label",
+    [
+        (ValueType.INTEGER, "INTEGER cell"),
+        (ValueType.UNIXTIME, "UNIXTIME cell"),
+        (ValueType.FLOAT, "FLOAT cell"),
+        (ValueType.BOOLEAN, "BOOLEAN cell"),
+        (ValueType.NULL, "NULL cell"),
+    ],
+)
+def test_short_read_diagnostic_names_value_type(value_type: ValueType, expected_label: str) -> None:
+    with pytest.raises(DecodeError, match=f"Need 8 bytes for {expected_label}"):
+        decode_value(b"\x00\x00\x00\x00", value_type)
+
+
+# ---- merged from test_encode_double_rejects_bool.py ----
+# ``encode_double`` rejects ``bool`` rather than coercing ``True``/``False``
+# to ``1.0``/``0.0``, matching the other primitives' explicit bool guards.
+
+
+def test_encode_double_rejects_true() -> None:
+    with pytest.raises(EncodeError, match="bool"):
+        encode_double(True)
+
+
+def test_encode_double_rejects_false() -> None:
+    with pytest.raises(EncodeError, match="bool"):
+        encode_double(False)
+
+
+def test_encode_double_accepts_zero_and_finite_floats() -> None:
+    assert encode_double(0.0) == b"\x00\x00\x00\x00\x00\x00\x00\x00"
+    encoded = encode_double(1.5)
+    assert len(encoded) == 8
+
+
+def test_encode_double_rejects_bare_int() -> None:
+    """Bare ``int`` is rejected: ``struct.pack`` coercion drops bits past 2**53
+    and raises OverflowError past 2**1024. Callers must ``float(x)`` themselves."""
+    with pytest.raises(EncodeError, match="requires float"):
+        encode_double(5)
+
+
+def test_encode_double_rejects_numpy_bool_proxy() -> None:
+    """``numpy.bool_`` is not a ``bool`` subclass, so the bool guard misses it
+    and the float-subclass check is what rejects it. Proxy mirrors that shape."""
+
+    class FakeNpBool:
+        def __init__(self, v: bool) -> None:
+            self._v = v
+
+        def __float__(self) -> float:
+            return float(self._v)
+
+    with pytest.raises(EncodeError, match="requires float"):
+        encode_double(FakeNpBool(True))  # type: ignore[arg-type]
+
+
+def test_encode_double_accepts_nan_and_inf() -> None:
+    encode_double(float("nan"))
+    encode_double(float("inf"))
+    encode_double(float("-inf"))
+
+
+# ---- merged from test_encode_value_error_messages_bounded.py ----
+# encode_value rejection branches must bound the quoted value repr at
+# _MAX_VALUE_REPR so a hostile caller can't bake kilobytes into the error.
+
+
+def test_boolean_rejection_with_huge_int_is_bounded() -> None:
+    huge = 10**500
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(huge, ValueType.BOOLEAN)
+    msg = str(exc_info.value)
+    assert len(msg) < 400, f"BOOLEAN error message len {len(msg)} > 400"
+    assert "chars" in msg or "digits" in msg
+
+
+def test_null_rejection_with_huge_int_is_bounded() -> None:
+    huge = 10**500
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(huge, ValueType.NULL)
+    msg = str(exc_info.value)
+    assert len(msg) < 400, f"NULL error message len {len(msg)} > 400"
+    assert "chars" in msg or "digits" in msg
+
+
+def test_null_rejection_with_large_bytes_is_bounded() -> None:
+    payload = b"x" * 100_000
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(payload, ValueType.NULL)
+    msg = str(exc_info.value)
+    assert len(msg) < 400, f"NULL bytes error message len {len(msg)} > 400"
+
+
+def test_small_value_rejection_message_unchanged() -> None:
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(5, ValueType.BOOLEAN)
+    msg = str(exc_info.value)
+    assert "5" in msg
+    assert " chars]" not in msg
+
+
+# ---- merged from test_float_arm_delegates_to_encode_double.py ----
+# Pin: encode_value's FLOAT arm delegates float-subclass rejection to
+# encode_double (richer message), but keeps its own bool/int guards whose
+# wording is more specific than encode_double's generic reject.
+
+
+def test_float_arm_rejects_decimal_with_canonical_message() -> None:
+    """Decimal is a numeric proxy, not a float subclass: the FLOAT arm
+    delegates to encode_double's "cast with float(x)" message."""
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(Decimal("1.0"), ValueType.FLOAT)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    assert "encode_double requires float" in msg
+    assert "cast with float(x) explicitly" in msg
+
+
+def test_float_arm_rejects_fraction_with_canonical_message() -> None:
+    """Fraction is also a numeric proxy."""
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(Fraction(3, 2), ValueType.FLOAT)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    assert "encode_double requires float" in msg
+    assert "cast with float(x) explicitly" in msg
+
+
+def test_float_arm_still_rejects_bool_with_specific_message() -> None:
+    """The bool guard stays in the FLOAT arm for its specific wording."""
+    with pytest.raises(EncodeError, match=r"Expected float for FLOAT, got bool"):
+        encode_value(True, ValueType.FLOAT)
+
+
+def test_float_arm_still_rejects_int_with_precision_hint() -> None:
+    """The int guard stays — its message names the |x| >= 2**53
+    precision-loss boundary that encode_double's generic reject omits."""
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(42, ValueType.FLOAT)
+    msg = str(exc_info.value)
+    assert "Cannot encode int as FLOAT" in msg
+    assert "2**53" in msg
+
+
+def test_float_arm_accepts_float() -> None:
+    """Real floats encode normally."""
+    encoded, vtype = encode_value(1.5, ValueType.FLOAT)
+    assert vtype == ValueType.FLOAT
+    assert len(encoded) == 8
+
+
+# ---- merged from test_infer_value_type_date_hint_wording.py ----
+# Pin: ``_infer_value_type``'s rejection hint for unsupported types
+# must NOT suggest ``int (UNIXTIME)`` as a universal mapping. The
+# previous wording ("datetime/date/etc. must convert to str (ISO8601)
+# or int (UNIXTIME)") is wrong for ``datetime.date`` and
+# ``datetime.time``: dates have no time component, so
+# ``int(date.toordinal())`` or ``int(datetime.combine(...).timestamp())``
+# both silently produce garbage on UNIXTIME round-trip (consumer-side
+# ``datetime.utcfromtimestamp`` returns a year-0001 timestamp from a
+# proleptic Gregorian ordinal).
+#
+# The corrected wording must call out the per-type mapping explicitly:
+# datetime gets BOTH options (ISO8601 + UNIXTIME for aware datetimes),
+# date and time get ISO8601 ONLY.
+
+
+def test_date_rejection_hint_does_not_suggest_unixtime() -> None:
+    """``datetime.date`` has no defensible UNIXTIME mapping. The
+    rejection message must specifically call this out so a caller
+    cannot follow the hint into a silent ordinal-vs-epoch bug."""
+    d = datetime.date(2024, 1, 15)
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(d)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    # The hint must explicitly disclaim a UNIXTIME mapping for date.
+    assert "no UNIXTIME" in msg or "no time component" in msg
+    # And it must point to .isoformat() as the correct conversion.
+    assert ".isoformat()" in msg
+
+
+def test_datetime_rejection_hint_includes_both_options() -> None:
+    """For ``datetime.datetime``, both ISO8601 and UNIXTIME mappings
+    are documented."""
+    dt = datetime.datetime(2024, 1, 15, 12, 30)
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(dt)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    assert ".isoformat()" in msg
+    assert ".timestamp()" in msg or "UNIXTIME" in msg
+
+
+def test_time_rejection_hint_does_not_suggest_unixtime() -> None:
+    """``datetime.time`` also has no UNIXTIME mapping."""
+    t = datetime.time(12, 30)
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value(t)  # type: ignore[arg-type]
+    msg = str(exc_info.value)
+    assert ".isoformat()" in msg
+
+
+# ---- merged from test_iso8601_encode_format_validation.py ----
+# ``encode_value(.., ISO8601)`` validates via datetime/time.fromisoformat before emitting bytes.
+
+
+def test_iso8601_rejects_non_iso_string() -> None:
+    with pytest.raises(EncodeError) as exc_info:
+        encode_value("not-an-iso-date", ValueType.ISO8601)
+    msg = str(exc_info.value)
+    assert "ISO8601" in msg
+    assert "TEXT" in msg or ".isoformat()" in msg
+
+
+def test_iso8601_accepts_full_datetime() -> None:
+    encoded, vtype = encode_value("2024-01-15T12:30:45", ValueType.ISO8601)
+    assert vtype == ValueType.ISO8601
+    assert len(encoded) > 0
+
+
+def test_iso8601_accepts_date_only() -> None:
+    encoded, vtype = encode_value("2024-01-15", ValueType.ISO8601)
+    assert vtype == ValueType.ISO8601
+
+
+def test_iso8601_accepts_bare_time_via_fallback() -> None:
+    """A bare time fails datetime.fromisoformat but passes time.fromisoformat."""
+    encoded, vtype = encode_value("12:30:45", ValueType.ISO8601)
+    assert vtype == ValueType.ISO8601
+
+
+def test_iso8601_accepts_aware_datetime() -> None:
+    encoded, vtype = encode_value("2024-01-15T12:30:45+00:00", ValueType.ISO8601)
+    assert vtype == ValueType.ISO8601
+
+
+def test_text_with_non_iso_string_still_succeeds() -> None:
+    """Validation applies only to ISO8601, not plain TEXT."""
+    encoded, vtype = encode_value("not-an-iso-date", ValueType.TEXT)
+    assert vtype == ValueType.TEXT
+    assert len(encoded) > 0

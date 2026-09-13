@@ -1,10 +1,17 @@
 """Tests for request message encoding/decoding."""
 
+from __future__ import annotations
+
+import dataclasses
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 
-from dqlitewire.constants import HEADER_SIZE, RequestType
-from dqlitewire.exceptions import DecodeError
-from dqlitewire.messages.base import Header
+from dqlitewire.constants import HEADER_SIZE, NodeRole, RequestType
+from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.limits import MAX_DUMP_FILENAME_SIZE
+from dqlitewire.messages.base import Header, Message
 from dqlitewire.messages.requests import (
     AddRequest,
     AssignRequest,
@@ -205,16 +212,16 @@ class TestPrepareRequest:
     def test_encode_body_caps_sql_at_decode_max_size(self) -> None:
         """Pin: encode/decode round-trip is symmetric on the SQL
         text field. ``encode_text`` accepts any byte length the outer
-        frame admits; ``decode_text`` defaults to ``_MAX_TEXT_VALUE_SIZE``.
+        frame admits; ``decode_text`` defaults to ``MAX_TEXT_VALUE_SIZE``.
         Without an explicit ``max_size`` on encode the outbound body
         could be larger than the inbound decoder accepts. Pin the
         rejection."""
         import pytest
 
         from dqlitewire.exceptions import EncodeError
-        from dqlitewire.types import _MAX_TEXT_VALUE_SIZE
+        from dqlitewire.limits import MAX_TEXT_VALUE_SIZE
 
-        oversize = "x" * (_MAX_TEXT_VALUE_SIZE + 1)
+        oversize = "x" * (MAX_TEXT_VALUE_SIZE + 1)
         with pytest.raises(EncodeError):
             PrepareRequest(db_id=1, sql=oversize).encode_body()
 
@@ -893,9 +900,7 @@ class TestParamsBodySchemaRoundtrip:
         decoded = decode_message(original_bytes, is_request=True)
         assert isinstance(decoded, cls)
         # ``cls`` is a TypeVar holding one of two request types; both
-        # have ``params`` at runtime but mypy can't follow the
-        # type-narrowing through a ``cls`` variable.
-        assert list(decoded.params) == list(original.params)  # type: ignore[attr-defined]
+        assert list(decoded.params) == list(original.params)
 
         re_encoded = encode_message(decoded)
         assert re_encoded == original_bytes
@@ -917,10 +922,8 @@ class TestParamsBodySchemaRoundtrip:
 
         decoded = decode_message(original_bytes, is_request=True)
         assert isinstance(decoded, cls)
-        # See sibling ``test_schema_1_small_params_roundtrip``: the
-        # cls-keyed isinstance narrows runtime but not mypy.
-        assert list(decoded.params) == list(original.params)  # type: ignore[attr-defined]
-        assert decoded.sql == "SELECT 1"  # type: ignore[attr-defined]
+        assert list(decoded.params) == list(original.params)
+        assert decoded.sql == "SELECT 1"
 
         re_encoded = encode_message(decoded)
         assert re_encoded == original_bytes
@@ -1016,19 +1019,19 @@ class TestDecodedSchemaConstructionValidation:
     )
     def test_rejects_schema_1_with_more_than_max_param_count(self, cls_name: str) -> None:
         """Mirror the V0 schema's construction-time cap: V1 schema with
-        more than ``_MAX_PARAM_COUNT`` (32766) params must reject at
+        more than ``MAX_PARAM_COUNT`` (32766) params must reject at
         construction with an actionable EncodeError naming the field,
         not surface deep inside ``encode_params_tuple`` at first
         encode. Pre-fix, a 40k-param V1-schema request constructed
         successfully and only failed inside the tuple encoder."""
         import dqlitewire.messages as m
-        from dqlitewire.tuples import _MAX_PARAM_COUNT
+        from dqlitewire.limits import MAX_PARAM_COUNT
 
         cls = getattr(m, cls_name)
         kwargs: dict[str, object] = {
             "db_id": 1,
             "_decoded_schema": 1,
-            "params": [None] * (_MAX_PARAM_COUNT + 1),
+            "params": [None] * (MAX_PARAM_COUNT + 1),
         }
         if cls_name in ("ExecRequest", "QueryRequest"):
             kwargs["stmt_id"] = 1
@@ -1082,3 +1085,608 @@ class TestDecodeBodySchemaGuard:
         body = encode_text("main") + b"\x01\x00\x00\x00\x00\x00\x00\x00" + encode_text("")
         with pytest.raises(DecodeError, match="OpenRequest unsupported schema"):
             OpenRequest.decode_body(body, schema=2)
+
+
+# ---- merged from test_admin_request_byte_identity.py ----
+# Admin-request encoders are byte-identity round-trippable; field-equality
+# round-trips miss encoder/decoder asymmetries (e.g. spurious padding).
+
+# Lambdas wrap constructors so parametrise IDs stay stable across pytest
+# versions (dataclass __repr__ changes would otherwise leak into the ID).
+_CASES: list[tuple[str, Callable[[], Message]]] = [
+    ("FinalizeRequest-min", lambda: FinalizeRequest(db_id=0, stmt_id=0)),
+    ("FinalizeRequest-max", lambda: FinalizeRequest(db_id=0xFFFFFFFF, stmt_id=0xFFFFFFFF)),
+    ("InterruptRequest-min", lambda: InterruptRequest(db_id=0)),
+    ("InterruptRequest-max", lambda: InterruptRequest(db_id=0xFFFFFFFFFFFFFFFF)),
+    ("AddRequest-empty-addr", lambda: AddRequest(node_id=1, address="")),
+    ("AddRequest-1char", lambda: AddRequest(node_id=1, address="a")),
+    ("AddRequest-7char-exact-word", lambda: AddRequest(node_id=1, address="a" * 7)),
+    ("AddRequest-8char-forces-pad", lambda: AddRequest(node_id=1, address="a" * 8)),
+    ("AddRequest-15char", lambda: AddRequest(node_id=1, address="a" * 15)),
+    ("AddRequest-large", lambda: AddRequest(node_id=1, address="a" * 200)),
+    ("AssignRequest-voter", lambda: AssignRequest(node_id=1, role=NodeRole.VOTER)),
+    ("AssignRequest-standby", lambda: AssignRequest(node_id=1, role=NodeRole.STANDBY)),
+    ("AssignRequest-spare", lambda: AssignRequest(node_id=1, role=NodeRole.SPARE)),
+    ("AssignRequest-id0-voter", lambda: AssignRequest(node_id=0, role=NodeRole.VOTER)),
+    (
+        "AssignRequest-id-max",
+        lambda: AssignRequest(node_id=0xFFFFFFFFFFFFFFFF, role=NodeRole.VOTER),
+    ),
+    ("RemoveRequest-min", lambda: RemoveRequest(node_id=0)),
+    ("RemoveRequest-max", lambda: RemoveRequest(node_id=0xFFFFFFFFFFFFFFFF)),
+    ("DumpRequest-empty", lambda: DumpRequest(name="")),
+    ("DumpRequest-1char", lambda: DumpRequest(name="x")),
+    ("DumpRequest-7char", lambda: DumpRequest(name="x" * 7)),
+    ("DumpRequest-8char", lambda: DumpRequest(name="x" * 8)),
+    ("DumpRequest-utf8", lambda: DumpRequest(name="café-db")),
+    ("ClusterRequest-v1", lambda: ClusterRequest(format=1)),
+    ("TransferRequest-min", lambda: TransferRequest(target_node_id=0)),
+    ("TransferRequest-max", lambda: TransferRequest(target_node_id=0xFFFFFFFFFFFFFFFF)),
+    ("DescribeRequest-v0", lambda: DescribeRequest(format=0)),
+    ("WeightRequest-min", lambda: WeightRequest(weight=0)),
+    ("WeightRequest-max", lambda: WeightRequest(weight=0xFFFFFFFFFFFFFFFF)),
+]
+
+
+@pytest.mark.parametrize(("label", "constructor"), _CASES, ids=[c[0] for c in _CASES])
+def test_admin_request_encode_decode_reencode_byte_identical(
+    label: str, constructor: Callable[[], Message]
+) -> None:
+    """Encode → decode → re-encode must produce identical bytes."""
+    msg = constructor()
+    encoded_1 = msg.encode()
+    cls = type(msg)
+    decoded = cls.decode_body(encoded_1[HEADER_SIZE:])
+    encoded_2 = decoded.encode()
+    assert encoded_1 == encoded_2, (
+        f"{cls.__name__} ({label}) encode → decode → re-encode "
+        f"is not byte-identical: {encoded_1.hex()} != {encoded_2.hex()}"
+    )
+
+
+def test_assign_request_legacy_shape_byte_identical_via_encode_body_legacy() -> None:
+    """Byte-identity for the legacy 8-byte PROMOTE AssignRequest shape."""
+    legacy_body = (42).to_bytes(8, "little")
+    decoded = AssignRequest.decode_body(legacy_body)
+    reencoded = decoded.encode_body_legacy()
+    assert legacy_body == reencoded
+
+
+# ---- merged from test_admin_request_schema_validation.py ----
+# Admin-request decoders reject a non-zero schema kwarg on the direct-caller
+# path (the wire dispatcher already gates schema before decode_body). Mirrors
+# upstream C's INIT_V0 macro (gateway.c) rejecting req->schema != 0.
+
+# Each body is a valid V0 frame so the only thing causing a decode failure
+# is the schema kwarg; the schema gate must fire before length/content checks.
+_ADMIN_CASES = [
+    (LeaderRequest, encode_uint64(0)),
+    (ClientRequest, encode_uint64(0)),
+    (_HeartbeatRequest, encode_uint64(0)),
+    (OpenRequest, encode_text("db") + encode_uint64(0) + encode_text("vfs")),
+    (FinalizeRequest, encode_uint32(0) + encode_uint32(0)),
+    (InterruptRequest, encode_uint64(0)),
+    (_ConnectRequest, encode_uint64(1) + encode_text("a:1")),
+    (AddRequest, encode_uint64(1) + encode_text("a:1")),
+    (AssignRequest, encode_uint64(1) + encode_uint64(0)),
+    (RemoveRequest, encode_uint64(1)),
+    (DumpRequest, encode_text("db")),
+    (ClusterRequest, encode_uint64(1)),
+    (TransferRequest, encode_uint64(1)),
+    (DescribeRequest, encode_uint64(0)),
+    (WeightRequest, encode_uint64(0)),
+]
+
+
+@pytest.mark.parametrize(("cls", "body"), _ADMIN_CASES, ids=[c.__name__ for c, _ in _ADMIN_CASES])
+def test_admin_decoder_rejects_nonzero_schema(cls: Any, body: bytes) -> None:
+    with pytest.raises(DecodeError, match="unsupported schema version"):
+        cls.decode_body(body, schema=1)
+
+
+@pytest.mark.parametrize(("cls", "body"), _ADMIN_CASES, ids=[c.__name__ for c, _ in _ADMIN_CASES])
+def test_admin_decoder_rejects_garbage_schema(cls: Any, body: bytes) -> None:
+    with pytest.raises(DecodeError, match="unsupported schema version"):
+        cls.decode_body(body, schema=99)
+
+
+@pytest.mark.parametrize(("cls", "body"), _ADMIN_CASES, ids=[c.__name__ for c, _ in _ADMIN_CASES])
+def test_admin_decoder_accepts_default_schema(cls: Any, body: bytes) -> None:
+    cls.decode_body(body)
+    cls.decode_body(body, schema=0)
+
+
+# ---- merged from test_assign_request_docstring_and_construction.py ----
+# AssignRequest docstring records the deliberate divergence from C's
+# silent-fold-to-VOTER for unknown roles (we reject so future role codes
+# aren't masked in mixed-version rollouts), plus a frozen=True tripwire on
+# the post-init role coercion.
+
+
+def test_assign_request_raw_int_role_coerces_to_nodeRole_and_equates() -> None:
+    """Tripwire for a frozen=True flip: post-init role coercion must succeed."""
+    msg = AssignRequest(node_id=1, role=0)
+    assert msg.role is NodeRole.VOTER
+    assert msg == AssignRequest(node_id=1, role=NodeRole.VOTER)
+
+
+# ---- merged from test_assign_request_role_none_construction_check.py ----
+# AssignRequest rejects bare role=None at construction (failing early, not
+# at encode time) unless the _legacy_intent=True sentinel is set.
+
+
+def test_assign_request_bare_construction_rejects_role_none() -> None:
+    """Bare AssignRequest(node_id=42) must fail at construction, not encode."""
+    with pytest.raises(EncodeError, match="role"):
+        AssignRequest(node_id=42)
+
+
+def test_assign_request_role_none_with_legacy_intent_constructs() -> None:
+    """_legacy_intent=True opts into the legacy PROMOTE body with role=None."""
+    msg = AssignRequest(node_id=42, role=None, _legacy_intent=True)
+    assert msg.role is None
+    assert msg.encode_body_legacy() == encode_uint64(42)
+
+
+def test_assign_request_legacy_intent_does_not_compare_or_repr() -> None:
+    """The sentinel field must not appear in equality or repr."""
+    bare = AssignRequest(node_id=42, role=None, _legacy_intent=True)
+    other = AssignRequest(node_id=42, role=None, _legacy_intent=True)
+    assert bare == other
+    assert "_legacy_intent" not in repr(bare)
+
+
+# ---- merged from test_assignrequest_legacy_docstring.py ----
+# AssignRequest.encode_body_legacy docstring must not claim parity with
+# LeaderResponse.encode_body_legacy: the sibling rejects information loss,
+# but this one silently drops role (legacy PROMOTE has no role field).
+
+
+def test_assignrequest_legacy_silently_drops_role_behaviour() -> None:
+    """Legacy encoder is information-lossy: role=SPARE and role=None encode
+    to the same 8-byte body."""
+    from dqlitewire.constants import NodeRole
+
+    req_with_role = AssignRequest(node_id=42, role=NodeRole.SPARE)
+    req_no_role = AssignRequest(node_id=42, role=None, _legacy_intent=True)
+    assert req_with_role.encode_body_legacy() == req_no_role.encode_body_legacy()
+    assert len(req_with_role.encode_body_legacy()) == 8
+
+
+# ---- merged from test_cluster_request_decoded_v0_round_trip.py ----
+# A V0 (``format=0``) ``ClusterRequest`` obtained via ``decode_body`` re-encodes
+# byte-identically (the ``_decoded=True`` sentinel), but a fresh ``ClusterRequest(format=0)``
+# is still rejected at construction.
+
+
+def test_cluster_request_v0_decoded_round_trips_byte_identical() -> None:
+    body = bytes(8)
+    req = ClusterRequest.decode_body(body)
+    assert req.format == 0
+    assert req.encode_body() == body
+
+
+def test_cluster_request_v1_round_trip_unchanged() -> None:
+    body = b"\x01" + b"\x00" * 7
+    req = ClusterRequest.decode_body(body)
+    assert req.format == 1
+    assert req.encode_body() == body
+
+
+def test_cluster_request_fresh_v0_still_rejected_at_construction() -> None:
+    with pytest.raises(EncodeError, match="V0"):
+        ClusterRequest(format=0)
+
+
+# ---- merged from test_clusterrequest_decode_no_new_bypass.py ----
+# ``ClusterRequest.decode_body`` constructs via the dataclass __init__
+# (``_decoded=True`` kwarg); a V0 request round-trips through that path.
+
+
+def test_cluster_request_decode_v0_constructor_kwarg_path() -> None:
+    """A V0 request constructs directly via ``_decoded=True`` — the decoder's path."""
+    req = ClusterRequest(format=0, _decoded=True)
+    assert req.format == 0
+    decoded = ClusterRequest.decode_body(b"\x00" * 8)
+    assert req == decoded
+
+
+# ---- merged from test_clusterrequest_decoded_field.py ----
+# ``ClusterRequest._decoded`` is a declared dataclass field (repr=False,
+# compare=False), not a runtime attribute, and survives ``dataclasses.replace``.
+
+
+def test_clusterrequest_decoded_does_not_appear_in_vars() -> None:
+    req = ClusterRequest.decode_body(b"\x00" * 8)
+    assert req.format == 0
+    instance_vars = vars(req)
+    assert "_decoded" not in instance_vars or instance_vars.get("_decoded") is True
+    # Equality ignores _decoded (compare=False).
+    v1_request = ClusterRequest(format=1)
+    v0_decoded = ClusterRequest.decode_body(b"\x00" * 8)
+    assert v0_decoded == ClusterRequest.decode_body(b"\x00" * 8)
+    assert v0_decoded != v1_request
+
+
+def test_clusterrequest_dataclasses_replace_v0_preserves_decoded_sentinel() -> None:
+    """``dataclasses.replace`` of a V0-decoded request preserves ``_decoded``,
+    so the V0 gate short-circuits on the copy (ExecRequest._decoded_schema parity)."""
+    req = ClusterRequest.decode_body(b"\x00" * 8)
+    replaced = dataclasses.replace(req)
+    assert replaced.format == 0
+    assert replaced == req
+    # Explicitly clearing the sentinel re-triggers the construction-time V0 gate.
+    with pytest.raises(EncodeError, match="V0"):
+        dataclasses.replace(req, _decoded=False)
+
+
+def test_clusterrequest_v0_via_public_constructor_still_rejected() -> None:
+    """Only the decoder bypass accepts V0; the public constructor still rejects it."""
+    with pytest.raises(EncodeError, match="V0"):
+        ClusterRequest(format=0)
+
+
+def test_clusterrequest_repr_does_not_leak_decoded() -> None:
+    """``_decoded`` is repr=False, so a decoded V0 request prints like a V1."""
+    req = ClusterRequest.decode_body(b"\x00" * 8)
+    assert "_decoded" not in repr(req)
+
+
+# ---- merged from test_describe_request_decoded_non_zero_format.py ----
+# ``DescribeRequest.decode_body`` admits non-zero format only under
+# ``strict=False`` (for proxy/replay/fuzz tools); the default stays strict.
+
+
+def test_describe_request_default_strict_rejects_non_zero_format() -> None:
+    with pytest.raises(DecodeError, match="format must be 0"):
+        DescribeRequest.decode_body(encode_uint64(1))
+
+
+def test_describe_request_strict_false_admits_non_zero_format() -> None:
+    msg = DescribeRequest.decode_body(encode_uint64(1), strict=False)
+    assert msg.format == 1
+
+
+def test_describe_request_fresh_construct_non_zero_still_rejected() -> None:
+    """The strict=False escape is decode-only; outbound emission still fails."""
+    with pytest.raises(EncodeError, match="format must be 0"):
+        DescribeRequest(format=1)
+
+
+def test_describe_request_zero_format_round_trip_unchanged() -> None:
+    msg = DescribeRequest.decode_body(encode_uint64(0))
+    assert msg.format == 0
+    assert msg.encode_body() == encode_uint64(0)
+
+
+# ---- merged from test_dump_request_filename_c_server_cap.py ----
+# ``DumpRequest.name`` is capped at the C gateway's WAL filename ceiling
+# (1019 = 1024-byte buffer - len("-wal") - NUL). A longer name encodes valid
+# wire bytes but the C side silently truncates the WAL filename, returning a
+# ``FilesResponse`` whose ``-wal`` entry mismatches the main entry (silent dump
+# corruption); reject it at the Python wire boundary instead.
+
+
+def test_dump_request_filename_at_c_server_ceiling_accepted() -> None:
+    """Exactly the C ceiling (1019 bytes) must encode cleanly."""
+    name = "a" * MAX_DUMP_FILENAME_SIZE
+    body = DumpRequest(name).encode_body()
+    decoded = DumpRequest.decode_body(body)
+    assert decoded.name == name
+
+
+def test_dump_request_filename_one_past_c_server_ceiling_rejected() -> None:
+    """One byte past the ceiling (the WAL truncation boundary) must raise."""
+    name = "a" * (MAX_DUMP_FILENAME_SIZE + 1)
+    with pytest.raises(EncodeError):
+        DumpRequest(name).encode_body()
+
+
+def test_dump_request_decoder_rejects_oversize_peer_request() -> None:
+    """Decode side must also reject an oversize peer-supplied name, keeping the
+    wire-symmetric contract against a misbehaving or pre-fix peer."""
+    from dqlitewire.types import encode_text
+
+    # Synthesise a body via the lax 4 KiB encoder cap to bypass DumpRequest's
+    # own cap; decode_body must still refuse it.
+    oversize_name = "a" * (MAX_DUMP_FILENAME_SIZE + 1)
+    bogus_body = encode_text(oversize_name, max_size=4096, label="database name")
+    with pytest.raises(DecodeError):
+        DumpRequest.decode_body(bogus_body)
+
+
+def test_dump_request_pre_fix_4kib_no_longer_accepted() -> None:
+    """Regression against the pre-fix 4 KiB cap: a 2 KiB name must now refuse."""
+    name = "a" * 2048
+    with pytest.raises(EncodeError):
+        DumpRequest(name).encode_body()
+
+
+# ---- merged from test_sql_requests_sql_type_validation.py ----
+# Pin: ``PrepareRequest`` / ``ExecSqlRequest`` / ``QuerySqlRequest``
+# reject non-``str`` ``sql`` at construction (``EncodeError``) rather
+# than at ``encode_body()``. Plus: the encoded label diagnostics name
+# the field ("SQL") rather than the generic "Text".
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [PrepareRequest, ExecSqlRequest, QuerySqlRequest],
+)
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        b"SELECT 1",  # bytes
+        123,  # int
+        None,  # None
+        memoryview(b"SELECT 1"),  # memoryview
+    ],
+)
+def test_sql_field_must_be_str_at_construction(cls: type, bad_value: object) -> None:
+    with pytest.raises(EncodeError, match="sql must be str"):
+        cls(db_id=0, sql=bad_value)
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [PrepareRequest, ExecSqlRequest, QuerySqlRequest],
+)
+def test_sql_encode_oversize_error_names_field(cls: type) -> None:
+    """Encode-side cap diagnostics carry the ``SQL`` label so an
+    operator triaging a wire capture knows which field overflowed
+    without walking the traceback."""
+    from dqlitewire.limits import MAX_TEXT_VALUE_SIZE
+
+    huge_sql = "X" * (MAX_TEXT_VALUE_SIZE + 1)
+    req = cls(db_id=0, sql=huge_sql)
+    with pytest.raises(EncodeError, match="SQL"):
+        req.encode_body()
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [PrepareRequest, ExecSqlRequest, QuerySqlRequest],
+)
+def test_sql_decode_oversize_error_names_field(cls: type) -> None:
+    """Decode-side cap diagnostics carry the ``SQL`` label, symmetric
+    with the encode side, so an operator reading a wire capture's
+    ``DecodeError`` sees which field overflowed without walking the
+    traceback. Regression-resistant against a refactor that drops
+    ``label="SQL"`` (or default-restores ``max_size``) on the decode
+    side — that change would be silent today (only encode-side has
+    a pin)."""
+    from dqlitewire.limits import MAX_TEXT_VALUE_SIZE
+
+    # Body shape: uint64 db_id + text payload (NUL-terminated, padded
+    # to 8-byte boundary). Build a payload longer than the cap that
+    # still contains a NUL at the end so the decoder hits the
+    # size-cap branch (not the unterminated branch).
+    db_id_bytes = (0).to_bytes(8, "little")
+    huge_text = b"X" * (MAX_TEXT_VALUE_SIZE + 8)
+    payload = huge_text + b"\x00"
+    pad = (-len(payload)) % 8
+    body = db_id_bytes + payload + b"\x00" * pad
+
+    with pytest.raises(DecodeError, match="SQL"):
+        cls.decode_body(body)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [PrepareRequest, ExecSqlRequest, QuerySqlRequest],
+)
+def test_sql_decode_unterminated_error_names_field(cls: type) -> None:
+    """Decode-side null-termination diagnostic also carries the SQL
+    label so a truncated payload's error message is field-specific
+    rather than the generic ``"Text not null-terminated"``."""
+    db_id_bytes = (0).to_bytes(8, "little")
+    sql_bytes = b"SELECT 1 FROM t"
+    pad = (-len(db_id_bytes + sql_bytes)) % 8
+    body = db_id_bytes + sql_bytes + b"Y" * pad  # no NUL anywhere
+
+    with pytest.raises(DecodeError, match="SQL"):
+        cls.decode_body(body)  # type: ignore[attr-defined]
+
+
+# ---- merged from test_empty_params_roundtrip_byte_identity.py ----
+# A foreign-encoded request with EMPTY ``params`` must round-trip
+# byte-identically for both valid wire shapes: Go-style (no tuple bytes, body 8
+# bytes) and C-style (explicit 8-byte zero header, body 16 bytes). The
+# ``_decoded_empty_header`` field records which shape the input carried so the
+# encoder re-emits the same one.
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+@pytest.mark.parametrize("RequestCls", [ExecRequest, QueryRequest])
+def test_empty_params_go_style_roundtrip_byte_identical(
+    schema: int, RequestCls: type[ExecRequest] | type[QueryRequest]
+) -> None:
+    """A Go-encoded EXEC/QUERY with empty params (8 bytes) must not gain a fake
+    8-byte empty-params header on re-encode."""
+    data = (1).to_bytes(4, "little") + (2).to_bytes(4, "little")
+    req = RequestCls.decode_body(data, schema=schema)
+    assert list(req.params) == []
+    assert req.encode_body() == data, (
+        f"Go-style empty-params {RequestCls.__name__} (schema={schema}) "
+        f"round-trip is not byte-identical: got {len(req.encode_body())} bytes, "
+        f"expected {len(data)}"
+    )
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+@pytest.mark.parametrize("RequestCls", [ExecRequest, QueryRequest])
+def test_empty_params_c_style_roundtrip_byte_identical(
+    schema: int, RequestCls: type[ExecRequest] | type[QueryRequest]
+) -> None:
+    """A C-encoded EXEC/QUERY with empty params (16 bytes) must keep the
+    explicit zero header on re-encode."""
+    data = (1).to_bytes(4, "little") + (2).to_bytes(4, "little") + b"\x00" * 8
+    req = RequestCls.decode_body(data, schema=schema)
+    assert list(req.params) == []
+    assert req.encode_body() == data
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+@pytest.mark.parametrize("RequestCls", [ExecSqlRequest, QuerySqlRequest])
+def test_sql_empty_params_go_style_roundtrip_byte_identical(
+    schema: int,
+    RequestCls: type[ExecSqlRequest] | type[QuerySqlRequest],
+) -> None:
+    # SQL "x" + NUL = 2 bytes, padded to an 8-byte word; no params bytes.
+    sql_bytes = b"x\x00" + b"\x00" * 6
+    data = (1).to_bytes(8, "little") + sql_bytes
+    req = RequestCls.decode_body(data, schema=schema)
+    assert list(req.params) == []
+    assert req.sql == "x"
+    assert req.encode_body() == data
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+@pytest.mark.parametrize("RequestCls", [ExecSqlRequest, QuerySqlRequest])
+def test_sql_empty_params_c_style_roundtrip_byte_identical(
+    schema: int,
+    RequestCls: type[ExecSqlRequest] | type[QuerySqlRequest],
+) -> None:
+    sql_bytes = b"x\x00" + b"\x00" * 6
+    data = (1).to_bytes(8, "little") + sql_bytes + b"\x00" * 8
+    req = RequestCls.decode_body(data, schema=schema)
+    assert list(req.params) == []
+    assert req.sql == "x"
+    assert req.encode_body() == data
+
+
+def test_caller_originated_empty_params_emits_go_style() -> None:
+    """A caller-constructed request (no decode) defaults to the Go-style
+    omission via ``_decoded_empty_header=None``."""
+    req = ExecRequest(db_id=1, stmt_id=2, params=[])
+    body = req.encode_body()
+    assert len(body) == 8
+    assert body == (1).to_bytes(4, "little") + (2).to_bytes(4, "little")
+
+
+# ---- merged from test_decoded_schema_empty_params_byte_identity.py ----
+# _decoded_schema hint gives byte-identical re-emission of foreign-encoded empty-params bodies.
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+def test_exec_request_empty_params_byte_identical(schema: int) -> None:
+    db_id, stmt_id = 1, 2
+    body = db_id.to_bytes(4, "little") + stmt_id.to_bytes(4, "little") + b"\x00" * 8
+    req = ExecRequest.decode_body(body, schema=schema)
+    assert req.params == []
+    assert req._decoded_schema == schema
+    assert req.encode_body() == body, "round-trip not byte-identical"
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+def test_query_request_empty_params_byte_identical(schema: int) -> None:
+    db_id, stmt_id = 1, 2
+    body = db_id.to_bytes(4, "little") + stmt_id.to_bytes(4, "little") + b"\x00" * 8
+    req = QueryRequest.decode_body(body, schema=schema)
+    assert req.params == []
+    assert req._decoded_schema == schema
+    assert req.encode_body() == body
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+def test_exec_sql_request_empty_params_byte_identical(schema: int) -> None:
+    """ExecSqlRequest body: db_id (8) + sql (text + padding) + params."""
+    db_id = 1
+    from dqlitewire.types import encode_text
+
+    body = db_id.to_bytes(8, "little") + encode_text("SELECT 1") + b"\x00" * 8
+    req = ExecSqlRequest.decode_body(body, schema=schema)
+    assert req.params == []
+    assert req._decoded_schema == schema
+    assert req.encode_body() == body
+
+
+@pytest.mark.parametrize("schema", [0, 1])
+def test_query_sql_request_empty_params_byte_identical(schema: int) -> None:
+    from dqlitewire.types import encode_text
+
+    db_id = 1
+    body = db_id.to_bytes(8, "little") + encode_text("SELECT 1") + b"\x00" * 8
+    req = QuerySqlRequest.decode_body(body, schema=schema)
+    assert req.params == []
+    assert req._decoded_schema == schema
+    assert req.encode_body() == body
+
+
+def test_self_originated_empty_params_still_zero_bytes() -> None:
+    """Self-originated requests (no _decoded_schema hint) keep the Go-style 0-byte empty-params."""
+    req = ExecRequest(db_id=1, stmt_id=2, params=[])
+    assert req._decoded_schema is None
+    encoded = req.encode_body()
+    assert len(encoded) == 8
+
+
+# ---- merged from test_decoded_empty_header_field_validator.py ----
+# _decoded_empty_header is validated at construction to match its wire-byte semantics.
+
+
+@pytest.mark.parametrize(
+    "RequestCls,kwargs",
+    [
+        (ExecRequest, {"db_id": 1, "stmt_id": 2}),
+        (QueryRequest, {"db_id": 1, "stmt_id": 2}),
+        (ExecSqlRequest, {"db_id": 1, "sql": "x"}),
+        (QuerySqlRequest, {"db_id": 1, "sql": "x"}),
+    ],
+)
+def test_decoded_empty_header_true_with_non_empty_params_rejected(
+    RequestCls: type, kwargs: dict[str, object]
+) -> None:
+    """_decoded_empty_header=True only makes sense with empty params; bad combos rejected."""
+    with pytest.raises(EncodeError, match="_decoded_empty_header"):
+        RequestCls(**kwargs, params=[42], _decoded_empty_header=True)
+
+
+@pytest.mark.parametrize(
+    "RequestCls,kwargs",
+    [
+        (ExecRequest, {"db_id": 1, "stmt_id": 2}),
+        (QueryRequest, {"db_id": 1, "stmt_id": 2}),
+        (ExecSqlRequest, {"db_id": 1, "sql": "x"}),
+        (QuerySqlRequest, {"db_id": 1, "sql": "x"}),
+    ],
+)
+def test_decoded_empty_header_true_with_empty_params_accepted(
+    RequestCls: type, kwargs: dict[str, object]
+) -> None:
+    """Legitimate use: params=[] AND _decoded_empty_header=True (round-trip a C-style frame)."""
+    req = RequestCls(**kwargs, params=[], _decoded_empty_header=True)
+    assert req._decoded_empty_header is True
+
+
+@pytest.mark.parametrize(
+    "RequestCls,kwargs",
+    [
+        (ExecRequest, {"db_id": 1, "stmt_id": 2}),
+        (QueryRequest, {"db_id": 1, "stmt_id": 2}),
+    ],
+)
+def test_decoded_empty_header_false_with_non_empty_params_accepted(
+    RequestCls: type, kwargs: dict[str, object]
+) -> None:
+    """False ("decoded a Go-style frame") is admissible with any param count."""
+    req = RequestCls(**kwargs, params=[42, 43], _decoded_empty_header=False)
+    assert req._decoded_empty_header is False
+
+
+def test_caller_originated_default_is_none() -> None:
+    """None is the caller-originated default; False would lose the decoded-vs-never bit."""
+    req = ExecRequest(db_id=1, stmt_id=2)
+    assert req._decoded_empty_header is None
+
+
+@pytest.mark.parametrize("bad_value", [1, 0, "yes", "", object(), [], (1,)])
+def test_decoded_empty_header_non_bool_rejected(bad_value: object) -> None:
+    """Reject non-bool/non-None inputs: else bool() at encode time promotes truthy values."""
+    with pytest.raises(EncodeError, match="_decoded_empty_header must be None or bool"):
+        ExecRequest(db_id=1, stmt_id=2, params=[], _decoded_empty_header=bad_value)  # type: ignore[arg-type]
+
+
+def test_decoded_empty_header_none_accepted_explicitly() -> None:
+    req = ExecRequest(db_id=1, stmt_id=2, params=[], _decoded_empty_header=None)
+    assert req._decoded_empty_header is None

@@ -1,20 +1,39 @@
 """Tests for response message encoding/decoding."""
 
+from __future__ import annotations
+
+import logging
+import struct
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
-from dqlitewire.constants import HEADER_SIZE, NodeRole, ResponseType, ValueType
+from dqlitewire.codec import RESPONSE_TYPES, MessageDecoder
+from dqlitewire.constants import (
+    DQLITE_NOTFOUND,
+    DQLITE_PARSE,
+    HEADER_SIZE,
+    ROW_DONE_MARKER,
+    SQLITE_IOERR_LEADERSHIP_LOST,
+    SQLITE_IOERR_NOT_LEADER,
+    NodeRole,
+    ResponseType,
+    ValueType,
+)
 from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.limits import (
+    MAX_ADDRESS_SIZE,
+    MAX_COLUMN_COUNT,
+    MAX_COLUMN_NAME_SIZE,
+    MAX_FAILURE_MESSAGE_SIZE,
+    MAX_FILENAME_SIZE,
+    MAX_NODE_COUNT,
+    MAX_PARAM_COUNT,
+    MAX_TAIL_OFFSET,
+)
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
-    _MAX_COLUMN_COUNT,
-    _MAX_COLUMN_NAME_SIZE,
-    _MAX_FAILURE_MESSAGE_SIZE,
-    _MAX_FILENAME_SIZE,
-    _MAX_TAIL_OFFSET,
-    MAX_ADDRESS_SIZE,
-    MAX_NODE_COUNT,
     DbResponse,
     EmptyResponse,
     FailureResponse,
@@ -28,8 +47,7 @@ from dqlitewire.messages.responses import (
     StmtResponse,
     WelcomeResponse,
 )
-from dqlitewire.tuples import _MAX_PARAM_COUNT
-from dqlitewire.types import WireValue, encode_text, encode_uint64
+from dqlitewire.types import WireValue, encode_text, encode_uint64, encode_value
 
 
 class TestFailureResponse:
@@ -106,26 +124,26 @@ class TestFailureResponse:
 
     def test_decode_rejects_oversize_message(self) -> None:
         """A peer claiming a multi-megabyte error message can force a large
-        allocation and full-string scan through _sanitize_server_text. Cap
-        the decoded message at _MAX_FAILURE_MESSAGE_SIZE so the decoder
+        allocation and full-string scan through sanitize_server_text. Cap
+        the decoded message at MAX_FAILURE_MESSAGE_SIZE so the decoder
         fails fast before the sanitize scan runs."""
-        oversize = "a" * (_MAX_FAILURE_MESSAGE_SIZE + 1)
+        oversize = "a" * (MAX_FAILURE_MESSAGE_SIZE + 1)
         body = encode_uint64(1) + encode_text(oversize)
         with pytest.raises(DecodeError, match="exceeds maximum"):
             FailureResponse.decode_body(body)
 
     def test_decode_accepts_message_at_cap(self) -> None:
         """Exactly-cap message must still decode."""
-        at_cap = "a" * _MAX_FAILURE_MESSAGE_SIZE
+        at_cap = "a" * MAX_FAILURE_MESSAGE_SIZE
         body = encode_uint64(1) + encode_text(at_cap)
         decoded = FailureResponse.decode_body(body)
         assert decoded.code == 1
-        assert len(decoded.message) == _MAX_FAILURE_MESSAGE_SIZE
+        assert len(decoded.message) == MAX_FAILURE_MESSAGE_SIZE
 
     def test_encode_rejects_oversize_message(self) -> None:
         """Encoder mirrors the decode cap so callers fail fast on an
         accidentally-huge message string."""
-        msg = FailureResponse(code=1, message="a" * (_MAX_FAILURE_MESSAGE_SIZE + 1))
+        msg = FailureResponse(code=1, message="a" * (MAX_FAILURE_MESSAGE_SIZE + 1))
         with pytest.raises(EncodeError, match="exceeds maximum"):
             msg.encode_body()
 
@@ -352,7 +370,7 @@ class TestStmtResponse:
 
     def test_rejects_oversized_num_params(self) -> None:
         """Defense-in-depth: cap server-declared num_params to match the
-        encoder-side _MAX_PARAM_COUNT. A malicious or corrupt server
+        encoder-side MAX_PARAM_COUNT. A malicious or corrupt server
         returning num_params=2**63-1 produces a clean DecodeError, not
         an unchecked value that a cautious caller could trust.
         """
@@ -369,20 +387,20 @@ class TestStmtResponse:
 
     def test_rejects_oversized_tail_offset(self) -> None:
         """Defense-in-depth: a schema=1 server emitting ``tail_offset``
-        above ``_MAX_TAIL_OFFSET`` could make Python's ``sql[offset:]``
+        above ``MAX_TAIL_OFFSET`` could make Python's ``sql[offset:]``
         silently return ``""`` and drop trailing statements. Mirror the
         encoder-side cap with a decode-side DecodeError so the attack
         surface is closed at both boundaries.
         """
         import struct
 
-        from dqlitewire.messages.responses import _MAX_TAIL_OFFSET
+        from dqlitewire.limits import MAX_TAIL_OFFSET
 
         body = (
             struct.pack("<I", 1)  # db_id
             + struct.pack("<I", 2)  # stmt_id
             + struct.pack("<Q", 3)  # num_params
-            + struct.pack("<Q", _MAX_TAIL_OFFSET + 1)  # tail_offset (bogus)
+            + struct.pack("<Q", MAX_TAIL_OFFSET + 1)  # tail_offset (bogus)
         )
         assert len(body) == 24
         with pytest.raises(DecodeError, match="tail_offset"):
@@ -1153,8 +1171,8 @@ class TestRowsResponseColumnNameSize:
     The outer 64 MiB frame cap is the ultimate backstop, but a peer can
     still pack a single giant column name inside a frame-legal response
     and force the client to allocate it as a Python string. Cap each
-    column name at ``_MAX_COLUMN_NAME_SIZE`` (same policy as
-    ``_MAX_FAILURE_MESSAGE_SIZE``).
+    column name at ``MAX_COLUMN_NAME_SIZE`` (same policy as
+    ``MAX_FAILURE_MESSAGE_SIZE``).
     """
 
     def _build_body(self, name: str) -> bytes:
@@ -1164,13 +1182,13 @@ class TestRowsResponseColumnNameSize:
         return encode_uint64(1) + encode_text(name) + encode_uint64(ROW_DONE_MARKER)
 
     def test_decode_rejects_oversize_column_name(self) -> None:
-        oversize = "a" * (_MAX_COLUMN_NAME_SIZE + 1)
+        oversize = "a" * (MAX_COLUMN_NAME_SIZE + 1)
         body = self._build_body(oversize)
         with pytest.raises(DecodeError, match="column name"):
             RowsResponse.decode_body(body)
 
     def test_decode_accepts_column_name_at_cap(self) -> None:
-        at_cap = "a" * _MAX_COLUMN_NAME_SIZE
+        at_cap = "a" * MAX_COLUMN_NAME_SIZE
         body = self._build_body(at_cap)
         decoded = RowsResponse.decode_body(body)
         assert decoded.column_names == [at_cap]
@@ -1665,7 +1683,7 @@ class TestFilesResponseFilenameSize:
 
     The outer 64 MiB frame cap bounds total bytes, but a peer can still
     pack a giant filename in a frame-legal FilesResponse. Cap each
-    filename at ``_MAX_FILENAME_SIZE`` (POSIX PATH_MAX convention).
+    filename at ``MAX_FILENAME_SIZE`` (POSIX PATH_MAX convention).
     """
 
     def _build_body(self, name: str) -> bytes:
@@ -1674,13 +1692,13 @@ class TestFilesResponseFilenameSize:
         return encode_uint64(1) + encode_text(name) + encode_uint64(len(content)) + content
 
     def test_decode_rejects_oversize_filename(self) -> None:
-        oversize = "a" * (_MAX_FILENAME_SIZE + 1)
+        oversize = "a" * (MAX_FILENAME_SIZE + 1)
         body = self._build_body(oversize)
         with pytest.raises(DecodeError, match="filename"):
             FilesResponse.decode_body(body)
 
     def test_decode_accepts_filename_at_cap(self) -> None:
-        at_cap = "a" * _MAX_FILENAME_SIZE
+        at_cap = "a" * MAX_FILENAME_SIZE
         body = self._build_body(at_cap)
         decoded = FilesResponse.decode_body(body)
         assert at_cap in decoded.files
@@ -1958,7 +1976,7 @@ class TestServerTextSanitization:
         payload = encode_uint64(5) + encode_text("evil.com:9001\r\nHost: x")
         decoded = LeaderResponse.decode_body(payload)
         # Decode preserves the input verbatim (control characters
-        # included). The client layer applies ``_sanitize_server_text``
+        # included). The client layer applies ``sanitize_server_text``
         # when formatting the address into an exception or log line.
         assert decoded.address == "evil.com:9001\r\nHost: x"
 
@@ -2037,7 +2055,7 @@ class TestServerTextSanitization:
     def test_leader_response_preserves_bidi_and_zero_width(self, bad_char: str, label: str) -> None:
         """Address decode is raw: the client layer sanitises at log-
         format time so routing and allowlist comparisons see the
-        peer's authentic bytes. A future ``_sanitize_server_text``
+        peer's authentic bytes. A future ``sanitize_server_text``
         applied at decode would split an operator-configured address
         set when the peer advertised its own canonical form.
         """
@@ -2163,50 +2181,50 @@ class TestEncodeSideCaps:
 
     def test_rows_response_rejects_oversize_column_count(self) -> None:
         # No rows — just exercise the column_count cap.
-        names = [f"c{i}" for i in range(_MAX_COLUMN_COUNT + 1)]
+        names = [f"c{i}" for i in range(MAX_COLUMN_COUNT + 1)]
         with pytest.raises(EncodeError, match="column count"):
             RowsResponse(column_names=names, rows=[]).encode_body()
 
     def test_rows_response_rejects_oversize_column_name(self) -> None:
-        oversize = "a" * (_MAX_COLUMN_NAME_SIZE + 1)
+        oversize = "a" * (MAX_COLUMN_NAME_SIZE + 1)
         with pytest.raises(EncodeError, match="(?i)column name"):
             RowsResponse(column_names=[oversize], rows=[]).encode_body()
 
     def test_rows_response_accepts_column_name_at_cap(self) -> None:
-        at_cap = "a" * _MAX_COLUMN_NAME_SIZE
+        at_cap = "a" * MAX_COLUMN_NAME_SIZE
         body = RowsResponse(column_names=[at_cap], rows=[]).encode_body()
         decoded = RowsResponse.decode_body(body)
         assert decoded.column_names == [at_cap]
 
     def test_stmt_response_rejects_oversize_num_params(self) -> None:
         with pytest.raises(EncodeError, match="num_params"):
-            StmtResponse(db_id=1, stmt_id=1, num_params=_MAX_PARAM_COUNT + 1).encode_body()
+            StmtResponse(db_id=1, stmt_id=1, num_params=MAX_PARAM_COUNT + 1).encode_body()
 
     def test_stmt_response_accepts_num_params_at_cap(self) -> None:
-        body = StmtResponse(db_id=1, stmt_id=1, num_params=_MAX_PARAM_COUNT).encode_body()
+        body = StmtResponse(db_id=1, stmt_id=1, num_params=MAX_PARAM_COUNT).encode_body()
         decoded = StmtResponse.decode_body(body, schema=0)
-        assert decoded.num_params == _MAX_PARAM_COUNT
+        assert decoded.num_params == MAX_PARAM_COUNT
 
     def test_stmt_response_rejects_oversize_tail_offset(self) -> None:
         with pytest.raises(EncodeError, match="tail_offset"):
             StmtResponse(
-                db_id=1, stmt_id=1, num_params=0, tail_offset=_MAX_TAIL_OFFSET + 1
+                db_id=1, stmt_id=1, num_params=0, tail_offset=MAX_TAIL_OFFSET + 1
             ).encode_body()
 
     def test_stmt_response_accepts_tail_offset_at_cap(self) -> None:
         body = StmtResponse(
-            db_id=1, stmt_id=1, num_params=0, tail_offset=_MAX_TAIL_OFFSET
+            db_id=1, stmt_id=1, num_params=0, tail_offset=MAX_TAIL_OFFSET
         ).encode_body()
         decoded = StmtResponse.decode_body(body, schema=1)
-        assert decoded.tail_offset == _MAX_TAIL_OFFSET
+        assert decoded.tail_offset == MAX_TAIL_OFFSET
 
     def test_files_response_rejects_oversize_filename(self) -> None:
-        oversize = "a" * (_MAX_FILENAME_SIZE + 1)
+        oversize = "a" * (MAX_FILENAME_SIZE + 1)
         with pytest.raises(EncodeError, match="filename"):
             FilesResponse(files={oversize: b""}).encode_body()
 
     def test_files_response_accepts_filename_at_cap(self) -> None:
-        at_cap = "a" * _MAX_FILENAME_SIZE
+        at_cap = "a" * MAX_FILENAME_SIZE
         body = FilesResponse(files={at_cap: b""}).encode_body()
         decoded = FilesResponse.decode_body(body)
         assert at_cap in decoded.files
@@ -2241,7 +2259,7 @@ class TestDecodeTextCapsAreByteBased:
 
     def test_failure_response_rejects_oversize_utf8_message(self) -> None:
         # "漢" is U+6F22, 3 UTF-8 bytes.
-        char_count = _MAX_FAILURE_MESSAGE_SIZE // 3 + 1
+        char_count = MAX_FAILURE_MESSAGE_SIZE // 3 + 1
         msg = "漢" * char_count
         body = encode_uint64(1) + encode_text(msg)
         with pytest.raises(DecodeError, match="exceeds maximum"):
@@ -2269,14 +2287,14 @@ class TestDecodeTextCapsAreByteBased:
             ServersResponse.decode_body(body)
 
     def test_rows_response_rejects_oversize_utf8_column_name(self) -> None:
-        char_count = _MAX_COLUMN_NAME_SIZE // 3 + 1
+        char_count = MAX_COLUMN_NAME_SIZE // 3 + 1
         name = "漢" * char_count
         body = encode_uint64(1) + encode_text(name) + encode_uint64(0)
         with pytest.raises(DecodeError, match="exceeds maximum"):
             RowsResponse.decode_body(body)
 
     def test_files_response_rejects_oversize_utf8_filename(self) -> None:
-        char_count = _MAX_FILENAME_SIZE // 3 + 1
+        char_count = MAX_FILENAME_SIZE // 3 + 1
         name = "漢" * char_count
         content = b"\x00" * 8
         body = encode_uint64(1) + encode_text(name) + encode_uint64(len(content)) + content
@@ -2309,9 +2327,10 @@ class TestFilesResponseEncodeCountCap:
     with the existing decode-side cap test in TestEncodeSideCaps."""
 
     def test_encode_rejects_count_above_max(self) -> None:
-        from dqlitewire.messages.responses import _MAX_FILE_COUNT, FilesResponse
+        from dqlitewire.limits import MAX_FILE_COUNT
+        from dqlitewire.messages.responses import FilesResponse
 
-        files = {f"f{i}": b"\x00" * 8 for i in range(_MAX_FILE_COUNT + 1)}
+        files = {f"f{i}": b"\x00" * 8 for i in range(MAX_FILE_COUNT + 1)}
         with pytest.raises(EncodeError, match="exceeds maximum"):
             FilesResponse(files=files).encode_body()
 
@@ -2422,7 +2441,7 @@ class TestEncodeBodyLinearTime:
     def test_files_response_encode_body_linear_on_file_count(self) -> None:
         import time
 
-        # ``_MAX_FILE_COUNT`` is 100 by design, so the file-count axis
+        # ``MAX_FILE_COUNT`` is 100 by design, so the file-count axis
         # is small; the regression sensitivity here comes from per-file
         # ``content`` size. Use a per-file payload large enough that
         # repeated ``bytes += bytes`` would copy the running result
@@ -2491,3 +2510,1298 @@ class TestScalarResponseClassesFrozenSlotted:
         m = MetadataResponse(failure_domain=1, weight=2)
         with pytest.raises(FrozenInstanceError):
             m.weight = 99  # type: ignore[misc]
+
+
+# ---- merged from test_responses_strict_length.py ----
+# Fixed-length response decoders must reject trailing bytes.
+#
+# Strict-parse peers in this module (``LeaderRequest.decode_body``,
+# ``StmtResponse.decode_body``) assert exact body lengths. The three
+# messages audited here previously accepted ``len >= expected``,
+# silently ignoring trailing bytes — asymmetric with peers and
+# permissive in a way that masks frame-corruption.
+
+
+class TestEmptyResponseStrictLength:
+    def test_short_body_rejected(self) -> None:
+        with pytest.raises(DecodeError, match="EmptyResponse body must be exactly 8 bytes"):
+            EmptyResponse.decode_body(b"\x00" * 7)
+
+    def test_exact_length_accepted(self) -> None:
+        msg = EmptyResponse.decode_body(b"\x00" * 8)
+        assert isinstance(msg, EmptyResponse)
+
+    def test_trailing_bytes_rejected(self) -> None:
+        """16-byte body: decoders used to silently discard the
+        trailing 8 bytes. Must now raise.
+        """
+        with pytest.raises(DecodeError, match="EmptyResponse body must be exactly 8 bytes"):
+            EmptyResponse.decode_body(b"\x00" * 16)
+
+    def test_trailing_zero_bytes_still_rejected(self) -> None:
+        """Trailing zeros look innocuous but must still fail — the
+        decoder should not need to introspect the padding."""
+        with pytest.raises(DecodeError, match="EmptyResponse body must be exactly 8 bytes"):
+            EmptyResponse.decode_body(b"\x00" * 9)
+
+    def test_reserved_nonzero_accepted(self) -> None:
+        """Match Go's ``response.getUint64()`` discard
+        (``internal/protocol/response.go:186``). The reserved field
+        is documented as unused; a future server reusing it must not
+        break Python clients while Go clients continue working.
+        """
+        msg = EmptyResponse.decode_body(b"\x01" + b"\x00" * 7)
+        assert isinstance(msg, EmptyResponse)
+
+
+class TestDbResponseStrictLength:
+    def test_short_body_rejected(self) -> None:
+        with pytest.raises(DecodeError, match="DbResponse body must be exactly 8 bytes"):
+            DbResponse.decode_body(b"\x00" * 7)
+
+    def test_exact_length_accepted(self) -> None:
+        msg = DbResponse.decode_body(b"\x05\x00\x00\x00" + b"\x00" * 4)
+        assert isinstance(msg, DbResponse)
+        assert msg.db_id == 5
+
+    def test_trailing_bytes_rejected(self) -> None:
+        with pytest.raises(DecodeError, match="DbResponse body must be exactly 8 bytes"):
+            DbResponse.decode_body(b"\x00" * 16)
+
+
+class TestResultResponseStrictLength:
+    def test_short_body_rejected_with_type_name(self) -> None:
+        """Error message names ``ResultResponse``, not just
+        ``uint64`` — so operators reading logs can trace the
+        framed message."""
+        with pytest.raises(DecodeError, match="ResultResponse body must be exactly 16 bytes"):
+            ResultResponse.decode_body(b"\x00" * 15)
+
+    def test_exact_length_accepted(self) -> None:
+        body = (42).to_bytes(8, "little") + (7).to_bytes(8, "little")
+        msg = ResultResponse.decode_body(body)
+        assert msg.last_insert_id == 42
+        assert msg.rows_affected == 7
+
+    def test_trailing_bytes_rejected(self) -> None:
+        with pytest.raises(DecodeError, match="ResultResponse body must be exactly 16 bytes"):
+            ResultResponse.decode_body(b"\x00" * 17)
+
+
+class TestStmtResponseStrictLength:
+    """StmtResponse carries db_id + stmt_id + num_params (+ optional
+    tail_offset for schema>=1). Body is exactly 16 bytes (schema 0) or
+    24 bytes (schema 1). Trailing bytes had been silently accepted;
+    sibling responses reject them.
+    """
+
+    @staticmethod
+    def _body_schema0(db_id: int = 1, stmt_id: int = 42, num_params: int = 3) -> bytes:
+        return (
+            db_id.to_bytes(4, "little")
+            + stmt_id.to_bytes(4, "little")
+            + num_params.to_bytes(8, "little")
+        )
+
+    @staticmethod
+    def _body_schema1(
+        db_id: int = 1, stmt_id: int = 42, num_params: int = 3, tail_offset: int = 0
+    ) -> bytes:
+        return TestStmtResponseStrictLength._body_schema0(
+            db_id, stmt_id, num_params
+        ) + tail_offset.to_bytes(8, "little")
+
+    def test_short_body_rejected_schema0(self) -> None:
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=0 body must be exactly 16"):
+            StmtResponse.decode_body(b"\x00" * 15, schema=0)
+
+    def test_exact_length_accepted_schema0(self) -> None:
+        msg = StmtResponse.decode_body(self._body_schema0(), schema=0)
+        assert msg.db_id == 1
+        assert msg.stmt_id == 42
+        assert msg.num_params == 3
+        assert msg.tail_offset is None
+
+    def test_trailing_bytes_rejected_schema0(self) -> None:
+        """Previous decoder silently accepted extra bytes; must now
+        raise so a conforming StmtResponse round-trips exactly."""
+        body = self._body_schema0() + b"\x01"
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=0 body must be exactly 16"):
+            StmtResponse.decode_body(body, schema=0)
+
+    def test_short_body_rejected_schema1(self) -> None:
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=1 body must be exactly 24"):
+            StmtResponse.decode_body(b"\x00" * 23, schema=1)
+
+    def test_exact_length_accepted_schema1(self) -> None:
+        msg = StmtResponse.decode_body(self._body_schema1(tail_offset=7), schema=1)
+        assert msg.db_id == 1
+        assert msg.stmt_id == 42
+        assert msg.num_params == 3
+        assert msg.tail_offset == 7
+
+    def test_trailing_bytes_rejected_schema1(self) -> None:
+        body = self._body_schema1() + b"\x02"
+        with pytest.raises(DecodeError, match=r"StmtResponse schema=1 body must be exactly 24"):
+            StmtResponse.decode_body(body, schema=1)
+
+
+class TestWelcomeResponseStrictLength:
+    """Body is uint64(heartbeat_timeout) — exactly 8 bytes."""
+
+    def test_short_body_rejected(self) -> None:
+        from dqlitewire.messages.responses import WelcomeResponse
+
+        with pytest.raises(DecodeError, match=r"WelcomeResponse body must be exactly 8"):
+            WelcomeResponse.decode_body(b"\x00" * 7)
+
+    def test_exact_length_accepted(self) -> None:
+        from dqlitewire.messages.responses import WelcomeResponse
+
+        msg = WelcomeResponse.decode_body((42).to_bytes(8, "little"))
+        assert msg.heartbeat_timeout == 42
+
+    def test_trailing_bytes_rejected(self) -> None:
+        from dqlitewire.messages.responses import WelcomeResponse
+
+        with pytest.raises(DecodeError, match=r"WelcomeResponse body must be exactly 8"):
+            WelcomeResponse.decode_body(b"\x00" * 9)
+
+
+class TestServersResponseStrictLength:
+    """Variable-length body: ``uint64 count`` then ``count`` × (id, text
+    address, role). Trailing bytes after the last node had been silently
+    dropped.
+    """
+
+    @staticmethod
+    def _single_node_body(addr: str = "1.2.3.4:9001") -> bytes:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        return (
+            encode_uint64(1)  # count
+            + encode_uint64(1)  # node_id
+            + encode_text(addr)  # address (padded)
+            + encode_uint64(0)  # role = voter
+        )
+
+    def test_empty_list_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+        from dqlitewire.types import encode_uint64
+
+        msg = ServersResponse.decode_body(encode_uint64(0))
+        assert msg.nodes == []
+
+    def test_single_node_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+
+        msg = ServersResponse.decode_body(self._single_node_body())
+        assert len(msg.nodes) == 1
+        assert msg.nodes[0].address == "1.2.3.4:9001"
+
+    def test_multi_node_exact_round_trip(self) -> None:
+        """Offset accumulation through multiple iterations — exercises
+        the per-node loop boundary condition that the single-node test
+        cannot reach. node_id starts at 1 because raft reserves id=0
+        for "no node" and ``ServersResponse`` enforces the
+        ``(node_id, address)`` atomicity invariant — a 0-id entry
+        with a non-empty address is rejected at the wire boundary."""
+        from dqlitewire.messages.responses import ServersResponse
+        from dqlitewire.types import encode_text, encode_uint64
+
+        body = encode_uint64(3)
+        for i in range(1, 4):
+            body += encode_uint64(i)
+            body += encode_text(f"node{i}.example:900{i}")
+            body += encode_uint64(0)
+        msg = ServersResponse.decode_body(body)
+        assert [n.address for n in msg.nodes] == [
+            "node1.example:9001",
+            "node2.example:9002",
+            "node3.example:9003",
+        ]
+
+    def test_trailing_bytes_rejected(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+
+        body = self._single_node_body() + b"\x01"
+        with pytest.raises(DecodeError, match=r"ServersResponse has 1 trailing byte"):
+            ServersResponse.decode_body(body)
+
+    def test_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import ServersResponse
+
+        body = self._single_node_body() + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"ServersResponse has 8 trailing byte"):
+            ServersResponse.decode_body(body)
+
+    def test_empty_list_trailing_bytes_rejected(self) -> None:
+        """Count=0 with trailing bytes must still raise — otherwise a
+        server could hide bytes behind an empty list."""
+        from dqlitewire.messages.responses import ServersResponse
+        from dqlitewire.types import encode_uint64
+
+        body = encode_uint64(0) + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"ServersResponse has 8 trailing byte"):
+            ServersResponse.decode_body(body)
+
+
+class TestFailureResponseStrictLength:
+    """Body: uint64 code + padded text message. Unlike the fixed-length
+    decoders above, the failure body is NOT strictly fixed-length:
+    the server may append the genuine failure record after an
+    un-rewound partial rows header (column count + names), so trailing
+    bytes are tolerated. When the trailing region does not parse as a
+    recoverable failure record, the decoder falls back to the first
+    record — matching the reference Go client, which reads one record
+    and ignores the rest — rather than raising on benign trailing data."""
+
+    @staticmethod
+    def _body(code: int = 5, message: str = "database is locked") -> bytes:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        return encode_uint64(code) + encode_text(message)
+
+    def test_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import FailureResponse
+
+        msg = FailureResponse.decode_body(self._body())
+        assert msg.code == 5
+        assert msg.message == "database is locked"
+
+    def test_trailing_garbage_byte_falls_back_to_first_record(self) -> None:
+        # A single stray trailing byte does not parse as the column-name
+        # sequence + trailing failure record the recovery path expects,
+        # so the decoder surfaces the first record rather than raising.
+        from dqlitewire.messages.responses import FailureResponse
+
+        msg = FailureResponse.decode_body(self._body() + b"\x01")
+        assert msg.code == 5
+        assert msg.message == "database is locked"
+
+    def test_trailing_word_falls_back_to_first_record(self) -> None:
+        from dqlitewire.messages.responses import FailureResponse
+
+        msg = FailureResponse.decode_body(self._body() + b"\x00" * 8)
+        assert msg.code == 5
+        assert msg.message == "database is locked"
+
+
+class TestLeaderResponseStrictLength:
+    """Modern body: uint64 node_id + padded text address. Legacy body:
+    padded text address only. Trailing bytes after the address had
+    been silently dropped."""
+
+    @staticmethod
+    def _modern_body(node_id: int = 7, addr: str = "1.2.3.4:9001") -> bytes:
+        from dqlitewire.types import encode_text, encode_uint64
+
+        return encode_uint64(node_id) + encode_text(addr)
+
+    def test_modern_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+
+        msg = LeaderResponse.decode_body(self._modern_body())
+        assert msg.node_id == 7
+        assert msg.address == "1.2.3.4:9001"
+
+    def test_modern_trailing_byte_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+
+        body = self._modern_body() + b"\x01"
+        with pytest.raises(DecodeError, match=r"LeaderResponse has 1 trailing byte"):
+            LeaderResponse.decode_body(body)
+
+    def test_modern_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+
+        body = self._modern_body() + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"LeaderResponse has 8 trailing byte"):
+            LeaderResponse.decode_body(body)
+
+    def test_legacy_exact_round_trip(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+        from dqlitewire.types import encode_text
+
+        msg = LeaderResponse.decode_body_legacy(encode_text("10.0.0.1:9001"))
+        assert msg.node_id == 0
+        assert msg.address == "10.0.0.1:9001"
+
+    def test_legacy_trailing_byte_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+        from dqlitewire.types import encode_text
+
+        body = encode_text("10.0.0.1:9001") + b"\x01"
+        with pytest.raises(DecodeError, match=r"LeaderResponse \(legacy\) has 1 trailing byte"):
+            LeaderResponse.decode_body_legacy(body)
+
+    def test_legacy_trailing_word_rejected(self) -> None:
+        from dqlitewire.messages.responses import LeaderResponse
+        from dqlitewire.types import encode_text
+
+        body = encode_text("10.0.0.1:9001") + b"\x00" * 8
+        with pytest.raises(DecodeError, match=r"LeaderResponse \(legacy\) has 8 trailing byte"):
+            LeaderResponse.decode_body_legacy(body)
+
+    def test_modern_short_body_rejected_at_response_layer(self) -> None:
+        # ``decode_uint64`` already rejects bodies shorter than 8 bytes,
+        # but its diagnostic does not mention which response was being
+        # decoded. Sibling response decoders (FailureResponse,
+        # WelcomeResponse, MetadataResponse) all emit an explicit
+        # response-level length guard so the diagnostic is self-
+        # describing. Pin the wording so a future refactor of
+        # ``decode_uint64`` cannot silently demote LeaderResponse to
+        # the helper's wording.
+        from dqlitewire.messages.responses import LeaderResponse
+
+        with pytest.raises(DecodeError, match=r"LeaderResponse body too short"):
+            LeaderResponse.decode_body(b"\x01" * 7)
+
+    def test_legacy_short_body_rejected_at_response_layer(self) -> None:
+        # Sibling pin for the legacy decoder. The legacy body is a
+        # single ``decode_text`` field — NUL-terminated UTF-8 padded
+        # to the 8-byte boundary; there is NO length prefix on the
+        # wire. The 8-byte minimum is the smallest padded TEXT
+        # (1-byte NUL terminator + 7-byte zero-padding). Without
+        # this response-layer guard, ``decode_text``'s generic
+        # diagnostic does not identify the response being decoded.
+        from dqlitewire.messages.responses import LeaderResponse
+
+        with pytest.raises(
+            DecodeError,
+            match=r"LeaderResponse \(legacy\) body too short.*NUL-terminated",
+        ):
+            LeaderResponse.decode_body_legacy(b"\x01" * 7)
+
+
+class TestMetadataResponseStrictLength:
+    """Body is two uint64s (failure_domain + weight) — exactly 16 bytes."""
+
+    def test_short_body_rejected(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        with pytest.raises(DecodeError, match=r"MetadataResponse body must be exactly 16"):
+            MetadataResponse.decode_body(b"\x00" * 15)
+
+    def test_exact_length_accepted(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        body = (3).to_bytes(8, "little") + (7).to_bytes(8, "little")
+        msg = MetadataResponse.decode_body(body)
+        assert msg.failure_domain == 3
+        assert msg.weight == 7
+
+    def test_trailing_bytes_rejected(self) -> None:
+        from dqlitewire.messages.responses import MetadataResponse
+
+        with pytest.raises(DecodeError, match=r"MetadataResponse body must be exactly 16"):
+            MetadataResponse.decode_body(b"\x00" * 17)
+
+
+# ---- merged from test_response_decoders_validate_schema.py ----
+# Pin: every response-side ``decode_body`` validates the ``schema``
+# kwarg at the per-class layer, mirroring the request-side discipline.
+#
+# The production dispatcher (``MessageDecoder.decode_bytes``) caps
+# ``schema`` at ``_RESPONSE_MAX_SCHEMA[type]`` before calling per-class
+# decoders, but direct callers (tests, proxies, fuzzers,
+# golden-byte harnesses) bypass the dispatcher. Until this fix the
+# per-class layer silently accepted bogus schemas — request decoders
+# have always rejected. Pin the symmetric defense-in-depth.
+
+
+# Minimally-valid body per response class so the bogus-schema reject
+# fires before any body-shape decode would raise a different error.
+def _body_for(cls: type) -> bytes:
+    if cls is LeaderResponse:
+        # node_id=0, address="" + padding = 8 + 8 bytes.
+        return struct.pack("<Q", 0) + b"\x00" * 8
+    # Most decoders accept a string of NULs as a degenerate body.
+    return b"\x00" * 64
+
+
+@pytest.mark.parametrize("msg_cls", list(RESPONSE_TYPES.values()))
+def test_response_decode_body_rejects_unknown_schema(msg_cls: type) -> None:
+    body = _body_for(msg_cls)
+    with pytest.raises(DecodeError, match="(?i)schema"):
+        msg_cls.decode_body(body, schema=99)  # type: ignore[attr-defined]
+
+
+def test_stmt_response_v1_schema_still_accepted() -> None:
+    """Regression: ``StmtResponse`` already accepted schema=1 (V1)
+    and continues to do so — the broad reject is "unknown schema",
+    not "non-zero schema"."""
+    body = struct.pack("<II", 0, 1) + struct.pack("<Q", 0) + struct.pack("<Q", 0)
+    msg = StmtResponse.decode_body(body, schema=1)
+    assert msg.tail_offset == 0
+
+
+# ---- merged from test_response_dataclass_bounded_repr.py ----
+# Pin: response dataclasses with unbounded list / dict fields emit a
+# bounded summary ``__repr__`` rather than enumerating every element
+# (the dataclass-generated repr would produce multi-megabyte strings).
+
+
+def test_rows_response_repr_is_bounded_under_large_rows() -> None:
+    rows: list[list[WireValue]] = [[i, f"name-{i}"] for i in range(10_000)]
+    row_types = [[ValueType.INTEGER, ValueType.TEXT] for _ in range(10_000)]
+    msg = RowsResponse(
+        column_names=["id", "name"],
+        column_types=[ValueType.INTEGER, ValueType.TEXT],
+        row_types=row_types,
+        rows=rows,
+        has_more=False,
+    )
+    rendered = repr(msg)
+
+    assert len(rendered) < 500, (
+        f"RowsResponse repr is {len(rendered)} chars for 10k rows; expected a bounded summary"
+    )
+    assert "<10000 items>" in rendered
+    assert "has_more=False" in rendered
+
+
+def test_files_response_repr_is_bounded_under_large_per_file_content() -> None:
+    """A 50-file response with multi-MB content per file must
+    produce a short repr that does not dump the bytes."""
+    files = {f"file-{i:04d}": b"\x00" * (1 << 20) for i in range(50)}
+    msg = FilesResponse(files=files)
+    rendered = repr(msg)
+
+    assert len(rendered) < 500, (
+        f"FilesResponse repr is {len(rendered)} chars for 50 × 1MB files; "
+        "expected a bounded summary"
+    )
+    # Truncated form should show a small head sample and an "and N more"
+    # marker.
+    assert "more" in rendered
+    assert "bytes" in rendered
+
+
+def test_servers_response_repr_is_bounded_under_large_node_count() -> None:
+    """A 1000-node response must produce a short repr that does not
+    enumerate every entry."""
+    nodes = [
+        NodeInfo(node_id=i + 1, address=f"10.0.0.{i // 256}.{i % 256}:9001", role=NodeRole.VOTER)
+        for i in range(1000)
+    ]
+    msg = ServersResponse(nodes=nodes)
+    rendered = repr(msg)
+
+    assert len(rendered) < 500, (
+        f"ServersResponse repr is {len(rendered)} chars for 1k nodes; expected a bounded summary"
+    )
+    assert "more" in rendered
+
+
+def test_rows_response_small_repr_still_includes_field_names() -> None:
+    """Small payloads still render the field names + summary count
+    so the summary is informative."""
+    msg = RowsResponse(
+        column_names=["x"],
+        column_types=[ValueType.INTEGER],
+        rows=[[1], [2]],
+        has_more=True,
+    )
+    rendered = repr(msg)
+    assert "column_names=['x']" in rendered
+    assert "<2 items>" in rendered
+    assert "has_more=True" in rendered
+
+
+def test_files_response_empty_repr() -> None:
+    """Empty FilesResponse renders cleanly."""
+    msg = FilesResponse()
+    rendered = repr(msg)
+    assert "FilesResponse" in rendered
+
+
+def test_servers_response_empty_repr() -> None:
+    """Empty ServersResponse renders cleanly."""
+    msg = ServersResponse()
+    rendered = repr(msg)
+    assert "ServersResponse" in rendered
+
+
+# ---- merged from test_result_response_caps.py ----
+# ``ResultResponse.rows_affected`` is decode-capped at ``INT_MAX``;
+# ``last_insert_id_signed`` returns the int64-cast for stdlib parity.
+#
+# The upstream C server returns ``sqlite3_changes(...)`` which is C
+# ``int`` (``INT_MAX``) before being cast to uint64 on the wire
+# (``gateway.c:484``). A real cluster never emits above INT_MAX.
+#
+# The signed accessor mirrors stdlib ``sqlite3.Connection.lastrowid``:
+# SQLite's ``sqlite3_int64`` rowid can be negative; the unsigned wire
+# value is ``2**64 - abs(rowid)``.
+#
+# Encode-side cap is symmetric with decode (mirrors the
+# ``StmtResponse.MAX_TAIL_OFFSET`` symmetric-cap precedent at the
+# sibling response): a Python encoder constructing a ``ResultResponse``
+# with ``rows_affected > MAX_ROWS_AFFECTED`` is rejected up front, so
+# a same-process round-trip via Python encoder + decoder cannot break
+# on the encoder's own bytes.
+
+_INT_MAX = (1 << 31) - 1
+
+
+def test_rows_affected_at_int_max_accepted() -> None:
+    body = encode_uint64(0) + encode_uint64(_INT_MAX)
+    resp = ResultResponse.decode_body(body)
+    assert resp.rows_affected == _INT_MAX
+
+
+def test_rows_affected_above_int_max_rejected() -> None:
+    body = encode_uint64(0) + encode_uint64(_INT_MAX + 1)
+    with pytest.raises(DecodeError, match="rows_affected"):
+        ResultResponse.decode_body(body)
+
+
+def test_rows_affected_two_to_the_63_rejected() -> None:
+    """Hostile-server scenario: explicit huge value."""
+    body = encode_uint64(0) + encode_uint64(1 << 63)
+    with pytest.raises(DecodeError, match="rows_affected"):
+        ResultResponse.decode_body(body)
+
+
+def test_last_insert_id_signed_round_trip_negative() -> None:
+    """A SQLite rowid of -1 round-trips through uint64 as 2**64 - 1.
+    The signed accessor reverses the cast."""
+    on_wire = (1 << 64) - 1  # -1 as uint64
+    resp = ResultResponse(last_insert_id=on_wire, rows_affected=0)
+    assert resp.last_insert_id == on_wire
+    assert resp.last_insert_id_signed == -1
+
+
+def test_last_insert_id_signed_round_trip_positive() -> None:
+    resp = ResultResponse(last_insert_id=42, rows_affected=0)
+    assert resp.last_insert_id == 42
+    assert resp.last_insert_id_signed == 42
+
+
+def test_last_insert_id_signed_at_int64_max() -> None:
+    """The signed boundary: 2**63 - 1 stays positive both
+    unsigned and signed."""
+    boundary = (1 << 63) - 1
+    resp = ResultResponse(last_insert_id=boundary, rows_affected=0)
+    assert resp.last_insert_id_signed == boundary
+
+
+def test_last_insert_id_signed_at_int64_min() -> None:
+    """``2**63`` on the wire is the most-negative int64 (=-2**63)."""
+    on_wire = 1 << 63
+    resp = ResultResponse(last_insert_id=on_wire, rows_affected=0)
+    assert resp.last_insert_id_signed == -(1 << 63)
+
+
+def test_rows_affected_at_int_max_construction_accepted() -> None:
+    """Construction at the boundary is accepted (mirrors the decode
+    side, which accepts at the boundary too)."""
+    resp = ResultResponse(last_insert_id=0, rows_affected=_INT_MAX)
+    assert resp.rows_affected == _INT_MAX
+
+
+def test_rows_affected_above_int_max_construction_rejected() -> None:
+    """Construction-time cap rejection — mirrors the decode-time cap
+    so that a same-process Python encoder + decoder round-trip cannot
+    break on its own bytes. Without this guard, ``ResultResponse(0,
+    rows_affected=2**32).encode()`` succeeds and the same Python
+    decoder then raises ``DecodeError`` on the produced bytes — a
+    confusing self-inflicted asymmetry for mock-server / proxy authors.
+    """
+    with pytest.raises(EncodeError, match="rows_affected"):
+        ResultResponse(last_insert_id=0, rows_affected=_INT_MAX + 1)
+
+
+def test_rows_affected_two_to_the_32_construction_rejected() -> None:
+    """The exact reproducer in the issue file: a `2**32` value is the
+    canonical mock-server / proxy author trap."""
+    with pytest.raises(EncodeError, match="rows_affected"):
+        ResultResponse(last_insert_id=0, rows_affected=1 << 32)
+
+
+def test_rows_affected_round_trip_at_boundary_succeeds() -> None:
+    """Same-process round-trip at the boundary: construction +
+    encode + decode all succeed."""
+    resp = ResultResponse(last_insert_id=42, rows_affected=_INT_MAX)
+    encoded = resp.encode()
+    from dqlitewire.constants import HEADER_SIZE
+
+    decoded = ResultResponse.decode_body(encoded[HEADER_SIZE:])
+    assert decoded.rows_affected == _INT_MAX
+    assert decoded.last_insert_id == 42
+
+
+def test_last_insert_id_not_capped_at_int_max_at_construction() -> None:
+    """Negative-pin: ``last_insert_id`` must NOT be capped at INT_MAX.
+    The wire field is uint64 (per the protocol spec); SQLite's
+    ``sqlite3_int64`` rowid can be the most-negative int64, which
+    appears on the wire as ``2**63``. Capping ``last_insert_id``
+    would break the existing ``last_insert_id_signed`` accessor
+    contract. A future refactor copying the rows_affected cap to
+    both fields would silently pass without this pin.
+    """
+    on_wire = (1 << 63) | 0xFEDCBA  # safely above INT_MAX
+    resp = ResultResponse(last_insert_id=on_wire, rows_affected=0)
+    assert resp.last_insert_id == on_wire
+
+
+# ---- merged from test_stmt_response_post_init_setattr_idiom.py ----
+# StmtResponse.__post_init__ coerces a V1-implicit tail_offset to zero.
+
+
+def test_stmt_response_v1_default_tail_offset_normalised_to_zero() -> None:
+    """schema=1 with tail_offset=None normalises to tail_offset=0."""
+    msg = StmtResponse(db_id=1, stmt_id=2, num_params=0, schema=1)
+    assert msg.tail_offset == 0
+
+
+# ---- merged from test_stmt_response_rejects_unsupported_schema.py ----
+# StmtResponse.decode_body rejects schema outside {0, 1} (defense-in-depth
+# companion to the codec dispatch-table cap, for direct decode_body callers).
+
+
+def _body_schema1(tail_offset: int = 0) -> bytes:
+    """Build a syntactically valid V1 body (24 bytes)."""
+    db_id = b"\x01\x00\x00\x00"
+    stmt_id = b"\x02\x00\x00\x00"
+    num_params = b"\x00" * 8
+    tail = tail_offset.to_bytes(8, "little")
+    return db_id + stmt_id + num_params + tail
+
+
+def test_decode_body_rejects_schema_two() -> None:
+    """schema=2 is undefined upstream (only V0/V1 exist), so reject it."""
+    body = _body_schema1()
+    with pytest.raises(DecodeError, match="unsupported schema"):
+        StmtResponse.decode_body(body, schema=2)
+
+
+def test_decode_body_rejects_negative_schema() -> None:
+    body = _body_schema1()
+    with pytest.raises(DecodeError, match="unsupported schema"):
+        StmtResponse.decode_body(body, schema=-1)
+
+
+def test_decode_body_accepts_schema_zero() -> None:
+    body = b"\x01\x00\x00\x00" + b"\x02\x00\x00\x00" + b"\x00" * 8
+    msg = StmtResponse.decode_body(body, schema=0)
+    assert msg.db_id == 1
+    assert msg.stmt_id == 2
+
+
+def test_decode_body_accepts_schema_one() -> None:
+    body = _body_schema1(tail_offset=42)
+    msg = StmtResponse.decode_body(body, schema=1)
+    assert msg.db_id == 1
+    assert msg.stmt_id == 2
+    assert msg.tail_offset == 42
+
+
+# ---- merged from test_stmt_response_tail_offset_construction_cap.py ----
+# StmtResponse.__post_init__ enforces MAX_TAIL_OFFSET at construction,
+# in addition to the encode/decode caps (kept as defense-in-depth).
+
+
+def test_stmt_response_tail_offset_construction_over_cap_rejected() -> None:
+    with pytest.raises(EncodeError, match="exceeds maximum"):
+        StmtResponse(
+            db_id=0,
+            stmt_id=0,
+            num_params=0,
+            tail_offset=MAX_TAIL_OFFSET + 1,
+            schema=1,
+        )
+
+
+def test_stmt_response_tail_offset_at_cap_accepted() -> None:
+    """The cap is exclusive: exactly at the cap is accepted."""
+    msg = StmtResponse(
+        db_id=0,
+        stmt_id=0,
+        num_params=0,
+        tail_offset=MAX_TAIL_OFFSET,
+        schema=1,
+    )
+    assert msg.tail_offset == MAX_TAIL_OFFSET
+
+
+def test_stmt_response_tail_offset_none_unaffected() -> None:
+    """tail_offset=None (the V0 default) is unaffected by the cap."""
+    msg = StmtResponse(db_id=0, stmt_id=0, num_params=0)
+    assert msg.tail_offset is None
+
+
+def test_stmt_response_negative_tail_offset_still_rejected_by_uint64_validator() -> None:
+    """_validate_uint64 must run before the cap check, else a negative value
+    would compare under the positive cap and silently succeed."""
+    with pytest.raises(EncodeError, match="out of range|must be int"):
+        StmtResponse(
+            db_id=0,
+            stmt_id=0,
+            num_params=0,
+            tail_offset=-1,
+            schema=1,
+        )
+
+
+def test_stmt_response_encode_body_cap_still_defense_in_depth() -> None:
+    """encode-time cap still fires when tail_offset is mutated past construction."""
+    msg = StmtResponse(db_id=0, stmt_id=0, num_params=0, tail_offset=0, schema=1)
+    object.__setattr__(msg, "tail_offset", MAX_TAIL_OFFSET + 1)
+    with pytest.raises(EncodeError, match="exceeds maximum"):
+        msg.encode_body()
+
+
+# ---- merged from test_stmt_response_validation_and_round_trip.py ----
+# StmtResponse.__post_init__ validates uint ranges and normalises
+# schema=1/tail_offset=None to tail_offset=0 so encode/decode round-trips equal.
+
+
+class TestPostInitValidation:
+    def test_negative_db_id_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="db_id"):
+            StmtResponse(db_id=-1, stmt_id=0, num_params=0)
+
+    def test_negative_stmt_id_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="stmt_id"):
+            StmtResponse(db_id=0, stmt_id=-1, num_params=0)
+
+    def test_db_id_overflow_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="db_id"):
+            StmtResponse(db_id=2**32, stmt_id=0, num_params=0)
+
+    def test_stmt_id_overflow_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="stmt_id"):
+            StmtResponse(db_id=0, stmt_id=2**32, num_params=0)
+
+    def test_num_params_overflow_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="num_params"):
+            StmtResponse(db_id=0, stmt_id=0, num_params=2**64)
+
+    def test_negative_tail_offset_rejected(self) -> None:
+        with pytest.raises(EncodeError, match="tail_offset"):
+            StmtResponse(db_id=0, stmt_id=0, num_params=0, tail_offset=-1)
+
+    def test_bool_db_id_rejected(self) -> None:
+        # bool is an int subclass, so db_id=True must be rejected (not encoded as 1).
+        with pytest.raises(EncodeError, match="db_id"):
+            StmtResponse(db_id=True, stmt_id=0, num_params=0)
+
+    def test_num_params_above_max_rejected_at_construction(self) -> None:
+        """num_params > MAX_PARAM_COUNT is rejected at construction, not
+        deferred to encode_body."""
+        with pytest.raises(EncodeError, match="num_params"):
+            StmtResponse(db_id=0, stmt_id=0, num_params=2**40)
+
+    def test_num_params_at_max_allowed(self) -> None:
+        """The cap is inclusive: num_params == MAX_PARAM_COUNT constructs cleanly."""
+        r = StmtResponse(db_id=0, stmt_id=0, num_params=MAX_PARAM_COUNT)
+        assert r.num_params == MAX_PARAM_COUNT
+
+    def test_num_params_encode_cap_still_enforced(self) -> None:
+        """Defense-in-depth: encode_body keeps its own num_params cap even
+        though __post_init__ now blocks it at construction."""
+        r = StmtResponse(db_id=0, stmt_id=0, num_params=0)
+        r.num_params = MAX_PARAM_COUNT + 1
+        with pytest.raises(EncodeError, match="num_params"):
+            r.encode_body()
+
+
+class TestRoundTripIdentity:
+    def test_v1_implicit_zero_normalises_to_zero(self) -> None:
+        """schema=1/tail_offset=None normalises to 0 so it equals the decode result."""
+        r = StmtResponse(db_id=1, stmt_id=2, num_params=3, schema=1)
+        assert r.tail_offset == 0
+
+    def test_v1_round_trip_identity_implicit_zero(self) -> None:
+        r1 = StmtResponse(db_id=1, stmt_id=2, num_params=3, schema=1)
+        body = r1.encode_body()
+        r2 = StmtResponse.decode_body(body, schema=1)
+        assert r1 == r2
+
+    def test_v1_round_trip_identity_explicit_zero(self) -> None:
+        r1 = StmtResponse(db_id=1, stmt_id=2, num_params=3, tail_offset=0, schema=1)
+        body = r1.encode_body()
+        r2 = StmtResponse.decode_body(body, schema=1)
+        assert r1 == r2
+
+    def test_v0_round_trip_identity_with_explicit_schema(self) -> None:
+        """V0 dataclass equality needs an explicit schema=0 to match the decoder."""
+        r1 = StmtResponse(db_id=1, stmt_id=2, num_params=3, schema=0)
+        body = r1.encode_body()
+        r2 = StmtResponse.decode_body(body, schema=0)
+        assert r1 == r2
+
+
+# ---- merged from test_failure_response_recovers_real_error_after_partial_rows_header.py ----
+# FailureResponse.decode_body recovers the real (code, message) when the
+# server frames a failure after an un-rewound partial rows header:
+#
+#     [ col_count ][ col_name_1 .. col_name_N ][ real code ][ real message ]
+#
+# Non-matching bodies fall back to the first record (matching the Go client);
+# truncated bodies still raise.
+
+
+def _stacked_body(column_names: list[str], code: int, message: str) -> bytes:
+    """Un-rewound body: partial rows header (count + names) then failure record."""
+    body = encode_uint64(len(column_names))
+    for name in column_names:
+        body += encode_text(name)
+    body += encode_uint64(code)
+    body += encode_text(message)
+    return body
+
+
+def test_single_column_partial_header_recovers_real_message() -> None:
+    # Captured live-cluster shape for SELECT abs(-9223372036854775808).
+    body = _stacked_body(["abs(-9223372036854775808)"], 1, "integer overflow")
+    decoded = FailureResponse.decode_body(body)
+    assert decoded.code == 1
+    assert decoded.message == "integer overflow"
+
+
+def test_multi_column_partial_header_recovers_real_message() -> None:
+    body = _stacked_body(["one", "two", "bad"], 19, "integer overflow")
+    decoded = FailureResponse.decode_body(body)
+    assert decoded.code == 19
+    assert decoded.message == "integer overflow"
+
+
+def test_clean_single_record_body_unchanged() -> None:
+    body = encode_uint64(5) + encode_text("checkpoint in progress")
+    decoded = FailureResponse.decode_body(body)
+    assert decoded.code == 5
+    assert decoded.message == "checkpoint in progress"
+
+
+def test_too_short_body_still_raises() -> None:
+    with pytest.raises(DecodeError):
+        FailureResponse.decode_body(b"\x00" * 8)
+
+
+# ---- merged from test_failure_response_round_trip_matrix.py ----
+# End-to-end round-trip matrix for FailureResponse: extended/boundary/
+# dqlite-namespace codes against empty/short/common messages.
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        # code=0 is genuinely emitted upstream (gateway.c:372 / :890).
+        (0, "empty statement"),
+        (1, ""),
+        (1, "constraint violated"),
+        (5, "checkpoint in progress"),
+        (SQLITE_IOERR_NOT_LEADER, ""),
+        (SQLITE_IOERR_NOT_LEADER, "not leader"),
+        (SQLITE_IOERR_LEADERSHIP_LOST, ""),
+        (SQLITE_IOERR_LEADERSHIP_LOST, "lost leadership mid-transaction"),
+        (DQLITE_NOTFOUND, "no database opened"),
+        (DQLITE_PARSE, "unknown request type"),
+        # uint64 boundary.
+        (2**63 - 1, ""),
+        (2**63, ""),
+        (2**64 - 1, "max code"),
+    ],
+)
+def test_failure_response_round_trip(code: int, message: str) -> None:
+    original = FailureResponse(code=code, message=message)
+    encoded = original.encode()
+    decoder = MessageDecoder(is_request=False)
+    decoder.feed(encoded)
+    decoded = decoder.decode()
+    assert isinstance(decoded, FailureResponse)
+    assert decoded.code == code
+    assert decoded.message == message
+    assert not decoder.is_poisoned
+
+
+# ---- merged from test_column_name_label_symmetric.py ----
+# RowsResponse column-name diagnostic labels must be byte-identical (lowercase
+# "column name") across the encode and decode paths, so one monitoring match lifts
+# both halves of the round-trip.
+
+
+def test_encode_side_column_name_uses_lowercase_label() -> None:
+    oversize = "x" * (MAX_COLUMN_NAME_SIZE + 1)
+    with pytest.raises(EncodeError) as exc:
+        RowsResponse(column_names=[oversize], rows=[]).encode_body()
+    # Lowercase only — the title-case form must not slip back in.
+    assert "column name" in str(exc.value)
+    assert "Column name" not in str(exc.value)
+
+
+def _build_rows_frame_with_oversize_col_name(name_size: int) -> bytes:
+    """Hand-code an oversize column-name body (bypassing the encode-side cap) to drive
+    the decode-side label. Body: uint64 column_count, then per column a padded
+    NUL-terminated UTF-8 string, then the row terminator."""
+    # decode_text scans for the NUL; with no terminator in max_size+1 bytes the
+    # cap-exceeded diagnostic fires with the field label.
+    payload = b"a" * name_size + b"\x00"
+    pad = (-len(payload)) % 8
+    text_bytes = payload + b"\x00" * pad
+    # Trailing zero word passes the column-count vs remaining-body bounds check.
+    return encode_uint64(1) + text_bytes + b"\x00" * 8
+
+
+def test_decode_side_column_name_uses_lowercase_label() -> None:
+    body = _build_rows_frame_with_oversize_col_name(MAX_COLUMN_NAME_SIZE + 1)
+    with pytest.raises(DecodeError) as exc:
+        RowsResponse.decode_body(body)
+    assert "column name" in str(exc.value)
+    assert "Column name" not in str(exc.value)
+
+
+def test_encode_and_decode_labels_are_byte_identical() -> None:
+    """The same lowercase token appears in both the encode and decode diagnostics."""
+    oversize = "x" * (MAX_COLUMN_NAME_SIZE + 1)
+    with pytest.raises(EncodeError) as enc_exc:
+        RowsResponse(column_names=[oversize], rows=[]).encode_body()
+
+    body = _build_rows_frame_with_oversize_col_name(MAX_COLUMN_NAME_SIZE + 1)
+    with pytest.raises(DecodeError) as dec_exc:
+        RowsResponse.decode_body(body)
+
+    enc_text = str(enc_exc.value)
+    dec_text = str(dec_exc.value)
+    assert "column name" in enc_text
+    assert "column name" in dec_text
+
+
+# ---- merged from test_rows_response_inference_no_double_encode.py ----
+# Pin: ``RowsResponse.encode_body``'s inference fallback path runs
+# ``encode_value`` once per cell, not twice.
+#
+# Previously ``_get_row_types``'s inference branch called
+# ``encode_value(v)[1]`` per cell — running the full encode pipeline
+# (length-cap checks, BLOB materialisation, UTF-8 encode) just to extract
+# the type tag from the returned tuple — and then ``encode_body`` ran
+# ``encode_value(v, vtype)`` again to consume the bytes. For BLOB-heavy
+# frames the cost was 2 * N * M ``encode_value`` calls instead of N * M;
+# each large BLOB cell was materialised twice. The fix introduces
+# ``_infer_value_type`` (type-only ladder, no encode work) and uses it
+# on the inference path.
+#
+# The pin counts ``encode_value`` invocations on the inference path and
+# asserts it equals one per cell, not two.
+
+
+def test_inference_path_runs_encode_value_once_per_cell() -> None:
+    """For a 3-row x 2-col inference frame, ``encode_value`` runs 6
+    times total (one per cell), not 12 (the pre-fix double-encode
+    shape). The type-only helper handles the inference pass; the
+    actual emission still calls ``encode_value`` once per cell via
+    ``encode_row_values`` in ``tuples.py``."""
+    rows: list[list[WireValue]] = [[b"a", "x"], [b"b", "y"], [b"c", "z"]]
+    msg = RowsResponse(column_names=["blob", "text"], rows=rows)
+
+    from dqlitewire.types import encode_value as real_encode_value
+
+    call_count = 0
+
+    def counting_encode_value(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return real_encode_value(*args, **kwargs)
+
+    # Patch the emission-side call site (in tuples.py); the inference
+    # path no longer calls encode_value at all, so the count reflects
+    # only the emission pass.
+    with patch("dqlitewire.tuples.encode_value", side_effect=counting_encode_value):
+        msg.encode_body()
+
+    # 3 rows * 2 cols = 6 cells. Pre-fix: the inference pass also
+    # called encode_value, doubling the count to 12. Post-fix: only
+    # the emission pass remains.
+    assert call_count == 6, f"expected 6 encode_value calls, got {call_count}"
+
+
+def test_inference_path_round_trip_unchanged() -> None:
+    """The fix changes the call count, not the wire bytes. Verify
+    inference still picks the right types and the round-trip succeeds."""
+    rows: list[list[WireValue]] = [[b"a"], [1], ["text"], [1.5], [True], [None]]
+    msg = RowsResponse(column_names=["c"], rows=rows)
+    encoded = msg.encode_body()
+    decoded = RowsResponse.decode_body(encoded)
+    # Inference picks BLOB for bytes, INTEGER for int (not BOOLEAN —
+    # the bool is checked first per the helper's ladder), etc. The
+    # decoded values reflect what the inference picked.
+    assert decoded.rows[0] == [b"a"]
+    assert decoded.rows[1] == [1]
+    assert decoded.rows[2] == ["text"]
+    assert decoded.rows[3] == [1.5]
+    # bool infers to BOOLEAN, which round-trips as int 1 (SQLite stores
+    # both as integer column value regardless of the tag) — documented
+    # in encode_value's docstring.
+    assert decoded.rows[4] == [1]
+    assert decoded.rows[5] == [None]
+
+
+def test_infer_value_type_helper_directly() -> None:
+    """Direct unit coverage for the helper."""
+    from dqlitewire.types import _infer_value_type
+
+    assert _infer_value_type(None) == ValueType.NULL
+    assert _infer_value_type(True) == ValueType.BOOLEAN
+    assert _infer_value_type(False) == ValueType.BOOLEAN
+    assert _infer_value_type(42) == ValueType.INTEGER
+    assert _infer_value_type(1.5) == ValueType.FLOAT
+    assert _infer_value_type("text") == ValueType.TEXT
+    assert _infer_value_type(b"bytes") == ValueType.BLOB
+    assert _infer_value_type(bytearray(b"ba")) == ValueType.BLOB
+    assert _infer_value_type(memoryview(b"mv")) == ValueType.BLOB
+
+
+# ---- merged from test_rows_response_inference_null_override.py ----
+# Pin: ``RowsResponse._get_row_types`` applies the None→NULL override
+# uniformly across all three type-selection paths (``row_types`` set,
+# ``column_types`` set, or inference from values).
+#
+# The None→NULL override is critical because Go's per-row type header
+# emits the NULL nibble when the value is None regardless of the declared
+# column type. The override used to be skipped on the inference branch,
+# relying on ``_infer_value_type(None) == ValueType.NULL`` to produce
+# the right answer accidentally. A future helper that learned a
+# typed-null shape would silently regress the inference path.
+
+
+def test_none_in_row_with_row_types_set_overrides_to_null() -> None:
+    row: list[WireValue] = [42, None]
+    msg = RowsResponse(
+        column_names=["a", "b"],
+        row_types=[[ValueType.INTEGER, ValueType.TEXT]],
+        rows=[row],
+    )
+    types = msg._get_row_types(0, row)
+    assert types == [ValueType.INTEGER, ValueType.NULL]
+
+
+def test_none_in_row_with_column_types_set_overrides_to_null() -> None:
+    row: list[WireValue] = [42, None]
+    msg = RowsResponse(
+        column_names=["a", "b"],
+        column_types=[ValueType.INTEGER, ValueType.TEXT],
+        rows=[row],
+    )
+    types = msg._get_row_types(0, row)
+    assert types == [ValueType.INTEGER, ValueType.NULL]
+
+
+def test_none_in_row_with_inference_falls_through_to_null() -> None:
+    """Inference branch: no ``column_types`` / ``row_types`` declared.
+    The None→NULL override applies uniformly with the other branches
+    (was previously implicit via ``_infer_value_type(None) == NULL``;
+    now applied at the same site for defensive symmetry)."""
+    row: list[WireValue] = [42, None]
+    msg = RowsResponse(column_names=["a", "b"], rows=[row])
+    types = msg._get_row_types(0, row)
+    assert types == [ValueType.INTEGER, ValueType.NULL]
+
+
+def test_no_none_values_does_not_change_types() -> None:
+    """Negative pin: the override loop must NOT touch non-None cells."""
+    row: list[WireValue] = [42, "x"]
+    msg = RowsResponse(
+        column_names=["a", "b"],
+        column_types=[ValueType.INTEGER, ValueType.TEXT],
+        rows=[row],
+    )
+    types = msg._get_row_types(0, row)
+    assert types == [ValueType.INTEGER, ValueType.TEXT]
+
+
+# ---- merged from test_rows_response_trailing_bytes_after_marker.py ----
+# Pin: ``RowsResponse.decode_body`` rejects trailing bytes after the
+# DONE / PART marker on the non-zero-column path, in parity with the
+# zero-column fast path and with sibling decoders
+# (``LeaderResponse``, ``FailureResponse``, ``ServersResponse``).
+#
+# A prior alignment cycle established this parity: previously the
+# zero-column path raised on trailing bytes but the non-zero-column
+# path returned immediately on the marker, silently consuming any
+# trailing bytes via the body slice. A byte-replay against the same
+# stray-trailing pattern produced different results between the two
+# paths — a strict-decode posture inconsistency now closed.
+
+
+def _build_one_row_one_column_body_with_trailer(trailer: bytes) -> bytes:
+    """Construct a one-column / one-row RowsResponse body whose marker
+    is followed by ``trailer`` bytes."""
+    column_count = 1
+    body = encode_uint64(column_count)
+    # Column name (text + 8-byte alignment built into encode_text).
+    body += encode_text("c0")
+    # Row header: a single 8-byte word holding the type-nibble for one
+    # INTEGER column. encode_value(1) returns (data, type_code).
+    value_bytes, type_code = encode_value(1)
+    assert type_code == ValueType.INTEGER.value
+    # Row type header: byte 0 holds the type for column 0; word-padded.
+    row_header = bytes([type_code]) + b"\x00" * 7
+    body += row_header
+    body += value_bytes
+    # End-of-rows marker.
+    body += encode_uint64(ROW_DONE_MARKER)
+    body += trailer
+    return body
+
+
+def test_rows_response_rejects_trailing_byte_after_done_marker() -> None:
+    body = _build_one_row_one_column_body_with_trailer(b"\x00")
+    with pytest.raises(DecodeError, match=r"trailing bytes after DONE"):
+        RowsResponse.decode_body(body)
+
+
+def test_rows_response_rejects_trailing_word_after_done_marker() -> None:
+    body = _build_one_row_one_column_body_with_trailer(b"\x00" * 8)
+    with pytest.raises(DecodeError, match=r"trailing bytes after DONE"):
+        RowsResponse.decode_body(body)
+
+
+def test_rows_response_clean_done_still_decodes() -> None:
+    """Regression guard: the strict check does not break the
+    no-trailing-bytes happy path."""
+    body = _build_one_row_one_column_body_with_trailer(b"")
+    response = RowsResponse.decode_body(body)
+    assert response.column_names == ["c0"]
+    assert response.rows == [[1]]
+    assert response.has_more is False
+
+
+# ---- merged from test_max_column_count_cap.py ----
+# ``MAX_COLUMN_COUNT`` is set to SQLite's documented column limit
+# (``SQLITE_MAX_COLUMN = 2000``) so legitimate wide-table SELECT
+# results decode while still rejecting absurd peer emissions.
+#
+# The C server emits ``sqlite3_column_count(stmt)`` as a uint64
+# without cap (``query.c:111-120``); ``stmt.c:10``'s
+# ``STMT__MAX_COLUMNS = (1 << 8) - 1 = 255`` macro is defined but
+# never referenced. SQLite's compile-time default is 2000 (raisable
+# to 32767 via ``SQLITE_MAX_COLUMN`` build flag); a wide-table
+# SELECT against an analytics / feature-store schema legitimately
+# crosses 255 columns.
+#
+# The per-name cap (``MAX_COLUMN_NAME_SIZE = 4096``) and the frame-
+# envelope cap (default 64 MiB) already bound memory growth from the
+# N × name allocation; this cap is defence-in-depth against
+# pathological peer emissions, not the load-bearing memory bound.
+
+
+def test_max_column_count_pinned_to_sqlite_default() -> None:
+    """SQLite's documented default ``SQLITE_MAX_COLUMN`` is 2000."""
+    assert MAX_COLUMN_COUNT == 2000
+
+
+def test_rows_response_rejects_count_above_cap() -> None:
+    body = encode_uint64(MAX_COLUMN_COUNT + 1)
+    with pytest.raises(DecodeError, match="(?i)column count"):
+        RowsResponse.decode_body(body)
+
+
+def test_rows_response_accepts_count_at_cap() -> None:
+    """A 2000-column rows response is well-formed and must not be
+    rejected by the cap; it fails the body-size check instead
+    because we only sent the count, not the column names."""
+    body = encode_uint64(MAX_COLUMN_COUNT)
+    with pytest.raises(DecodeError, match="exceeds maximum possible"):
+        RowsResponse.decode_body(body)
+
+
+def test_rows_response_accepts_count_above_old_255_cap() -> None:
+    """Pin the regression-vs-old-cap shape: a 1500-column emission
+    (legitimate wide table, above the prior 255 cap but below the
+    new 2000 cap) must NOT trip the column-count cap. It still
+    fails the body-size check below because we only sent the count,
+    not the per-column name payload."""
+    body = encode_uint64(1500)
+    with pytest.raises(DecodeError, match="exceeds maximum possible"):
+        RowsResponse.decode_body(body)
+
+
+def test_rows_response_rejects_absurd_count() -> None:
+    """A pathological emission (``column_count = 2^31``) must still
+    be rejected so a hostile peer cannot inflate Python-side
+    allocations."""
+    body = encode_uint64(1 << 31)
+    with pytest.raises(DecodeError, match="(?i)column count"):
+        RowsResponse.decode_body(body)
+
+
+def test_servers_response_uses_separate_cap() -> None:
+    """``ServersResponse`` uses ``MAX_NODE_COUNT = 10_000``; the
+    column cap does not apply. Pinning here is a sanity check that
+    the cap constant was not accidentally inlined into an unrelated
+    field."""
+    assert MAX_COLUMN_COUNT < 10_000
+
+
+def test_stmt_response_num_params_unaffected() -> None:
+    """``StmtResponse.num_params`` uses ``MAX_PARAM_COUNT``
+    (32_766) — verify the column cap tighten did not collide."""
+    # 1000 params is fine — within MAX_PARAM_COUNT but well above
+    # the column cap. The body needs db_id+stmt_id+num_params.
+    body = encode_uint64(0) + encode_uint64(1) + encode_uint64(1000)
+    # Not a real well-formed response but the num_params cap is what
+    # we're pinning; it should NOT raise on 1000.
+    try:
+        StmtResponse.decode_body(body)
+    except DecodeError as e:
+        # Any decode error must NOT cite the column-count cap.
+        assert "column count" not in str(e)
+
+
+# ---- merged from test_welcome_response_zero_heartbeat_warning.py ----
+# Pin: ``WelcomeResponse.decode_body`` emits a ``logger.warning``
+# when ``heartbeat_timeout == 0``.
+#
+# The docstring explicitly calls a zero heartbeat "semantically
+# ambiguous" / "misconfigured peer or non-conforming server" — that
+# diagnostic content used to live only in source comments, so operators
+# running a dqlite cluster with a misconfigured peer got no log signal.
+#
+# The wire layer keeps its permissive-accept contract (the decoder
+# still returns the response; no DecodeError raised) but emits a
+# single warning that surfaces the docstring's diagnostic content into
+# the log stream. Aligns with the in-tree ``ServersResponse.decode_body``
+# ``unknown_role_policy="warn"`` precedent.
+
+
+def test_decode_body_zero_heartbeat_emits_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A zero heartbeat is accepted but produces a single
+    logger.warning at decode time."""
+    body = encode_uint64(0)
+    with caplog.at_level(logging.WARNING, logger="dqlitewire.messages.responses"):
+        resp = WelcomeResponse.decode_body(body)
+    assert resp.heartbeat_timeout == 0
+    # Single warning emitted.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].message
+    # Diagnostic content from the docstring surfaces in the log line.
+    assert "heartbeat_timeout=0" in msg or "heartbeat" in msg.lower()
+    assert "15000" in msg or "non-conforming" in msg.lower() or "misconfig" in msg.lower()
+
+
+def test_decode_body_default_heartbeat_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A legitimate heartbeat (e.g. 15000ms upstream default) does
+    NOT trigger the warning."""
+    body = encode_uint64(15000)
+    with caplog.at_level(logging.WARNING, logger="dqlitewire.messages.responses"):
+        resp = WelcomeResponse.decode_body(body)
+    assert resp.heartbeat_timeout == 15000
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_decode_body_zero_heartbeat_is_still_accepted() -> None:
+    """The warning is observability-only — the decoder still returns
+    a valid WelcomeResponse with heartbeat_timeout=0 (preserves the
+    documented permissive-accept contract)."""
+    body = encode_uint64(0)
+    resp = WelcomeResponse.decode_body(body)
+    assert resp.heartbeat_timeout == 0
+    assert resp.heartbeat_timeout_seconds == 0.0

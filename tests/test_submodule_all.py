@@ -10,6 +10,7 @@ import pytest
 import dqlitewire
 
 _SUBMODULES = [
+    "dqlitewire.limits",
     "dqlitewire.buffer",
     "dqlitewire.codec",
     "dqlitewire.constants",

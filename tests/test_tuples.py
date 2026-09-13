@@ -1,13 +1,25 @@
-"""Tests for tuple encoding/decoding."""
+"""Tests for tuple encoding/decoding and row-header markers."""
+
+from __future__ import annotations
 
 import struct
 from typing import cast
+from unittest import mock
 
 import pytest
 
-from dqlitewire.constants import ValueType
+from dqlitewire import tuples as tuples_mod
+from dqlitewire.constants import (
+    ROW_DONE_BYTE,
+    ROW_DONE_MARKER,
+    ROW_PART_BYTE,
+    ROW_PART_MARKER,
+    ValueType,
+)
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.tuples import (
+    _ROW_DONE_MARKER,
+    _ROW_PART_MARKER,
     RowMarker,
     decode_params_tuple,
     decode_row_header,
@@ -16,7 +28,7 @@ from dqlitewire.tuples import (
     encode_row_header,
     encode_row_values,
 )
-from dqlitewire.types import WireInput
+from dqlitewire.types import NULL_CELL_WIDTH, WireInput, decode_value, encode_value
 
 
 class TestParamsTuple:
@@ -665,16 +677,343 @@ class TestParamsTupleEncoderMaxCount:
     """encode_params_tuple should mirror decode_params_tuple's cap."""
 
     def test_encoder_rejects_excess_count(self) -> None:
-        from dqlitewire.tuples import _MAX_PARAM_COUNT
+        from dqlitewire.limits import MAX_PARAM_COUNT
 
-        params = [0] * (_MAX_PARAM_COUNT + 1)
+        params = [0] * (MAX_PARAM_COUNT + 1)
         with pytest.raises(EncodeError, match="exceeds maximum"):
             encode_params_tuple(params, schema=1)
 
     def test_exec_request_rejects_excess_params(self) -> None:
+        from dqlitewire.limits import MAX_PARAM_COUNT
         from dqlitewire.messages.requests import ExecRequest
-        from dqlitewire.tuples import _MAX_PARAM_COUNT
 
-        req = ExecRequest(db_id=1, stmt_id=1, params=[0] * (_MAX_PARAM_COUNT + 1))
+        req = ExecRequest(db_id=1, stmt_id=1, params=[0] * (MAX_PARAM_COUNT + 1))
         with pytest.raises(EncodeError, match="exceeds maximum"):
             req.encode()
+
+
+# ---- merged from test_decode_row_header_docstring.py ----
+# ``decode_row_header`` validates all 8 marker bytes (like the upstream C
+# sentinel), not just the first byte (Go). Its docstring must say so, so a
+# contributor doesn't relax the check and accept torn markers like ``0xff 0x00...``.
+
+
+def test_decode_row_header_torn_marker_rejected_not_silently_consumed() -> None:
+    """A torn marker (first byte 0xFF, trailing bytes diverge) must NOT be
+    treated as DONE — it falls through to the type-header decode path."""
+    # Go's first-byte check would accept this as DONE; we must not.
+    torn = b"\xff\x00\x00\x00\x00\x00\x00\x00"
+    try:
+        result = decode_row_header(torn, column_count=1)
+    except DecodeError:
+        # Narrow catch so a refactor-introduced non-decode error propagates.
+        return
+    types_or_marker, _ = result
+    from dqlitewire.tuples import RowMarker
+
+    assert types_or_marker is not RowMarker.DONE, (
+        "Torn marker (first byte 0xFF, rest zeros) must not be accepted as DONE"
+    )
+
+
+# ---- merged from test_decode_row_header_marker_no_per_row_bytes_alloc.py ----
+# ``decode_row_header`` and the zero-column fast-path in
+# ``RowsResponse.decode_body`` detect DONE / PART markers correctly from both
+# memoryview- and bytes-backed input, and reject torn markers.
+
+
+def test_decode_row_header_marker_detection_works_with_memoryview_input() -> None:
+    """DONE and PART markers are identified from memoryview-backed bytes."""
+    from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE
+    from dqlitewire.tuples import RowMarker, decode_row_header
+
+    done_buf = memoryview(bytes([ROW_DONE_BYTE]) * 8 + b"\x00" * 8)
+    part_buf = memoryview(bytes([ROW_PART_BYTE]) * 8 + b"\x00" * 8)
+
+    result, consumed = decode_row_header(done_buf, column_count=1)
+    assert result is RowMarker.DONE
+    assert consumed == 8
+
+    result, consumed = decode_row_header(part_buf, column_count=1)
+    assert result is RowMarker.PART
+    assert consumed == 8
+
+
+def test_decode_row_header_marker_detection_works_with_bytes_input() -> None:
+    """bytes input still works (the rewrite collapses both paths into one
+    direct equality)."""
+    from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE
+    from dqlitewire.tuples import RowMarker, decode_row_header
+
+    done_buf = bytes([ROW_DONE_BYTE]) * 8
+    part_buf = bytes([ROW_PART_BYTE]) * 8
+
+    result, consumed = decode_row_header(done_buf, column_count=1)
+    assert result is RowMarker.DONE
+    assert consumed == 8
+
+    result, consumed = decode_row_header(part_buf, column_count=1)
+    assert result is RowMarker.PART
+    assert consumed == 8
+
+
+def test_decode_row_header_rejects_torn_marker_under_memoryview_input() -> None:
+    """A torn marker must NOT be accepted as DONE — it falls through to the
+    type-decode arm (Go checks only the first byte; we validate all 8)."""
+    from dqlitewire.exceptions import DecodeError
+    from dqlitewire.tuples import RowMarker, decode_row_header
+
+    # First byte's low nibble 0x0f is an invalid type code -> DecodeError.
+    torn = memoryview(b"\xff" + b"\x00" * 15)
+    try:
+        result, _ = decode_row_header(torn, column_count=1)
+    except DecodeError:
+        return
+    assert result is not RowMarker.DONE, (
+        "torn marker incorrectly accepted as DONE under memoryview input"
+    )
+
+
+# ---- merged from test_decode_row_header_precomputed_nibble_lookup.py ----
+# ``decode_row_header`` resolves nibble -> ValueType via a module-level
+# precomputed ``_NIBBLE_TO_VALUETYPE`` tuple rather than calling the IntEnum
+# constructor per cell (a per-row hot loop).
+
+
+def test_nibble_to_valuetype_lookup_table_exists_and_is_well_formed() -> None:
+    """16 entries: a ValueType at each known type code, None elsewhere."""
+    table = tuples_mod._NIBBLE_TO_VALUETYPE
+    assert len(table) == 16, "table must cover all 4-bit nibble values"
+
+    valid_codes = {int(v) for v in ValueType}
+    for nibble in range(16):
+        if nibble in valid_codes:
+            assert table[nibble] is not None, f"nibble {nibble} should map to a ValueType"
+            assert int(table[nibble]) == nibble  # type: ignore[arg-type]
+            assert isinstance(table[nibble], ValueType)
+        else:
+            assert table[nibble] is None, (
+                f"nibble {nibble} is not a known ValueType; should map to None"
+            )
+
+
+def test_decode_row_header_does_not_call_valuetype_constructor_per_cell() -> None:
+    """Decoding a header must not invoke the ValueType constructor; the
+    precomputed table is consulted instead."""
+    # 16-column header: each byte packs two nibbles (low, high), 8 bytes total.
+    valid_codes = sorted(int(v) for v in ValueType)
+    nibbles = [valid_codes[i % len(valid_codes)] for i in range(16)]
+    header_bytes = bytearray(8)
+    for i in range(0, 16, 2):
+        low = nibbles[i]
+        high = nibbles[i + 1]
+        header_bytes[i // 2] = (high << 4) | low
+
+    call_count = 0
+    original_call = type(ValueType).__call__
+
+    def counting_call(cls, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original_call(cls, *args, **kwargs)
+
+    with mock.patch.object(type(ValueType), "__call__", counting_call):
+        types, consumed = tuples_mod.decode_row_header(bytes(header_bytes), 16)
+
+    assert consumed == 8
+    assert isinstance(types, list)
+    assert len(types) == 16
+    for t, expected_nibble in zip(types, nibbles, strict=True):
+        assert int(t) == expected_nibble
+
+    # The table is built at import time; only per-cell calls reach the patch.
+    assert call_count == 0, (
+        f"decode_row_header called ValueType() {call_count} times; "
+        "expected zero (precomputed _NIBBLE_TO_VALUETYPE table should "
+        "replace the per-cell constructor)"
+    )
+
+
+def test_decode_row_header_invalid_nibble_preserves_existing_error_phrasing() -> None:
+    """An invalid nibble must still raise with the "Invalid value type code"
+    phrasing pinned by test_tuples.py."""
+    valid_codes = {int(v) for v in ValueType}
+    invalid_nibbles = [n for n in range(16) if n not in valid_codes]
+    assert invalid_nibbles, "test setup requires at least one invalid nibble"
+    invalid = invalid_nibbles[0]
+
+    header_bytes = bytearray(8)
+    header_bytes[0] = invalid
+
+    with pytest.raises(DecodeError, match="Invalid value type code"):
+        tuples_mod.decode_row_header(bytes(header_bytes), 1)
+
+
+# ---- merged from test_null_cell_width_constant.py ----
+# Pin: NULL wire cell width is centralised in ``NULL_CELL_WIDTH``
+# rather than scattered as a hard-coded ``8`` across the encode arm, the
+# decode arm, and the short-read diagnostic.
+#
+# Anchored to four ``/* TODO: allow null to be encoded with 0 bytes */``
+# sites in ``dqlite-upstream/src/tuple.c`` (lines 71-73, 146, 262, 298).
+# If upstream lands the 0-byte NULL change, this constant flips and
+# both encode_value and decode_value NULL branches pick it up in
+# lockstep. The single-point-of-change discipline lets a future
+# maintainer answering "how wide is NULL on the wire?" find one site
+# instead of three.
+
+
+def test_null_cell_width_is_eight() -> None:
+    """Pinned to the current upstream tuple.c contract: NULL is 8
+    bytes wide on the wire. Flips iff upstream lands the long-standing
+    TODO at tuple.c:71-73, 146, 262, 298."""
+    assert NULL_CELL_WIDTH == 8
+
+
+def test_encode_value_null_emits_exactly_null_cell_width_zero_bytes() -> None:
+    """The encode arm emits ``NULL_CELL_WIDTH`` zero bytes, not a
+    hard-coded 8."""
+    encoded, vtype = encode_value(None)
+    assert vtype == ValueType.NULL
+    assert encoded == b"\x00" * NULL_CELL_WIDTH
+    assert len(encoded) == NULL_CELL_WIDTH
+
+
+def test_decode_value_null_consumes_exactly_null_cell_width_bytes() -> None:
+    """The decode arm consumes ``NULL_CELL_WIDTH`` bytes."""
+    value, consumed = decode_value(b"\x00" * NULL_CELL_WIDTH, ValueType.NULL)
+    assert value is None
+    assert consumed == NULL_CELL_WIDTH
+
+
+# ---- merged from test_row_marker_constants_cross_check.py ----
+# Pin: the four row-marker constants form a consistent pair.
+#
+# The wire format identifies the end of a ``RowsResponse`` body with one
+# of two 8-byte sentinels: ``0xFF * 8`` (DONE) or ``0xEE * 8`` (PART).
+# The package spells the sentinel in two representations:
+#
+# - ``ROW_DONE_BYTE`` / ``ROW_PART_BYTE`` — single-byte ints (source of
+#   truth).
+# - ``ROW_DONE_MARKER`` / ``ROW_PART_MARKER`` — uint64 ints used by the
+#   encode path.
+# - ``_ROW_DONE_MARKER`` / ``_ROW_PART_MARKER`` — 8-byte ``bytes``
+#   constants (in ``tuples.py``) used by the decode path.
+#
+# These four must agree byte-for-byte. Without a cross-check pin, a typo
+# in any single-byte constant propagates only to the bytes form (which
+# is derived from it) and not to the uint64 int form (or vice versa),
+# silently breaking the encode/decode round-trip.
+#
+# The ``test_row_*_marker_canonical_hex_value`` pins below are also the
+# runtime enforcement for the ``if __debug__:`` invariant block in
+# ``constants.py``: under ``python -O`` the in-module assertions are
+# stripped, but these tests run regardless of optimisation level (the
+# pytest runner does not pass ``-O`` to interpreter startup) and would
+# fail loudly on any derivation regression.
+
+
+def test_row_done_marker_uint64_matches_bytes_form() -> None:
+    assert ROW_DONE_MARKER.to_bytes(8, "little") == _ROW_DONE_MARKER
+
+
+def test_row_part_marker_uint64_matches_bytes_form() -> None:
+    assert ROW_PART_MARKER.to_bytes(8, "little") == _ROW_PART_MARKER
+
+
+def test_row_done_marker_bytes_derived_from_byte_constant() -> None:
+    assert bytes([ROW_DONE_BYTE]) * 8 == _ROW_DONE_MARKER
+
+
+def test_row_part_marker_bytes_derived_from_byte_constant() -> None:
+    assert bytes([ROW_PART_BYTE]) * 8 == _ROW_PART_MARKER
+
+
+def test_row_done_marker_canonical_hex_value() -> None:
+    """Pin the wire byte sequence to the C upstream macro value."""
+    assert ROW_DONE_MARKER == 0xFFFFFFFFFFFFFFFF
+    assert _ROW_DONE_MARKER == b"\xff" * 8
+
+
+def test_row_part_marker_canonical_hex_value() -> None:
+    assert ROW_PART_MARKER == 0xEEEEEEEEEEEEEEEE
+    assert _ROW_PART_MARKER == b"\xee" * 8
+
+
+# ---- merged from test_tuples_16_column_round_trip.py ----
+# Pin: at column count n=16, no valid ``ValueType`` packing collides
+# with the row-marker sentinels (``DONE = 0xFF..FF``, ``PART = 0xEE..EE``).
+#
+# For n=16 the row-header is exactly one 8-byte word — the same shape as
+# a marker. The decoder applies a full-uint64 marker check (strictly
+# tighter than Go's first-byte-only check) before the type-nibble
+# decode. The safety property: no ``ValueType`` is 14 or 15, so neither
+# ``0xEE`` nor ``0xFF`` can arise from packing two valid type nibbles.
+# That property holds today by construction; this test fixture pins it
+# so a future change — adding a ``ValueType`` with code 14 or 15,
+# changing the marker pattern, or changing the row-header layout — can
+# not silently violate it.
+
+_VALID_TYPES = list(ValueType)
+
+
+@pytest.mark.parametrize("type_uniform", _VALID_TYPES)
+def test_16_column_uniform_type_does_not_collide_with_row_marker(
+    type_uniform: ValueType,
+) -> None:
+    """A 16-column row header with all-same type nibbles must not pack
+    to either marker sentinel. Round-trip through ``decode_row_header``
+    must yield the original types, never a ``RowMarker``."""
+    types = [type_uniform] * 16
+    header_bytes = encode_row_header(types)
+    assert len(header_bytes) == 8
+    assert header_bytes != b"\xff" * 8, (
+        f"ValueType {type_uniform!r} packs to the DONE marker — would be "
+        "indistinguishable from end-of-rows on the wire."
+    )
+    assert header_bytes != b"\xee" * 8, (
+        f"ValueType {type_uniform!r} packs to the PART marker — would be "
+        "indistinguishable from end-of-batch on the wire."
+    )
+
+    decoded, consumed = decode_row_header(header_bytes, column_count=16)
+    assert consumed == 8
+    assert decoded == types
+
+
+def test_16_column_no_valid_type_pair_packs_to_marker_byte() -> None:
+    """Stronger property: no pair of valid ``ValueType`` codes packs
+    to ``0xEE`` or ``0xFF``. Pinning the property exhaustively across
+    every (low, high) pair, not just the uniform-type slice. A new
+    ``ValueType`` with code 14 or 15 would break this immediately."""
+    for low in _VALID_TYPES:
+        for high in _VALID_TYPES:
+            packed = (int(high) << 4) | int(low)
+            assert packed != 0xFF, (
+                f"({low!r}, {high!r}) packs to 0xFF — would collide with the "
+                "DONE marker if repeated 8 times."
+            )
+            assert packed != 0xEE, (
+                f"({low!r}, {high!r}) packs to 0xEE — would collide with the "
+                "PART marker if repeated 8 times."
+            )
+
+
+def test_16_column_done_marker_bytes_decode_as_marker_not_null_row() -> None:
+    """A raw 8-byte ``0xFF * 8`` payload must classify as
+    ``RowMarker.DONE``, not as a 16-column row of repeated type
+    nibbles. Pin the marker check runs before the type-nibble decode
+    so the strict-validation contract is preserved at the n=16
+    boundary where header_size == marker_size."""
+    payload = b"\xff" * 8
+    decoded, consumed = decode_row_header(payload, column_count=16)
+    assert decoded is RowMarker.DONE
+    assert consumed == 8
+
+
+def test_16_column_part_marker_bytes_decode_as_marker_not_null_row() -> None:
+    """Symmetric pin for the PART marker."""
+    payload = b"\xee" * 8
+    decoded, consumed = decode_row_header(payload, column_count=16)
+    assert decoded is RowMarker.PART
+    assert consumed == 8
