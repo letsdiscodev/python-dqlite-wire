@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dqlite-wire"
-version = "0.6.0"
+version = "0.7.0"
 description = "Pure Python wire protocol implementation for dqlite"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -44,6 +44,7 @@ packages = ["src/dqlitewire"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["integration: requires a running dqlite cluster"]
 filterwarnings = [
     # Promote deprecations to errors so the suite catches stdlib
     # deprecation surface under the CPython version the workspace
@@ -57,7 +58,7 @@ filterwarnings = [
 [tool.mypy]
 strict = true
 python_version = "3.13"
-# Tests live under ``tests/`` with no ``__init__.py``; mypy needs
+# Tests are not a package; mypy needs
 # ``explicit_package_bases`` (or namespace packages) to avoid the
 # duplicate-conftest module-name collision when scanning sibling
 # integration/ subdirectories. ``mypy_path`` mirrors the
