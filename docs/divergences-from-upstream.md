@@ -21,13 +21,15 @@ peer cannot exhaust memory. All are optional (`None` disables):
   1,000,000) — per-frame row cap.
 - `ReadBuffer.DEFAULT_MAX_MESSAGE_SIZE` (`ReadBuffer(max_message_size=...)`,
   default 64 MiB) — envelope cap on a single frame.
-- Internal sanity bounds on decoded tuple/response sizes:
-  `_MAX_PARAM_COUNT` (32,766 — SQLite's `SQLITE_MAX_VARIABLE_NUMBER`),
-  `_MAX_COLUMN_COUNT` (2000 — SQLite's default `SQLITE_MAX_COLUMN`),
-  `_MAX_FILE_COUNT` (100), `_MAX_NODE_COUNT` (10,000).
+- Per-field bounds in `dqlitewire.limits`: `MAX_PARAM_COUNT` (32,766,
+  SQLite's `SQLITE_MAX_VARIABLE_NUMBER`), `MAX_COLUMN_COUNT` (2000, SQLite's
+  default `SQLITE_MAX_COLUMN`), `MAX_FILE_COUNT` (100), `MAX_NODE_COUNT`
+  (10,000), `MAX_ADDRESS_SIZE` (256), and the text/blob/file-content caps
+  (64 MiB minus framing).
 
-`DEFAULT_MAX_TOTAL_ROWS` and `DEFAULT_MAX_CONTINUATION_FRAMES` are
-importable from `dqlitewire`; the others are class-scoped.
+`DEFAULT_MAX_TOTAL_ROWS`, `DEFAULT_MAX_CONTINUATION_FRAMES`,
+`MAX_ADDRESS_SIZE` and `MAX_NODE_COUNT` are importable from `dqlitewire`;
+the rest from `dqlitewire.limits`.
 
 ## Stricter-than-Go validations
 

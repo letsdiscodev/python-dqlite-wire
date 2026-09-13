@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final, final, override
 
 __all__ = [
-    "MAX_ADDRESS_SIZE",
-    "MAX_NODE_COUNT",
     "DbResponse",
     "EmptyResponse",
     "FailureResponse",
@@ -34,9 +32,22 @@ from dqlitewire.constants import (
     ValueType,
 )
 from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.limits import (
+    DEFAULT_MAX_ROWS,
+    MAX_ADDRESS_SIZE,
+    MAX_COLUMN_COUNT,
+    MAX_COLUMN_NAME_SIZE,
+    MAX_FAILURE_MESSAGE_SIZE,
+    MAX_FILE_CONTENT_SIZE,
+    MAX_FILE_COUNT,
+    MAX_FILENAME_SIZE,
+    MAX_NODE_COUNT,
+    MAX_PARAM_COUNT,
+    MAX_ROWS_AFFECTED,
+    MAX_TAIL_OFFSET,
+)
 from dqlitewire.messages.base import Message
 from dqlitewire.tuples import (
-    _MAX_PARAM_COUNT,
     _ROW_DONE_MARKER,
     _ROW_PART_MARKER,
     RowMarker,
@@ -59,48 +70,6 @@ from dqlitewire.types import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Defence-in-depth cap; the wire field is an uncapped uint64. Matches
-# SQLite's documented SQLITE_MAX_COLUMN default so wide analytics SELECTs
-# still decode. https://www.sqlite.org/limits.html#max_column
-_MAX_COLUMN_COUNT: Final[int] = 2000
-_MAX_FILE_COUNT: Final[int] = 100
-# Defence-in-depth cap; the wire field is an uncapped uint64. Raft latency
-# precludes realistic clusters far above ~100 nodes.
-MAX_NODE_COUNT: Final[int] = 10_000
-
-# Cap on ``StmtResponse.tail_offset`` (a byte offset into prepared SQL):
-# an enormous value would make ``sql[offset:]`` silently return "",
-# dropping later statements. Matches the message envelope, not the
-# text payload cap, so it stays a structural ceiling above the
-# load-bearing _MAX_TEXT_VALUE_SIZE reject.
-_MAX_TAIL_OFFSET: Final[int] = 64 * 1024 * 1024
-
-# Per-field caps; the 64 MiB frame envelope bounds total bytes, but each
-# variable-length field gets a tighter cap so one hostile entry can't
-# claim the whole budget. Failure messages and identifiers are short in
-# practice.
-_MAX_FAILURE_MESSAGE_SIZE: Final[int] = 64 * 1024
-_MAX_COLUMN_NAME_SIZE: Final[int] = 4096
-_MAX_FILENAME_SIZE: Final[int] = 4096
-
-# Cap on ``DumpRequest.name``: the C gateway's ``handle_dump`` uses a
-# 1024-byte stack buffer and reserves room for the ``-wal`` suffix + NUL
-# (1024 - 4 - 1). A longer name silently truncates the WAL filename C-side,
-# yielding a torn dump whose ``-wal`` entry points at a different path.
-_MAX_DUMP_FILENAME_SIZE: Final[int] = 1019
-
-# Aligned with ``_MAX_BLOB_SIZE`` (64 MiB minus framing). Dumps above this
-# require raising both ``max_message_size`` and this constant.
-_MAX_FILE_CONTENT_SIZE: Final[int] = 64 * 1024 * 1024 - 64
-
-# RFC 1035 caps domain names at 253 bytes; 256 leaves room for the port.
-# A multi-MB "address" is hostile and amplifies through log/exception text.
-MAX_ADDRESS_SIZE: Final[int] = 256
-
-# Default ``RowsResponse`` row cap; mirrors ``MessageDecoder``'s max_rows
-# default. Module-level so both the ClassVar alias and decode_body share it.
-_DEFAULT_MAX_ROWS: Final[int] = 1_000_000
 
 # Replace control / bidi / invisible characters with "?" in server-supplied
 # text. The server promises UTF-8 but not absence of terminal escapes or
@@ -132,10 +101,6 @@ def sanitize_server_text(s: str) -> str:
     output use :func:`sanitize_for_log`, which also escapes LF.
     """
     return _CONTROL_CHARS_RE.sub("?", s)
-
-
-# Backwards-compatible alias; kept until downstream packages migrate off it.
-_sanitize_server_text = sanitize_server_text
 
 
 def sanitize_for_log(s: str) -> str:
@@ -170,7 +135,7 @@ class FailureResponse(Message):
     @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.code) + encode_text(
-            self.message, max_size=_MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
+            self.message, max_size=MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
         )
 
     @classmethod
@@ -191,7 +156,7 @@ class FailureResponse(Message):
             )
         code = decode_uint64(data[:8])
         message, consumed = decode_text(
-            data[8:], max_size=_MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
+            data[8:], max_size=MAX_FAILURE_MESSAGE_SIZE, label="Failure message"
         )
         offset = 8 + consumed
         if offset != len(data):
@@ -205,7 +170,7 @@ class FailureResponse(Message):
             recovered = cls._recover_trailing_failure_record(data, code)
             if recovered is not None:
                 code, message = recovered
-        return cls(code, _sanitize_server_text(message))
+        return cls(code, sanitize_server_text(message))
 
     @staticmethod
     def _recover_trailing_failure_record(data: bytes, column_count: int) -> tuple[int, str] | None:
@@ -215,14 +180,14 @@ class FailureResponse(Message):
         Returns None when the body doesn't match this shape so the caller
         falls back to the first record, matching the reference Go client.
         """
-        if column_count < 0 or column_count > _MAX_COLUMN_COUNT:
+        if column_count < 0 or column_count > MAX_COLUMN_COUNT:
             return None
         try:
             offset = 8  # past the leading column-count uint64
             for _ in range(column_count):
                 _name, consumed = decode_text(
                     data[offset:],
-                    max_size=_MAX_COLUMN_NAME_SIZE,
+                    max_size=MAX_COLUMN_NAME_SIZE,
                     label="column name",
                 )
                 offset += consumed
@@ -231,7 +196,7 @@ class FailureResponse(Message):
             code = decode_uint64(data[offset : offset + 8])
             message, consumed = decode_text(
                 data[offset + 8 :],
-                max_size=_MAX_FAILURE_MESSAGE_SIZE,
+                max_size=MAX_FAILURE_MESSAGE_SIZE,
                 label="Failure message",
             )
             offset += 8 + consumed
@@ -469,17 +434,17 @@ class StmtResponse(Message):
         _validate_uint32("stmt_id", self.stmt_id)
         _validate_uint64("num_params", self.num_params)
         # Cap at construction so the encode/decode caps stay defense-in-depth.
-        if self.num_params > _MAX_PARAM_COUNT:
+        if self.num_params > MAX_PARAM_COUNT:
             raise EncodeError(
-                f"StmtResponse num_params {self.num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
+                f"StmtResponse num_params {self.num_params} exceeds maximum ({MAX_PARAM_COUNT})"
             )
         if self.tail_offset is not None:
             _validate_uint64("tail_offset", self.tail_offset)
             # Construction-time cap mirroring encode/decode_body.
-            if self.tail_offset > _MAX_TAIL_OFFSET:
+            if self.tail_offset > MAX_TAIL_OFFSET:
                 raise EncodeError(
                     f"StmtResponse tail_offset {self.tail_offset} exceeds maximum "
-                    f"({_MAX_TAIL_OFFSET})"
+                    f"({MAX_TAIL_OFFSET})"
                 )
         if self.schema is not None and self.schema not in (0, 1):
             raise EncodeError(f"StmtResponse.schema must be 0 or 1, got {self.schema}")
@@ -502,9 +467,9 @@ class StmtResponse(Message):
 
     @override
     def encode_body(self) -> bytes:
-        if self.num_params > _MAX_PARAM_COUNT:
+        if self.num_params > MAX_PARAM_COUNT:
             raise EncodeError(
-                f"StmtResponse num_params {self.num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
+                f"StmtResponse num_params {self.num_params} exceeds maximum ({MAX_PARAM_COUNT})"
             )
         result = (
             encode_uint32(self.db_id) + encode_uint32(self.stmt_id) + encode_uint64(self.num_params)
@@ -512,9 +477,9 @@ class StmtResponse(Message):
         if self._get_schema() == 1:
             # V1 always emits tail_offset (0 when None) for a 24-byte body.
             tail_offset = self.tail_offset or 0
-            if tail_offset > _MAX_TAIL_OFFSET:
+            if tail_offset > MAX_TAIL_OFFSET:
                 raise EncodeError(
-                    f"StmtResponse tail_offset {tail_offset} exceeds maximum ({_MAX_TAIL_OFFSET})"
+                    f"StmtResponse tail_offset {tail_offset} exceeds maximum ({MAX_TAIL_OFFSET})"
                 )
             result += encode_uint64(tail_offset)
         return result
@@ -535,24 +500,18 @@ class StmtResponse(Message):
         db_id = decode_uint32(data)
         stmt_id = decode_uint32(data[4:])
         num_params = decode_uint64(data[8:])
-        if num_params > _MAX_PARAM_COUNT:
+        if num_params > MAX_PARAM_COUNT:
             raise DecodeError(
-                f"StmtResponse num_params {num_params} exceeds maximum ({_MAX_PARAM_COUNT})"
+                f"StmtResponse num_params {num_params} exceeds maximum ({MAX_PARAM_COUNT})"
             )
         tail_offset = decode_uint64(data[16:]) if schema == 1 else None
-        if tail_offset is not None and tail_offset > _MAX_TAIL_OFFSET:
+        if tail_offset is not None and tail_offset > MAX_TAIL_OFFSET:
             raise DecodeError(
-                f"StmtResponse tail_offset {tail_offset} exceeds maximum ({_MAX_TAIL_OFFSET})"
+                f"StmtResponse tail_offset {tail_offset} exceeds maximum ({MAX_TAIL_OFFSET})"
             )
         # Preserve the incoming schema byte so round-trip encode emits the
         # same shape (a V1 body with tail_offset=0 would otherwise look V0).
         return cls(db_id, stmt_id, num_params, tail_offset, schema=schema)
-
-
-# Defensive cap on ``rows_affected``. Upstream returns sqlite3_changes
-# (C int), so a real cluster never exceeds INT_MAX; raise this when the
-# server migrates to sqlite3_changes64.
-_MAX_ROWS_AFFECTED: Final[int] = (1 << 31) - 1
 
 
 @final
@@ -575,10 +534,10 @@ class ResultResponse(Message):
         _validate_uint64("rows_affected", self.rows_affected)
         # Construction-time cap mirroring decode_body so an over-INT_MAX
         # value can't be built into bytes the same decoder then rejects.
-        if self.rows_affected > _MAX_ROWS_AFFECTED:
+        if self.rows_affected > MAX_ROWS_AFFECTED:
             raise EncodeError(
                 f"ResultResponse rows_affected {self.rows_affected} exceeds maximum "
-                f"({_MAX_ROWS_AFFECTED}); a real dqlite cluster cannot emit a value "
+                f"({MAX_ROWS_AFFECTED}); a real dqlite cluster cannot emit a value "
                 "above INT_MAX (sqlite3_changes returns C int)"
             )
 
@@ -601,10 +560,10 @@ class ResultResponse(Message):
             raise DecodeError(f"ResultResponse body must be exactly 16 bytes, got {len(data)}")
         last_insert_id = decode_uint64(data)
         rows_affected = decode_uint64(data[8:])
-        if rows_affected > _MAX_ROWS_AFFECTED:
+        if rows_affected > MAX_ROWS_AFFECTED:
             raise DecodeError(
                 f"ResultResponse rows_affected {rows_affected} exceeds maximum "
-                f"({_MAX_ROWS_AFFECTED}); a real dqlite cluster cannot emit a value "
+                f"({MAX_ROWS_AFFECTED}); a real dqlite cluster cannot emit a value "
                 "above INT_MAX (sqlite3_changes returns C int)"
             )
         return cls(last_insert_id, rows_affected)
@@ -630,7 +589,7 @@ class RowsResponse(Message):
     """
 
     MSG_TYPE: ClassVar[int] = ResponseType.ROWS
-    DEFAULT_MAX_ROWS: ClassVar[int] = _DEFAULT_MAX_ROWS
+    DEFAULT_MAX_ROWS: ClassVar[int] = DEFAULT_MAX_ROWS
 
     column_names: list[str] = field(default_factory=list)
     column_types: list[ValueType] = field(default_factory=list)
@@ -708,9 +667,9 @@ class RowsResponse(Message):
     @override
     def encode_body(self) -> bytes:
         col_count = len(self.column_names)
-        if col_count > _MAX_COLUMN_COUNT:
+        if col_count > MAX_COLUMN_COUNT:
             raise EncodeError(
-                f"RowsResponse column count {col_count} exceeds maximum ({_MAX_COLUMN_COUNT})"
+                f"RowsResponse column count {col_count} exceeds maximum ({MAX_COLUMN_COUNT})"
             )
         # Per-name byte cap is enforced inside encode_text (capping here
         # would check codepoints, not the UTF-8 bytes the decoder caps on).
@@ -746,7 +705,7 @@ class RowsResponse(Message):
         result.extend(encode_uint64(col_count))
 
         for name in self.column_names:
-            result.extend(encode_text(name, max_size=_MAX_COLUMN_NAME_SIZE, label="column name"))
+            result.extend(encode_text(name, max_size=MAX_COLUMN_NAME_SIZE, label="column name"))
 
         # Each row carries its own type header.
         for i, row in enumerate(self.rows):
@@ -765,7 +724,7 @@ class RowsResponse(Message):
         cls,
         data: bytes,
         schema: int = 0,
-        max_rows: int = _DEFAULT_MAX_ROWS,
+        max_rows: int = DEFAULT_MAX_ROWS,
         *,
         text_errors: str = "strict",
     ) -> "RowsResponse":
@@ -778,8 +737,8 @@ class RowsResponse(Message):
         column_count = decode_uint64(view[offset:])
         offset += 8
 
-        if column_count > _MAX_COLUMN_COUNT:
-            raise DecodeError(f"Column count {column_count} exceeds maximum {_MAX_COLUMN_COUNT}")
+        if column_count > MAX_COLUMN_COUNT:
+            raise DecodeError(f"Column count {column_count} exceeds maximum {MAX_COLUMN_COUNT}")
 
         # Each name is >=8 bytes and an 8-byte marker follows; reserving the
         # marker gives a clear diagnostic instead of "body exhausted" later.
@@ -795,7 +754,7 @@ class RowsResponse(Message):
         column_names: list[str] = []
         for _ in range(column_count):
             name, consumed = decode_text(
-                view[offset:], max_size=_MAX_COLUMN_NAME_SIZE, label="column name"
+                view[offset:], max_size=MAX_COLUMN_NAME_SIZE, label="column name"
             )
             column_names.append(name)
             offset += consumed
@@ -937,9 +896,9 @@ class FilesResponse(Message):
 
     @override
     def encode_body(self) -> bytes:
-        if len(self.files) > _MAX_FILE_COUNT:
+        if len(self.files) > MAX_FILE_COUNT:
             raise EncodeError(
-                f"FilesResponse count {len(self.files)} exceeds maximum ({_MAX_FILE_COUNT})"
+                f"FilesResponse count {len(self.files)} exceeds maximum ({MAX_FILE_COUNT})"
             )
         # bytearray accumulation avoids the O(N^2) memcopy of bytes += bytes.
         result = bytearray()
@@ -954,12 +913,12 @@ class FilesResponse(Message):
                     "per-file padding"
                 )
             # Per-file content cap mirroring the decode-side guard below.
-            if len(content) > _MAX_FILE_CONTENT_SIZE:
+            if len(content) > MAX_FILE_CONTENT_SIZE:
                 raise EncodeError(
                     f"FilesResponse content for {name!r} length {len(content)} "
-                    f"exceeds maximum ({_MAX_FILE_CONTENT_SIZE})"
+                    f"exceeds maximum ({MAX_FILE_CONTENT_SIZE})"
                 )
-            result.extend(encode_text(name, max_size=_MAX_FILENAME_SIZE, label="filename"))
+            result.extend(encode_text(name, max_size=MAX_FILENAME_SIZE, label="filename"))
             result.extend(encode_uint64(len(content)))
             result.extend(content)
         return bytes(result)
@@ -974,8 +933,8 @@ class FilesResponse(Message):
         offset = 0
         count = decode_uint64(view[offset:])
         offset += 8
-        if count > _MAX_FILE_COUNT:
-            raise DecodeError(f"File count {count} exceeds maximum {_MAX_FILE_COUNT}")
+        if count > MAX_FILE_COUNT:
+            raise DecodeError(f"File count {count} exceeds maximum {MAX_FILE_COUNT}")
         # Bounds check: each file is at least 16 bytes (name + size)
         remaining = len(view) - offset
         if count > remaining // 16:
@@ -985,7 +944,7 @@ class FilesResponse(Message):
             )
         for _ in range(count):
             name, consumed = decode_text(
-                view[offset:], max_size=_MAX_FILENAME_SIZE, label="filename"
+                view[offset:], max_size=MAX_FILENAME_SIZE, label="filename"
             )
             offset += consumed
             size = decode_uint64(view[offset:])
@@ -997,10 +956,10 @@ class FilesResponse(Message):
                 )
             # Per-file content cap. Checked before the over-read bounds-check
             # so an oversize claim gets a specific (not "truncated") diagnostic.
-            if size > _MAX_FILE_CONTENT_SIZE:
+            if size > MAX_FILE_CONTENT_SIZE:
                 raise DecodeError(
                     f"FilesResponse content for {name!r} length {size} "
-                    f"exceeds maximum ({_MAX_FILE_CONTENT_SIZE})"
+                    f"exceeds maximum ({MAX_FILE_CONTENT_SIZE})"
                 )
             if offset + size > len(view):
                 raise DecodeError(

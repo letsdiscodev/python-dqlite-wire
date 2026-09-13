@@ -5,55 +5,9 @@ from typing import ClassVar, Final, NoReturn
 from dqlitewire.constants import HEADER_SIZE, WORD_SIZE
 from dqlitewire.exceptions import DecodeError, PoisonedError
 
-__all__ = [
-    "ReadBuffer",
-    "WriteBuffer",
-]
+__all__ = ["ReadBuffer"]
 
 _COMPACT_THRESHOLD: Final[int] = 4096
-
-
-class WriteBuffer:
-    """Buffer for building wire protocol messages.
-
-    NOT thread-safe: single-owner (one thread/coroutine). ``write_padded``
-    guards only against a torn payload/pad interleave, not general concurrency.
-    """
-
-    def __reduce__(self) -> NoReturn:
-        raise TypeError(
-            f"cannot pickle {type(self).__name__!r} object — instances "
-            f"hold mutable buffered bytes under a single-owner discipline; "
-            f"share by re-creating in the target process."
-        )
-
-    def __init__(self) -> None:
-        self._data = bytearray()
-
-    def write(self, data: bytes | bytearray | memoryview) -> None:
-        self._data.extend(data)
-
-    def write_padded(self, data: bytes | bytearray | memoryview) -> None:
-        """Append data with NUL padding to the next word boundary."""
-        remainder = len(data) % WORD_SIZE
-        if remainder:
-            # Single ``extend`` of a pre-built local so payload and pad
-            # cannot be torn apart by a concurrent writer, and to avoid
-            # the second allocation of a ``bytes(data) + pad`` concat.
-            chunk = bytearray(data)
-            chunk += b"\x00" * (WORD_SIZE - remainder)
-            self._data.extend(chunk)
-        else:
-            self._data.extend(data)
-
-    def getvalue(self) -> bytes:
-        return bytes(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def clear(self) -> None:
-        self._data.clear()
 
 
 class ReadBuffer:

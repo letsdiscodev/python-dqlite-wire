@@ -4,15 +4,15 @@ import logging as _logging
 import os as _os
 import sys as _sys
 
-# Refuse free-threaded CPython (PEP 703): ReadBuffer/WriteBuffer rely on the
+# Refuse free-threaded CPython (PEP 703): ReadBuffer relies on the
 # GIL's bytearray atomicity, so concurrent access SIGSEGVs or hangs the process
 # rather than raising. Override with DQLITEWIRE_ALLOW_FREE_THREADED=1.
 if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
     if _os.environ.get("DQLITEWIRE_ALLOW_FREE_THREADED") != "1":
         raise ImportError(
             "dqlitewire does not support free-threaded Python "
-            "(python3.13t / no-GIL). The ReadBuffer and WriteBuffer classes "
-            "rely on bytearray mutation semantics that cause SIGSEGV and "
+            "(python3.13t / no-GIL). ReadBuffer relies on bytearray mutation semantics "
+            "that cause SIGSEGV and "
             "process hangs under free-threading. "
             "To override at your own risk, set "
             "DQLITEWIRE_ALLOW_FREE_THREADED=1."
@@ -21,8 +21,8 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
 
     _warnings.warn(
         "dqlitewire is running under free-threaded Python with "
-        "DQLITEWIRE_ALLOW_FREE_THREADED=1. ReadBuffer and WriteBuffer are "
-        "known to crash or hang under concurrent access on this runtime. "
+        "DQLITEWIRE_ALLOW_FREE_THREADED=1. ReadBuffer is known to crash or hang under "
+        "concurrent access on this runtime. "
         "Use strictly single-owner-per-instance.",
         RuntimeWarning,
         stacklevel=2,
@@ -31,7 +31,7 @@ if hasattr(_sys, "_is_gil_enabled") and not _sys._is_gil_enabled():
 from typing import Final as _Final
 
 from dqlitewire import messages, tuples, types
-from dqlitewire.buffer import ReadBuffer, WriteBuffer
+from dqlitewire.buffer import ReadBuffer
 from dqlitewire.codec import MessageDecoder, MessageEncoder, decode_message, encode_message
 from dqlitewire.constants import (
     BARE_DATABASE_ERROR_CODES,
@@ -108,14 +108,9 @@ from dqlitewire.exceptions import (
     ServerFailure,
     StreamError,
 )
+from dqlitewire.limits import MAX_ADDRESS_SIZE, MAX_NODE_COUNT
 from dqlitewire.messages.base import Header, Message
-from dqlitewire.messages.responses import (
-    MAX_ADDRESS_SIZE,
-    MAX_NODE_COUNT,
-    NodeInfo,
-    sanitize_for_log,
-    sanitize_server_text,
-)
+from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_server_text
 from dqlitewire.truncate import DEFAULT_MAX_RAW_MESSAGE, cap_raw_message
 from dqlitewire.tuples import RowMarker
 from dqlitewire.types import WireInput, WireValue
@@ -204,7 +199,6 @@ __all__ = [
     "ValueType",
     "WireInput",
     "WireValue",
-    "WriteBuffer",
     "__version__",
     "cap_raw_message",
     "decode_message",

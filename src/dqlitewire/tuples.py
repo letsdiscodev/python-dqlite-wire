@@ -7,6 +7,7 @@ from typing import Final
 
 from dqlitewire.constants import ROW_DONE_BYTE, ROW_PART_BYTE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.limits import MAX_PARAM_COUNT
 from dqlitewire.types import WireInput, WireValue, decode_value, encode_value, pad_to_word
 
 __all__ = [
@@ -36,7 +37,6 @@ _ROW_PART_MARKER: Final[bytes] = bytes([ROW_PART_BYTE]) * 8
 
 # Defense-in-depth cap matching SQLITE_MAX_VARIABLE_NUMBER (standard build);
 # above this the upstream server cannot accept the bind anyway.
-_MAX_PARAM_COUNT: Final[int] = 32_766
 
 
 class RowMarker(Enum):
@@ -61,8 +61,8 @@ def encode_params_tuple(
     if schema not in (0, 1):
         raise EncodeError(f"Unsupported params tuple schema version: {schema} (expected 0 or 1)")
 
-    if len(params) > _MAX_PARAM_COUNT:
-        raise EncodeError(f"Parameter count {len(params)} exceeds maximum ({_MAX_PARAM_COUNT})")
+    if len(params) > MAX_PARAM_COUNT:
+        raise EncodeError(f"Parameter count {len(params)} exceeds maximum ({MAX_PARAM_COUNT})")
 
     if not params:
         if emit_empty_header:
@@ -150,8 +150,8 @@ def decode_params_tuple(
     elif count == 0:
         return [], 0
 
-    if count > _MAX_PARAM_COUNT:
-        raise DecodeError(f"Parameter count {count} exceeds maximum ({_MAX_PARAM_COUNT})")
+    if count > MAX_PARAM_COUNT:
+        raise DecodeError(f"Parameter count {count} exceeds maximum ({MAX_PARAM_COUNT})")
 
     # When count was externally provided, data starts directly with type codes.
     count_size = (4 if schema == 1 else 1) if count_from_data else 0

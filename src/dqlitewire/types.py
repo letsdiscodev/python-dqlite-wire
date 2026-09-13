@@ -12,6 +12,7 @@ from typing import Final, cast
 
 from dqlitewire.constants import WORD_SIZE, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
+from dqlitewire.limits import MAX_BLOB_SIZE, MAX_TEXT_VALUE_SIZE
 
 __all__ = [
     "WireInput",
@@ -39,11 +40,9 @@ type WireValue = bool | int | float | str | bytes | None
 
 # Sits 64 bytes below DEFAULT_MAX_MESSAGE_SIZE so a blob at the cap round-trips
 # through the default decoder, leaving room for the length prefix + row framing.
-_MAX_BLOB_SIZE: Final[int] = 64 * 1024 * 1024 - 64  # 64 MiB minus framing overhead
 
-# Symmetric with _MAX_BLOB_SIZE; keeps decode_text from allocating
+# Symmetric with MAX_BLOB_SIZE; keeps decode_text from allocating
 # attacker-controlled lengths that exceed the default frame envelope.
-_MAX_TEXT_VALUE_SIZE: Final[int] = 64 * 1024 * 1024 - 64  # 64 MiB minus framing overhead
 
 # Cap on stringified ints in EncodeError messages so 10**500 doesn't bake a
 # kilobyte of digits into the error text (and every log line that quotes it).
@@ -248,7 +247,7 @@ _TEXT_SHORT_PROBE: Final[int] = 256
 def decode_text(
     data: bytes | memoryview,
     *,
-    max_size: int = _MAX_TEXT_VALUE_SIZE,
+    max_size: int = MAX_TEXT_VALUE_SIZE,
     label: str = "Text",
     errors: str = "strict",
 ) -> tuple[str, int]:
@@ -344,7 +343,7 @@ def decode_text(
 
 
 def encode_blob(
-    value: bytes | bytearray | memoryview, *, max_blob_size: int = _MAX_BLOB_SIZE
+    value: bytes | bytearray | memoryview, *, max_blob_size: int = MAX_BLOB_SIZE
 ) -> bytes:
     """Encode a blob (uint64 length + data + padding to 8-byte boundary).
 
@@ -367,7 +366,7 @@ def encode_blob(
 
 
 def decode_blob(
-    data: bytes | memoryview, *, max_blob_size: int = _MAX_BLOB_SIZE
+    data: bytes | memoryview, *, max_blob_size: int = MAX_BLOB_SIZE
 ) -> tuple[bytes, int]:
     """Decode a blob; return (data, bytes_consumed).
 
@@ -511,7 +510,7 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
                         f"before binding."
                     ) from e
         # Cap text length so encode and decode stay round-trip-symmetric.
-        return encode_text(value, max_size=_MAX_TEXT_VALUE_SIZE, label=value_type.name), value_type
+        return encode_text(value, max_size=MAX_TEXT_VALUE_SIZE, label=value_type.name), value_type
     elif value_type == ValueType.BLOB:
         if not isinstance(value, (bytes, bytearray, memoryview, mmap.mmap)):
             raise EncodeError(f"Expected bytes for BLOB, got {type(value).__name__}")
@@ -524,8 +523,8 @@ def encode_value(value: WireInput, value_type: ValueType | None = None) -> tuple
             length: int | None = value.nbytes if isinstance(value, memoryview) else len(value)
         except (ValueError, BufferError, TypeError):
             length = None
-        if length is not None and length > _MAX_BLOB_SIZE:
-            raise EncodeError(f"Blob length {length} exceeds maximum ({_MAX_BLOB_SIZE})")
+        if length is not None and length > MAX_BLOB_SIZE:
+            raise EncodeError(f"Blob length {length} exceeds maximum ({MAX_BLOB_SIZE})")
         # Wrap materialise failures (closed mmap, released memoryview) as
         # EncodeError so the wire-layer all-failures-are-EncodeError convention holds.
         try:

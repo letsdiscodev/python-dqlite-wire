@@ -1,6 +1,6 @@
 # Thread-safety
 
-`ReadBuffer`, `WriteBuffer`, `MessageEncoder`, and `MessageDecoder` are
+`ReadBuffer`, `MessageEncoder`, and `MessageDecoder` are
 **not thread-safe**. Each instance must be owned by a single thread or a
 single asyncio coroutine at a time. This matches the single-owner
 `driver.Conn` contract from [go-dqlite](https://github.com/canonical/go-dqlite).

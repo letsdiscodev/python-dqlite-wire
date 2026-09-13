@@ -12,6 +12,9 @@ from dqlitewire.types import _is_int_not_bool
 __all__ = [
     "Header",
     "Message",
+    "require_consumed",
+    "require_length",
+    "require_schema",
 ]
 
 
@@ -68,8 +71,6 @@ class Header:
         if len(data) < HEADER_SIZE:
             raise DecodeError(f"Need {HEADER_SIZE} bytes for header, got {len(data)}")
         size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
-        # Reject non-zero reserved so peer corruption surfaces as a clean
-        # DecodeError rather than carrying bits we cannot re-emit.
         return cls(size_words, msg_type, schema, reserved)
 
     @property
@@ -112,3 +113,20 @@ class Message(ABC):
     def decode_body(cls, data: bytes, schema: int = 0) -> "Message":
         """Decode message from body data (without header)."""
         ...
+
+
+def require_schema(cls: type, schema: int, allowed: tuple[int, ...] = (0,)) -> None:
+    if schema not in allowed:
+        raise DecodeError(f"{cls.__name__} unsupported schema version {schema}")
+
+
+def require_length(cls: type, data: bytes, size: int, *, exactly: bool = False) -> None:
+    if len(data) != size:
+        qualifier = "exactly " if exactly else ""
+        raise DecodeError(f"{cls.__name__} body must be {qualifier}{size} bytes, got {len(data)}")
+
+
+def require_consumed(cls: type, data: bytes, offset: int, after: str = "") -> None:
+    if offset != len(data):
+        suffix = f" after {after}" if after else ""
+        raise DecodeError(f"{cls.__name__} has {len(data) - offset} trailing bytes{suffix}")
