@@ -68,7 +68,7 @@ def test_rows_response_rejects_absurd_count() -> None:
 
 
 def test_servers_response_uses_separate_cap() -> None:
-    """``ServersResponse`` uses ``_MAX_NODE_COUNT = 10_000``; the
+    """``ServersResponse`` uses ``MAX_NODE_COUNT = 10_000``; the
     column cap does not apply. Pinning here is a sanity check that
     the cap constant was not accidentally inlined into an unrelated
     field."""

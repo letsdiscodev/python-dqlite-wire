@@ -22,7 +22,7 @@ class Header:
 
     Construction accepts any uint8 schema; the per-message-type ceiling is
     enforced at decode-dispatch (in ``codec.py``) to avoid a circular import.
-    ``reserved`` must be 0, enforced symmetrically on encode and decode.
+    ``reserved`` is written as 0 and ignored on decode, as go-dqlite does.
     """
 
     size_words: int
@@ -31,10 +31,8 @@ class Header:
     reserved: int = 0
 
     def __post_init__(self) -> None:
-        # Reject non-zero reserved at construction so it matches the
-        # decoder's check and preserves encode->decode round-trip identity.
-        if self.reserved != 0:
-            raise EncodeError(f"Header reserved field must be 0, got {self.reserved}")
+        if not _is_int_not_bool(self.reserved) or not 0 <= self.reserved < 2**16:
+            raise EncodeError(f"Header reserved field {self.reserved!r} out of range for uint16")
         # Range-validate at construction for precise errors instead of an
         # opaque ``struct.error`` at encode. ``bool`` is rejected first
         # because ``True == 1`` would coerce to a valid uint8.
@@ -72,8 +70,6 @@ class Header:
         size_words, msg_type, schema, reserved = struct.unpack("<IBBH", data[:HEADER_SIZE])
         # Reject non-zero reserved so peer corruption surfaces as a clean
         # DecodeError rather than carrying bits we cannot re-emit.
-        if reserved != 0:
-            raise DecodeError(f"Header reserved field must be 0, got {reserved}")
         return cls(size_words, msg_type, schema, reserved)
 
     @property

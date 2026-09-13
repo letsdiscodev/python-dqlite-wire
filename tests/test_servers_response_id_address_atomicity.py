@@ -83,7 +83,7 @@ def test_servers_response_long_malformed_address_truncated_in_error_message() ->
     """Defense against an attacker flooding operator logs with multi-
     KiB junk at the rendering site, mirroring ``LeaderResponse``'s
     discipline. The wire decoder bounds the address at
-    ``_MAX_ADDRESS_SIZE`` (256 bytes), but the diagnostic itself
+    ``MAX_ADDRESS_SIZE`` (256 bytes), but the diagnostic itself
     truncates to 64 chars + U+2026 ellipsis."""
     huge = "A" * 200
     body = (

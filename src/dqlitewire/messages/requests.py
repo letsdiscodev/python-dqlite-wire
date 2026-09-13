@@ -29,9 +29,9 @@ __all__ = [
     "WeightRequest",
 ]
 from dqlitewire.messages.responses import (
-    _MAX_ADDRESS_SIZE,
     _MAX_DUMP_FILENAME_SIZE,
     _MAX_FILENAME_SIZE,
+    MAX_ADDRESS_SIZE,
 )
 from dqlitewire.tuples import _MAX_PARAM_COUNT, decode_params_tuple, encode_params_tuple
 from dqlitewire.types import (
@@ -626,7 +626,7 @@ class _ConnectRequest(Message):
     @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
-            self.address, max_size=_MAX_ADDRESS_SIZE, label="connect address"
+            self.address, max_size=MAX_ADDRESS_SIZE, label="connect address"
         )
 
     @classmethod
@@ -636,7 +636,7 @@ class _ConnectRequest(Message):
             raise DecodeError(f"_ConnectRequest unsupported schema version {schema}")
         node_id = decode_uint64(data)
         address, consumed = decode_text(
-            data[8:], max_size=_MAX_ADDRESS_SIZE, label="connect address"
+            data[8:], max_size=MAX_ADDRESS_SIZE, label="connect address"
         )
         offset = 8 + consumed
         if offset != len(data):
@@ -662,7 +662,7 @@ class AddRequest(Message):
     @override
     def encode_body(self) -> bytes:
         return encode_uint64(self.node_id) + encode_text(
-            self.address, max_size=_MAX_ADDRESS_SIZE, label="add address"
+            self.address, max_size=MAX_ADDRESS_SIZE, label="add address"
         )
 
     @classmethod
@@ -671,7 +671,7 @@ class AddRequest(Message):
         if schema != 0:
             raise DecodeError(f"AddRequest unsupported schema version {schema}")
         node_id = decode_uint64(data)
-        address, consumed = decode_text(data[8:], max_size=_MAX_ADDRESS_SIZE, label="add address")
+        address, consumed = decode_text(data[8:], max_size=MAX_ADDRESS_SIZE, label="add address")
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(f"AddRequest has {len(data) - offset} trailing bytes")

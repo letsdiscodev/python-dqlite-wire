@@ -109,7 +109,13 @@ from dqlitewire.exceptions import (
     StreamError,
 )
 from dqlitewire.messages.base import Header, Message
-from dqlitewire.messages.responses import NodeInfo, sanitize_for_log, sanitize_server_text
+from dqlitewire.messages.responses import (
+    MAX_ADDRESS_SIZE,
+    MAX_NODE_COUNT,
+    NodeInfo,
+    sanitize_for_log,
+    sanitize_server_text,
+)
 from dqlitewire.truncate import DEFAULT_MAX_RAW_MESSAGE, cap_raw_message
 from dqlitewire.tuples import RowMarker
 from dqlitewire.types import WireInput, WireValue
@@ -120,6 +126,8 @@ __all__ = [
     "BARE_DATABASE_ERROR_CODES",
     "DEFAULT_MAX_CONTINUATION_FRAMES",
     "DEFAULT_MAX_TOTAL_ROWS",
+    "MAX_ADDRESS_SIZE",
+    "MAX_NODE_COUNT",
     "DQLITE_NOTFOUND",
     "DQLITE_PARSE",
     "DQLITE_PROTO",

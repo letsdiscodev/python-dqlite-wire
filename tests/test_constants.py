@@ -388,9 +388,9 @@ class TestInternalDecodeBoundsPinnedAgainstReadme:
         assert _MAX_FILE_COUNT == 100
 
     def test_max_node_count_is_ten_thousand(self) -> None:
-        from dqlitewire.messages.responses import _MAX_NODE_COUNT
+        from dqlitewire.messages.responses import MAX_NODE_COUNT
 
-        assert _MAX_NODE_COUNT == 10_000
+        assert MAX_NODE_COUNT == 10_000
 
 
 class TestNamedPrimaryCodeValues:

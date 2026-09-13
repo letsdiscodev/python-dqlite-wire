@@ -8,13 +8,13 @@ from dqlitewire.constants import HEADER_SIZE, NodeRole, ResponseType, ValueType
 from dqlitewire.exceptions import DecodeError, EncodeError
 from dqlitewire.messages.base import Header
 from dqlitewire.messages.responses import (
-    _MAX_ADDRESS_SIZE,
     _MAX_COLUMN_COUNT,
     _MAX_COLUMN_NAME_SIZE,
     _MAX_FAILURE_MESSAGE_SIZE,
     _MAX_FILENAME_SIZE,
-    _MAX_NODE_COUNT,
     _MAX_TAIL_OFFSET,
+    MAX_ADDRESS_SIZE,
+    MAX_NODE_COUNT,
     DbResponse,
     EmptyResponse,
     FailureResponse,
@@ -192,25 +192,25 @@ class TestLeaderResponseAddressSize:
     """Per-address length cap applies to modern and legacy decoders.
 
     Legitimate addresses are short (hostname + port, or IPv6 literal
-    in brackets + port). Cap at ``_MAX_ADDRESS_SIZE`` so an oversize
+    in brackets + port). Cap at ``MAX_ADDRESS_SIZE`` so an oversize
     peer-supplied string cannot amplify through logs / exception
     messages even after sanitization.
     """
 
     def test_decode_rejects_oversize_address(self) -> None:
-        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        oversize = "a" * (MAX_ADDRESS_SIZE + 1)
         body = encode_uint64(1) + encode_text(oversize)
         with pytest.raises(DecodeError, match="leader address"):
             LeaderResponse.decode_body(body)
 
     def test_decode_accepts_address_at_cap(self) -> None:
-        at_cap = "a" * _MAX_ADDRESS_SIZE
+        at_cap = "a" * MAX_ADDRESS_SIZE
         body = encode_uint64(1) + encode_text(at_cap)
         decoded = LeaderResponse.decode_body(body)
         assert decoded.address == at_cap
 
     def test_decode_body_legacy_rejects_oversize_address(self) -> None:
-        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        oversize = "a" * (MAX_ADDRESS_SIZE + 1)
         body = encode_text(oversize)
         with pytest.raises(DecodeError, match="leader address"):
             LeaderResponse.decode_body_legacy(body)
@@ -1650,12 +1650,12 @@ class TestServersResponseAddressSize:
         )
 
     def test_decode_rejects_oversize_address(self) -> None:
-        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        oversize = "a" * (MAX_ADDRESS_SIZE + 1)
         with pytest.raises(DecodeError, match="server address"):
             ServersResponse.decode_body(self._build_body(oversize))
 
     def test_decode_accepts_address_at_cap(self) -> None:
-        at_cap = "a" * _MAX_ADDRESS_SIZE
+        at_cap = "a" * MAX_ADDRESS_SIZE
         decoded = ServersResponse.decode_body(self._build_body(at_cap))
         assert decoded.nodes[0].address == at_cap
 
@@ -2107,23 +2107,23 @@ class TestEncodeSideCaps:
     """
 
     def test_leader_response_rejects_oversize_address(self) -> None:
-        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        oversize = "a" * (MAX_ADDRESS_SIZE + 1)
         with pytest.raises(EncodeError, match="leader address"):
             LeaderResponse(node_id=1, address=oversize).encode_body()
 
     def test_leader_response_accepts_address_at_cap(self) -> None:
-        at_cap = "a" * _MAX_ADDRESS_SIZE
+        at_cap = "a" * MAX_ADDRESS_SIZE
         body = LeaderResponse(node_id=1, address=at_cap).encode_body()
         decoded = LeaderResponse.decode_body(body)
         assert decoded.address == at_cap
 
     def test_leader_response_legacy_rejects_oversize_address(self) -> None:
-        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        oversize = "a" * (MAX_ADDRESS_SIZE + 1)
         with pytest.raises(EncodeError, match="leader address"):
             LeaderResponse(node_id=0, address=oversize).encode_body_legacy()
 
     def test_leader_response_legacy_accepts_address_at_cap(self) -> None:
-        at_cap = "a" * _MAX_ADDRESS_SIZE
+        at_cap = "a" * MAX_ADDRESS_SIZE
         body = LeaderResponse(node_id=0, address=at_cap).encode_body_legacy()
         decoded = LeaderResponse.decode_body_legacy(body)
         assert decoded.address == at_cap
@@ -2137,25 +2137,25 @@ class TestEncodeSideCaps:
             LeaderResponse(node_id=7, address="x:1").encode_body_legacy()
 
     def test_servers_response_rejects_oversize_node_count(self) -> None:
-        # ``range(1, _MAX_NODE_COUNT + 2)`` skips node_id=0 (rejected
+        # ``range(1, MAX_NODE_COUNT + 2)`` skips node_id=0 (rejected
         # at construction by NodeInfo.__post_init__'s raft-config
-        # invariant). Still produces _MAX_NODE_COUNT + 1 entries to
+        # invariant). Still produces MAX_NODE_COUNT + 1 entries to
         # trip the count cap.
         nodes = [
             NodeInfo(node_id=i, address="n:9", role=NodeRole.SPARE)
-            for i in range(1, _MAX_NODE_COUNT + 2)
+            for i in range(1, MAX_NODE_COUNT + 2)
         ]
         with pytest.raises(EncodeError, match="node count"):
             ServersResponse(nodes=nodes).encode_body()
 
     def test_servers_response_rejects_oversize_address(self) -> None:
-        oversize = "a" * (_MAX_ADDRESS_SIZE + 1)
+        oversize = "a" * (MAX_ADDRESS_SIZE + 1)
         nodes = [NodeInfo(node_id=1, address=oversize, role=NodeRole.SPARE)]
         with pytest.raises(EncodeError, match="server address"):
             ServersResponse(nodes=nodes).encode_body()
 
     def test_servers_response_accepts_address_at_cap(self) -> None:
-        at_cap = "a" * _MAX_ADDRESS_SIZE
+        at_cap = "a" * MAX_ADDRESS_SIZE
         nodes = [NodeInfo(node_id=1, address=at_cap, role=NodeRole.SPARE)]
         body = ServersResponse(nodes=nodes).encode_body()
         decoded = ServersResponse.decode_body(body)
@@ -2248,21 +2248,21 @@ class TestDecodeTextCapsAreByteBased:
             FailureResponse.decode_body(body)
 
     def test_leader_response_rejects_oversize_utf8_address(self) -> None:
-        char_count = _MAX_ADDRESS_SIZE // 3 + 1
+        char_count = MAX_ADDRESS_SIZE // 3 + 1
         address = "漢" * char_count
         body = encode_uint64(1) + encode_text(address)
         with pytest.raises(DecodeError, match="exceeds maximum"):
             LeaderResponse.decode_body(body)
 
     def test_leader_response_legacy_rejects_oversize_utf8_address(self) -> None:
-        char_count = _MAX_ADDRESS_SIZE // 3 + 1
+        char_count = MAX_ADDRESS_SIZE // 3 + 1
         address = "漢" * char_count
         body = encode_text(address)
         with pytest.raises(DecodeError, match="exceeds maximum"):
             LeaderResponse.decode_body_legacy(body)
 
     def test_servers_response_rejects_oversize_utf8_address(self) -> None:
-        char_count = _MAX_ADDRESS_SIZE // 3 + 1
+        char_count = MAX_ADDRESS_SIZE // 3 + 1
         address = "漢" * char_count
         body = encode_uint64(1) + encode_uint64(1) + encode_text(address) + encode_uint64(2)
         with pytest.raises(DecodeError, match="exceeds maximum"):
@@ -2440,7 +2440,7 @@ class TestEncodeBodyLinearTime:
     def test_servers_response_encode_body_linear_on_node_count(self) -> None:
         import time
 
-        # Up to ``_MAX_NODE_COUNT`` (10k) nodes; 8000 makes the
+        # Up to ``MAX_NODE_COUNT`` (10k) nodes; 8000 makes the
         # regression detectable while staying under the cap.
         nodes = [
             NodeInfo(node_id=i + 1, address=f"node-{i}.example:8080", role=NodeRole.VOTER)

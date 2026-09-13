@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final, final, override
 
 __all__ = [
+    "MAX_ADDRESS_SIZE",
+    "MAX_NODE_COUNT",
     "DbResponse",
     "EmptyResponse",
     "FailureResponse",
@@ -65,7 +67,7 @@ _MAX_COLUMN_COUNT: Final[int] = 2000
 _MAX_FILE_COUNT: Final[int] = 100
 # Defence-in-depth cap; the wire field is an uncapped uint64. Raft latency
 # precludes realistic clusters far above ~100 nodes.
-_MAX_NODE_COUNT: Final[int] = 10_000
+MAX_NODE_COUNT: Final[int] = 10_000
 
 # Cap on ``StmtResponse.tail_offset`` (a byte offset into prepared SQL):
 # an enormous value would make ``sql[offset:]`` silently return "",
@@ -94,7 +96,7 @@ _MAX_FILE_CONTENT_SIZE: Final[int] = 64 * 1024 * 1024 - 64
 
 # RFC 1035 caps domain names at 253 bytes; 256 leaves room for the port.
 # A multi-MB "address" is hostile and amplifies through log/exception text.
-_MAX_ADDRESS_SIZE: Final[int] = 256
+MAX_ADDRESS_SIZE: Final[int] = 256
 
 # Default ``RowsResponse`` row cap; mirrors ``MessageDecoder``'s max_rows
 # default. Module-level so both the ClassVar alias and decode_body share it.
@@ -273,7 +275,7 @@ class LeaderResponse(Message):
                 f"got address={display_addr!r}"
             )
         return encode_uint64(self.node_id) + encode_text(
-            self.address, max_size=_MAX_ADDRESS_SIZE, label="leader address"
+            self.address, max_size=MAX_ADDRESS_SIZE, label="leader address"
         )
 
     def encode_body_legacy(self) -> bytes:
@@ -289,7 +291,7 @@ class LeaderResponse(Message):
                 "modern format."
             )
         address = self.address or ""
-        return encode_text(address, max_size=_MAX_ADDRESS_SIZE, label="leader address")
+        return encode_text(address, max_size=MAX_ADDRESS_SIZE, label="leader address")
 
     @classmethod
     @override
@@ -309,9 +311,7 @@ class LeaderResponse(Message):
                 f"LeaderResponse body too short; need 8 bytes for node_id, got {len(data)}"
             )
         node_id = decode_uint64(data)
-        address, consumed = decode_text(
-            data[8:], max_size=_MAX_ADDRESS_SIZE, label="leader address"
-        )
+        address, consumed = decode_text(data[8:], max_size=MAX_ADDRESS_SIZE, label="leader address")
         offset = 8 + consumed
         if offset != len(data):
             raise DecodeError(
@@ -353,7 +353,7 @@ class LeaderResponse(Message):
                 f"(1-byte NUL terminator + 7-byte padding to the "
                 f"8-byte boundary), got {len(data)}"
             )
-        address, consumed = decode_text(data, max_size=_MAX_ADDRESS_SIZE, label="leader address")
+        address, consumed = decode_text(data, max_size=MAX_ADDRESS_SIZE, label="leader address")
         if consumed != len(data):
             raise DecodeError(
                 f"LeaderResponse (legacy) has {len(data) - consumed} trailing bytes after address"
@@ -1085,9 +1085,9 @@ class ServersResponse(Message):
 
     @override
     def encode_body(self) -> bytes:
-        if len(self.nodes) > _MAX_NODE_COUNT:
+        if len(self.nodes) > MAX_NODE_COUNT:
             raise EncodeError(
-                f"ServersResponse node count {len(self.nodes)} exceeds maximum ({_MAX_NODE_COUNT})"
+                f"ServersResponse node count {len(self.nodes)} exceeds maximum ({MAX_NODE_COUNT})"
             )
         # bytearray accumulation, same O(N^2) avoidance as the sibling encoders.
         result = bytearray()
@@ -1095,7 +1095,7 @@ class ServersResponse(Message):
         for node in self.nodes:
             result.extend(encode_uint64(node.node_id))
             result.extend(
-                encode_text(node.address, max_size=_MAX_ADDRESS_SIZE, label="server address")
+                encode_text(node.address, max_size=MAX_ADDRESS_SIZE, label="server address")
             )
             result.extend(encode_uint64(node.role))
         return bytes(result)
@@ -1132,8 +1132,8 @@ class ServersResponse(Message):
         offset = 0
         count = decode_uint64(view[offset:])
         offset += 8
-        if count > _MAX_NODE_COUNT:
-            raise DecodeError(f"Node count {count} exceeds maximum {_MAX_NODE_COUNT}")
+        if count > MAX_NODE_COUNT:
+            raise DecodeError(f"Node count {count} exceeds maximum {MAX_NODE_COUNT}")
         # Bounds check: each node is at least 24 bytes (id + address + role)
         remaining = len(view) - offset
         if count > remaining // 24:
@@ -1151,7 +1151,7 @@ class ServersResponse(Message):
             node_id = decode_uint64(view[offset:])
             offset += 8
             address, consumed = decode_text(
-                view[offset:], max_size=_MAX_ADDRESS_SIZE, label="server address"
+                view[offset:], max_size=MAX_ADDRESS_SIZE, label="server address"
             )
             # Raw address (feeds TCP routing / allowlist comparisons);
             # sanitised at format time. See LeaderResponse.decode_body.

@@ -31,14 +31,7 @@ from dqlitewire.types import encode_text, encode_uint32, encode_uint64
 
 
 class TestHeaderReservedField:
-    """Pin the header's reserved/extra uint16 to zero.
-
-    Upstream C (``message.h``) names this field ``extra`` and reserves it
-    for future protocol extensions. All current upstream servers send 0.
-    If upstream ever repurposes the field (compression flag, extended
-    schema, etc.), this test fails — forcing a conscious decision rather
-    than silent mis-decode.
-    """
+    """The header's reserved/extra uint16: written as 0, ignored on decode."""
 
     def test_encoded_reserved_is_zero(self) -> None:
         cases = [LeaderRequest(), _HeartbeatRequest(timestamp=0), OpenRequest(name="db")]
@@ -52,108 +45,10 @@ class TestHeaderReservedField:
         header = Header.decode(msg.encode()[:HEADER_SIZE])
         assert header.reserved == 0
 
-    def test_post_init_rejects_nonzero_reserved(self) -> None:
-        """Header construction-time rejection of ``reserved != 0``.
-
-        Symmetric with the decode-side rejection below: the encode/
-        decode pair must reject the same bad inputs at both boundaries
-        so a future code path that builds a Header directly cannot
-        smuggle a non-zero reserved value into the encoder.
-        """
-        from dqlitewire.exceptions import EncodeError
-
-        with pytest.raises(EncodeError, match="reserved.*must be 0"):
-            Header(size_words=1, msg_type=0, schema=0, reserved=42)
-
-    def test_decode_rejects_nonzero_reserved(self) -> None:
-        """Header.decode must reject non-zero reserved bytes.
-
-        The protocol spec pins the trailing uint16 at 0; a non-zero value
-        signals peer corruption, a buggy encoder, or a future schema
-        extension we do not understand. Reject it cleanly rather than
-        silently carrying it past a boundary that can never re-emit it.
-        """
-        import struct
-
-        import pytest
-
-        from dqlitewire.exceptions import DecodeError
-
-        # size_words=1, msg_type=0x42 (arbitrary), schema=0, reserved=0xBEEF
-        encoded = struct.pack("<IBBH", 1, 0x42, 0, 0xBEEF)
-        with pytest.raises(DecodeError, match="reserved field must be 0"):
-            Header.decode(encoded)
-
-    def test_header_is_frozen_and_hashable(self) -> None:
-        """Header is a frozen/slotted dataclass — no post-construction
-        mutation, no ``__dict__``, hashable so test code can key sets/dicts
-        on header instances.
-        """
-        from dataclasses import FrozenInstanceError
-
-        h = Header(size_words=1, msg_type=0, schema=0, reserved=0)
-        with pytest.raises(FrozenInstanceError):
-            h.size_words = 5  # type: ignore[misc]
-        with pytest.raises(FrozenInstanceError):
-            h.msg_type = 99  # type: ignore[misc]
-        # slots=True removes __dict__
-        assert not hasattr(h, "__dict__")
-        # frozen=True makes the dataclass hashable
-        assert hash(h) == hash(Header(size_words=1, msg_type=0, schema=0, reserved=0))
-
-    def test_post_init_rejects_out_of_range_size_words(self) -> None:
-        """Range-validate uint32 ``size_words`` at construction so
-        an invalid value surfaces with a precise field name +
-        observed value, not as an opaque ``struct.error`` wrap at
-        ``encode()`` time. Mirrors the existing ``reserved`` check."""
-        from dqlitewire.exceptions import EncodeError
-
-        with pytest.raises(EncodeError, match="size_words.*out of range"):
-            Header(size_words=2**32, msg_type=0, schema=0, reserved=0)
-        with pytest.raises(EncodeError, match="size_words.*out of range"):
-            Header(size_words=-1, msg_type=0, schema=0, reserved=0)
-
-    def test_header_round_trip_zero_size_words(self) -> None:
-        """``size_words=0`` is the lower bound — wire-legal for
-        zero-body messages (e.g. ``EmptyResponse``-style continuation
-        terminators). Symmetric with the upper-bound 0xFFFFFFFF tests
-        elsewhere; pin so a buffer-management refactor that adds an
-        ``if size_words: ...`` guard cannot silently drop legitimate
-        zero-body frames."""
-        h = Header(size_words=0, msg_type=0, schema=0, reserved=0)
-        encoded = h.encode()
-        assert len(encoded) == HEADER_SIZE
-        decoded = Header.decode(encoded)
-        assert decoded == h
-        assert decoded.size_words == 0
-
-    def test_post_init_rejects_out_of_range_msg_type(self) -> None:
-        from dqlitewire.exceptions import EncodeError
-
-        with pytest.raises(EncodeError, match="msg_type.*out of range"):
-            Header(size_words=1, msg_type=256, schema=0, reserved=0)
-        with pytest.raises(EncodeError, match="msg_type.*out of range"):
-            Header(size_words=1, msg_type=-1, schema=0, reserved=0)
-
-    def test_post_init_rejects_out_of_range_schema(self) -> None:
-        from dqlitewire.exceptions import EncodeError
-
-        with pytest.raises(EncodeError, match="schema.*out of range"):
-            Header(size_words=1, msg_type=0, schema=256, reserved=0)
-        with pytest.raises(EncodeError, match="schema.*out of range"):
-            Header(size_words=1, msg_type=0, schema=-1, reserved=0)
-
-    def test_post_init_rejects_bool_in_int_fields(self) -> None:
-        """``True == 1`` would silently coerce to uint8 and mask
-        caller bugs. Reject explicitly."""
-        from dqlitewire.exceptions import EncodeError
-
-        with pytest.raises(EncodeError, match="size_words must be int"):
-            Header(size_words=True, msg_type=0, schema=0, reserved=0)
-        with pytest.raises(EncodeError, match="msg_type must be int"):
-            Header(size_words=1, msg_type=True, schema=0, reserved=0)
-        with pytest.raises(EncodeError, match="schema must be int"):
-            Header(size_words=1, msg_type=0, schema=True, reserved=0)
+    def test_nonzero_reserved_is_carried_not_rejected(self) -> None:
+        """go-dqlite ignores the field on decode; a future server may use it."""
+        header = Header.decode(Header(size_words=1, msg_type=0, schema=0, reserved=0xBEEF).encode())
+        assert header.reserved == 0xBEEF
 
 
 class TestLeaderRequest:

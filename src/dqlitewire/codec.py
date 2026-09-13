@@ -16,6 +16,7 @@ from dqlitewire.constants import (
     HEADER_SIZE,
     PROTOCOL_VERSION,
     PROTOCOL_VERSION_LEGACY,
+    WORD_SIZE,
     RequestType,
     ResponseType,
 )
@@ -322,6 +323,16 @@ class MessageDecoder:
 
     def has_message(self) -> bool:
         return self._buffer.has_message()
+
+    def pending_frame_size(self) -> int:
+        """Size in bytes of the next buffered frame, header included; 0 while the header
+        is incomplete. Raises like :meth:`ReadBuffer.peek_header` on an oversized claim."""
+        header = self._buffer.peek_header()
+        return 0 if header is None else HEADER_SIZE + header[0] * WORD_SIZE
+
+    def take_frame(self) -> bytes | None:
+        """Remove and return the next complete frame undecoded, or ``None`` if incomplete."""
+        return self._buffer.read_message()
 
     def skip_message(self) -> bool:
         """Skip the current message; recovers after an oversized-message DecodeError.

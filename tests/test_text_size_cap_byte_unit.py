@@ -7,8 +7,8 @@ import pytest
 
 from dqlitewire.exceptions import EncodeError
 from dqlitewire.messages.responses import (
-    _MAX_ADDRESS_SIZE,
     _MAX_FAILURE_MESSAGE_SIZE,
+    MAX_ADDRESS_SIZE,
     FailureResponse,
     LeaderResponse,
 )
@@ -45,7 +45,7 @@ class TestRoundTripIdentityAtCap:
             FailureResponse(code=1, message=text).encode_body()
 
     def test_leader_address_round_trip_at_byte_cap(self) -> None:
-        text = "ä" * (_MAX_ADDRESS_SIZE // 2)  # 2-byte UTF-8 codepoint
+        text = "ä" * (MAX_ADDRESS_SIZE // 2)  # 2-byte UTF-8 codepoint
         body = LeaderResponse(node_id=1, address=text).encode_body()
         decoded = LeaderResponse.decode_body(body)
         assert decoded.address == text
